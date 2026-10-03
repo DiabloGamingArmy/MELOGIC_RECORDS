@@ -3,6 +3,9 @@
 // mct-origami-fx-page-foundation-p01
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxRenderer.h"
+#include "core/fx/FxEnvironment.h"
+#include "core/fx/FxWorkspace.h"
+#include "core/fx/FxFilter.h"
 #include "core/Engine.h"
 #include "core/preset/StateCodec.h"
 #include <algorithm>
@@ -123,7 +126,7 @@ void sourceDomainTests() {
     FxGraph g;
     check(g.addBusSource(0,{0,0})==invalidFxNodeId,"bus 0 is not a source");
     const auto bus1=g.addBusSource(fxMainBusId,{0,0});
-    check(bus1!=invalidFxNodeId && g.findNode(bus1)->name=="BUS 1","BUS 1 is an audio source");
+    check(bus1!=invalidFxNodeId && g.findNode(bus1)->bus==fxMainBusId,"MAIN is the graph's audio source (labelled from the bus model)");
     check(g.addBusSource(fxMainBusId,{0,0})==invalidFxNodeId,"one source node per bus");
     check(g.addBusSource(2,{0,40})!=invalidFxNodeId,"future buses are representable sources");
     int control=0,available=0;
@@ -136,9 +139,12 @@ void sourceDomainTests() {
     for(const auto& e:fxEffectCatalog()) {
         check(e.processesAudio && e.create!=nullptr,"every catalog effect has real DSP");
         check(e.parameterCount<=maxFxParameters,"parameter count bounded");
+        // Compact nodes stay compact: 1-4 quick controls in the default mode.
+        FxGraph probe;
+        const auto* node=probe.findNode(probe.addEffect(e.type,{0,0}));
         int quick=0;
-        for(std::size_t i=0;i<e.parameterCount;++i) quick+=e.parameters[i].quick;
-        check(quick>=2 && quick<=4,"2-4 quick controls per effect");
+        for(std::size_t i=0;i<e.parameterCount;++i) quick+=e.parameters[i].quick && node->parameterVisible(e.parameters[i]);
+        check(quick>=1 && quick<=4,"1-4 visible quick controls per effect");
     }
 }
 
@@ -474,7 +480,7 @@ void allocationTests() {
     unsigned total=0;
     for(int round=0;round<20;++round) {
         // Graph edits + recompiles happen outside the audio callback...
-        rig.graph.insertEffectBeforeOutput(round%2 ? FxEffectType::Chorus : FxEffectType::Comb);
+        rig.graph.insertEffectBeforeOutput(round%2 ? FxEffectType::Chorus : FxEffectType::Filter);
         rig.fx.sync(rig.graph);
         // ...and adopting the new plan inside it allocates and frees nothing.
         allocations=0;guardAllocations=true;
@@ -765,6 +771,270 @@ void codecV3Tests() {
     check(decodeFxGraph(v2.data(),v2.size(),legacy) && legacy.globals().order==FxOrder::PostMaster
           && legacy.globals().bypass==FxBypassMode::Crossfade,"v2 graphs decode with default order/bypass");
 }
+// ---------------------------------------------------------------- P04
+
+// Steady-state amplitude of a sine through a single effect (stereo L).
+float throughEffect(FxEffectType type,const std::vector<std::pair<FxParameterId,float>>& params,float hz,float amp=0.25f,int samples=int(sr*0.6)) {
+    Rig rig;
+    FxNodeId s=0,o=0;
+    rig.graph=terminals(s,o);
+    const auto node=rig.graph.insertEffectBeforeOutput(type);
+    for(const auto& [id,v]:params) rig.graph.setParameter(node,id,v);
+    rig.sync();
+    const auto out=render(rig.fx,[&](int i){return sine(i,hz,amp);},samples);
+    // Amplitude from RMS: sample peaks under-read near Nyquist.
+    return float(std::sqrt(2.0*energy(out.l,std::size_t(samples/2),std::size_t(samples))/double(samples-samples/2)));
+}
+float physicalToNormalized(FxEffectType type,FxParameterId id,float value) { return normalizedFor(type,id,value); }
+float choiceN(FxEffectType type,FxParameterId id,int index) { return fxChoiceNormalized(*findFxParameter(*findFxEffect(type),id),index); }
+
+void filterTests() {
+    const auto f=FxEffectType::Filter;
+    const float cutoff=physicalToNormalized(f,1,1000.0f);
+    const auto mode=[&](int type){return std::vector<std::pair<FxParameterId,float>>{{5,choiceN(f,5,type)},{1,cutoff},{6,physicalToNormalized(f,6,0.7071f)},{3,1.0f}};};
+    check(throughEffect(f,mode(0),100.0f)>0.24f && throughEffect(f,mode(0),8000.0f)<0.25f*0.05f,"FILTER LOW PASS: passes lows, cuts highs");
+    check(throughEffect(f,mode(1),100.0f)<0.25f*0.05f && throughEffect(f,mode(1),8000.0f)>0.24f,"FILTER HIGH PASS: cuts lows, passes highs");
+    check(throughEffect(f,mode(2),1000.0f)>0.23f && throughEffect(f,mode(2),100.0f)<0.25f*0.15f,"FILTER BAND PASS: unity at centre");
+    check(throughEffect(f,mode(3),1000.0f)<0.25f*0.05f && throughEffect(f,mode(3),100.0f)>0.23f,"FILTER NOTCH: removes the centre");
+    auto peak=mode(4); peak.push_back({7,physicalToNormalized(f,7,12.0f)});
+    check(std::abs(throughEffect(f,peak,1000.0f)/0.25f-3.98f)<0.25f,"FILTER PEAK: +12 dB at centre");
+    // DSP agrees with the analytic response the UI draws.
+    const auto c=svfDesign(SvfShape::LowPass,1000.0,0.7071,0.0,sr);
+    check(std::abs(svfMagnitude(c,1000.0,sr)-0.7071)<0.01,"analytic LP response -3 dB at cutoff");
+    check(std::abs(throughEffect(f,mode(0),1000.0f)/0.25f-float(svfMagnitude(c,1000.0,sr)))<0.02f,"DSP matches analytic response");
+    auto comb=mode(8); comb.push_back({2,1.0f});
+    check(std::abs(throughEffect(f,comb,220.0f)-throughEffect(f,mode(0),220.0f))>0.01f,"FILTER COMB mode is a different, real topology");
+    FxGraph g;
+    const auto* node=g.findNode(g.addEffect(f,{0,0}));
+    const auto* res=findFxParameter(*findFxEffect(f),6);
+    const auto* fb=findFxParameter(*findFxEffect(f),2);
+    check(node->parameterVisible(*res) && !node->parameterVisible(*fb),"mode-aware parameters: RES for LP, not FEEDBACK");
+}
+
+void compressorTests() {
+    const auto c=FxEffectType::Compressor;
+    const float dry=throughEffect(c,{{2,physicalToNormalized(c,2,0.0f)}},440.0f,0.5f);
+    const float squashed=throughEffect(c,{{2,physicalToNormalized(c,2,-30.0f)},{3,physicalToNormalized(c,3,10.0f)},{6,0.0f}},440.0f,0.5f);
+    check(std::abs(dry-0.5f)<0.02f,"threshold above signal: no compression");
+    check(squashed<0.5f*0.3f,"threshold -30 dB / 10:1 strongly reduces level");
+    const float madeUp=throughEffect(c,{{2,physicalToNormalized(c,2,-30.0f)},{3,physicalToNormalized(c,3,10.0f)},{6,0.0f},{7,0.5f}},440.0f,0.5f);
+    check(madeUp>squashed*3.5f,"makeup gain restores level");
+    const float halfWet=throughEffect(c,{{2,physicalToNormalized(c,2,-30.0f)},{3,physicalToNormalized(c,3,10.0f)},{6,0.0f},{8,0.5f}},440.0f,0.5f);
+    check(halfWet>squashed && halfWet<0.5f,"mix blends dry and compressed");
+    // MULTIBAND at unity (thresholds 0 dB, ratio 1): magnitude-flat reconstruction.
+    std::vector<std::pair<FxParameterId,float>> unity{{1,1.0f}};
+    for(FxParameterId band:{12,17,22}) { unity.push_back({band,1.0f}); unity.push_back({FxParameterId(band+1),0.0f}); }
+    for(const float hz:{80.0f,440.0f,1800.0f,6000.0f,12000.0f})
+        check(std::abs(20.0f*std::log10(throughEffect(c,unity,hz,0.25f)/0.25f))<0.3f,"multiband unity reconstruction within 0.3 dB");
+    auto multi=unity;
+    multi.push_back({12,physicalToNormalized(c,12,-40.0f)});multi.push_back({13,1.0f});
+    check(throughEffect(c,multi,80.0f,0.25f)<0.25f*0.5f && std::abs(throughEffect(c,multi,6000.0f,0.25f)-0.25f)<0.02f,
+          "multiband compresses only its band");
+}
+
+void equalizerTests() {
+    const auto e=FxEffectType::Equalizer;
+    check(std::abs(throughEffect(e,{},1000.0f)-0.25f)<1e-3f,"default EQ is neutral");
+    const std::vector<std::pair<FxParameterId,float>> boost{{124,physicalToNormalized(e,124,12.0f)},{123,physicalToNormalized(e,123,1000.0f)}};
+    check(std::abs(20.0f*std::log10(throughEffect(e,boost,1000.0f)/0.25f)-12.0f)<0.6f,"EQ bell +12 dB at its frequency");
+    check(throughEffect(e,boost,100.0f)<0.25f*1.25f,"EQ bell is local");
+    auto removed=boost; removed.push_back({121,0.0f});
+    check(std::abs(throughEffect(e,removed,1000.0f)-0.25f)<1e-3f,"removing (disabling) a band removes its effect");
+    std::vector<std::pair<FxParameterId,float>> cut{{142,0.0f},{141,1.0f},{143,physicalToNormalized(e,143,500.0f)}}; // band 5 LOW CUT
+    check(throughEffect(e,cut,60.0f)<0.25f*0.1f,"added LOW CUT band attenuates lows");
+}
+
+void modulationEffectTests() {
+    // Each new processor really processes audio (signal differs from dry).
+    for(const auto type:{FxEffectType::Flanger,FxEffectType::Phaser,FxEffectType::Spatial,FxEffectType::Gain,FxEffectType::StereoUtility}) {
+        Rig rig;
+        FxNodeId s=0,o=0;
+        rig.graph=terminals(s,o);
+        const auto node=rig.graph.insertEffectBeforeOutput(type);
+        if(type==FxEffectType::Gain) rig.graph.setParameter(node,1,physicalToNormalized(type,1,-12.0f));
+        if(type==FxEffectType::StereoUtility) rig.graph.setParameter(node,2,1.0f);
+        rig.sync();
+        Stereo in{std::vector<float>(48000),std::vector<float>(48000)};
+        for(int i=0;i<48000;++i) { in.l[std::size_t(i)]=sine(i,330.0f,0.3f)+0.1f*sine(i,1210.0f); in.r[std::size_t(i)]=sine(i,330.0f,0.3f)-0.1f*sine(i,1210.0f); }
+        auto out=in;
+        for(int off=0;off<48000;off+=512) rig.fx.process(out.l.data()+off,out.r.data()+off,std::min(512,48000-off));
+        double diff=0.0;
+        for(int i=24000;i<48000;++i) diff+=std::abs(out.l[std::size_t(i)]-in.l[std::size_t(i)])+std::abs(out.r[std::size_t(i)]-in.r[std::size_t(i)]);
+        check(diff>10.0 && allFinite(out),"new effect audibly processes the signal");
+        rig.graph.setEnabled(node,false);
+        rig.sync();
+        auto bypass=in;
+        for(int off=0;off<48000;off+=512) rig.fx.process(bypass.l.data()+off,bypass.r.data()+off,std::min(512,48000-off));
+        bool exact=true;
+        for(int i=24000;i<48000;++i) exact&=bypass.l[std::size_t(i)]==in.l[std::size_t(i)];
+        check(exact,"bypass returns the dry signal");
+    }
+}
+
+void spatialTests() {
+    Rig rig;
+    FxNodeId s=0,o=0;
+    rig.graph=terminals(s,o);
+    const auto spatial=rig.graph.insertEffectBeforeOutput(FxEffectType::Spatial);
+    rig.graph.setParameter(spatial,1,1.0f); // amount
+    rig.graph.setParameter(spatial,2,1.0f); // width
+    rig.graph.setParameter(spatial,3,1.0f); // mix
+    rig.sync();
+    const auto out=render(rig.fx,[](int i){return sine(i,220.0f,0.3f);},int(sr));
+    double side=0.0,mono=0.0,dry=0.0;
+    for(std::size_t i=24000;i<48000;++i) {
+        side+=0.25*double(out.l[i]-out.r[i])*double(out.l[i]-out.r[i]);
+        mono+=0.25*double(out.l[i]+out.r[i])*double(out.l[i]+out.r[i]);
+        dry+=double(sine(int(i),220.0f,0.3f))*sine(int(i),220.0f,0.3f);
+    }
+    check(side>dry*0.02,"SPATIAL widens a mono source");
+    check(mono>dry*0.5,"SPATIAL mono sum keeps the signal (no catastrophic cancellation)");
+    // Worst case over frequency: sweep tones, mono amplitude never below 0.7x.
+    for(const float hz:{110.0f,220.0f,330.0f,440.0f,880.0f,1760.0f}) {
+        const auto tone=render(rig.fx,[&](int i){return sine(i,hz,0.3f);},int(sr*0.5));
+        double m=0.0,d=0.0;
+        for(std::size_t i=12000;i<24000;++i) { m+=0.25*double(tone.l[i]+tone.r[i])*double(tone.l[i]+tone.r[i]); d+=double(sine(int(i),hz,0.3f))*sine(int(i),hz,0.3f); }
+        check(std::sqrt(m/d)>0.7,"SPATIAL mono-compatible at every tested frequency");
+    }
+    check(allFinite(out) && peak(out.l)<1.5f,"SPATIAL stable and bounded");
+    rig.graph.setParameter(spatial,2,0.0f);
+    rig.sync();
+    const auto narrow=render(rig.fx,[](int i){return sine(i,220.0f,0.3f);},int(sr));
+    double narrowSide=0.0;
+    for(std::size_t i=24000;i<48000;++i) narrowSide+=0.25*double(narrow.l[i]-narrow.r[i])*double(narrow.l[i]-narrow.r[i]);
+    check(narrowSide<side*0.01,"WIDTH 0 removes the widening");
+}
+
+void combMigrationTests() {
+    FxGraph g;
+    const auto node=g.insertEffectBeforeOutput(FxEffectType::Filter);
+    (void)node;
+    auto source=makeDefaultFxGraph();
+    const auto filter=source.insertEffectBeforeOutput(FxEffectType::Filter);
+    source.setParameter(filter,1,0.6f);
+    auto bytes=encodeFxGraph(source);
+    // Rewrite the node's effect type to legacy COMB (5).
+    bool patched=false;
+    for(std::size_t i=0;i+6<bytes.size() && !patched;++i)
+        if(bytes[i]==0 && bytes[i+1]==0 && bytes[i+2]==0 && bytes[i+3]==std::uint8_t(filter) && bytes[i+4]==std::uint8_t(FxNodeKind::Effect)
+           && bytes[i+5]==0 && bytes[i+6]==std::uint8_t(FxEffectType::Filter)) { bytes[i+6]=std::uint8_t(FxEffectType::Comb); patched=true; }
+    FxGraph migrated;
+    check(patched && decodeFxGraph(bytes.data(),bytes.size(),migrated),"legacy COMB graph decodes");
+    const auto* n=migrated.findNode(filter);
+    check(n && n->effect==FxEffectType::Filter,"COMB migrates to FILTER");
+    check(n && fxChoiceIndex(*findFxParameter(*findFxEffect(FxEffectType::Filter),5),*n->parameter(5))==8,"... with TYPE = COMB");
+    check(n && std::abs(*n->parameter(1)-0.4f)<1e-4f,"... and frequency re-normalized to the wider range");
+    check(findFxEffect(FxEffectType::Comb)==nullptr,"COMB is no longer a top-level catalog effect");
+}
+
+void busModelP04Tests() {
+    BusState b;
+    check(b.buses[0].id==mainBusId && b.buses[0].label()=="MAIN","MAIN is the permanent default bus");
+    const auto one=addBus(b),two=addBus(b);
+    check(b.find(one)->label()=="BUS 1" && b.find(two)->label()=="BUS 2","first user bus is BUS 1, then BUS 2");
+    check(one==2 && two==3,"stable, monotonic BusIds");
+    InstrumentState s;
+    s.oscillators[0].id=1;s.oscillators[0].enabled=true;
+    applyLegacyOscillatorParameters(s.oscillators[0],s.parameters);
+    s.buses=b;
+    setOscBusRoute(s.oscillators[0],s.buses,0,one,0.7f); // only route -> BUS 1
+    check(removeBus(s,one) && s.buses.find(two)->label()=="BUS 2","deleting BUS 1 never renames BUS 2");
+    check(s.oscillators[0].busRouteCount==1 && s.oscillators[0].busRoutes[0].bus==mainBusId && s.oscillators[0].busRoutes[0].level==1.0f,
+          "oscillator whose only bus was deleted falls back to MAIN at unity");
+    check(s.buses.find(addBus(s.buses))->label()=="BUS 1","the lowest free number is reused for new buses");
+    while(addBus(s.buses)!=0) {}
+    check(s.buses.count==maxRenderBuses,"bus count capped at the render capacity");
+    // v26 state carrying "BUS 1" migrates to MAIN; ids and routes untouched.
+    InstrumentState legacy;
+    legacy.oscillators[0].id=1;legacy.oscillators[0].enabled=true;
+    applyLegacyOscillatorParameters(legacy.oscillators[0],legacy.parameters);
+    BusState::setBusName(legacy.buses.buses[0],"BUS 1");
+    auto bytes=encodeInstrumentState(legacy);
+    bytes[7]=26;
+    InstrumentState decoded;
+    check(decodeInstrumentState(bytes.data(),bytes.size(),decoded) && decoded.buses.buses[0].label()=="MAIN"
+          && decoded.buses.buses[0].id==mainBusId && decoded.oscillators[0].busRoutes[0].bus==mainBusId,"old BUS 1 migrates to MAIN");
+}
+
+void multiBusEngineTests() {
+    OrigamiEngine engine;
+    engine.prepare(sr,512,2);
+    auto state=engine.instrumentState();
+    const auto bus=addBus(state.buses);
+    check(engine.setBusState(state.buses),"engine accepts the bus list");
+    for(OscillatorModuleId id=2;id<=4;++id) engine.setOscillatorModuleEnabled(id,false);
+    auto module=engine.oscillatorModuleState(1);
+    addOscBusRoute(module,state.buses,bus,0.5f);
+    check(engine.setOscillatorModuleState(1,module),"oscillator sends to MAIN 1.0 and BUS 1 0.5");
+    engine.noteOn(60,1.0f);
+    std::vector<float> l(4096),r(4096);
+    std::vector<std::vector<float>> aux(2*(maxRenderBuses-1),std::vector<float>(4096,9.0f));
+    float* out[2]{l.data(),r.data()};
+    std::array<float*,2*(maxRenderBuses-1)> auxPtr{};
+    for(std::size_t i=0;i<aux.size();++i) auxPtr[i]=aux[i].data();
+    check(engine.beginHostBlock(2) && engine.processSpan(out,2,4096,auxPtr.data()),"multi-bus span renders");
+    engine.endHostBlock();
+    check(engine.renderBusCount()==2,"two render slots (MAIN + BUS 1)");
+    float ratio=0.0f;int n=0;
+    for(int i=1024;i<4096;++i) if(std::abs(l[std::size_t(i)])>1e-4f) { ratio+=aux[0][std::size_t(i)]/l[std::size_t(i)]; ++n; }
+    check(n>100 && std::abs(ratio/float(n)-0.5f)<1e-3f,"BUS 1 receives exactly its own send level of the same signal");
+    check(peak(aux[2])==0.0f,"unused bus slots are silent (cleared, never stale)");
+}
+
+void workspaceTests() {
+    FxWorkspace ws;
+    check(ws.buses()==std::vector<FxBusId>{fxMainBusId},"workspace starts with MAIN only");
+    auto& main=ws.document(fxMainBusId);
+    main.edit([](FxGraph& g){return g.insertEffectBeforeOutput(FxEffectType::Delay)!=0;});
+    auto& bus=ws.document(5);
+    bus.edit([](FxGraph& g){return g.insertEffectBeforeOutput(FxEffectType::Reverb)!=0;});
+    check(bus.graph().sourceForBus(5)!=invalidFxNodeId,"each bus graph's input is its own bus");
+    check(&ws.document(fxMainBusId)==&main && main.graph().nodes().size()==3,"switching buses never touches another bus graph");
+    check(!ws.removeBus(fxMainBusId),"MAIN graph cannot be removed");
+    FxGlobalSettings g;g.width=0.5f;ws.setGlobals(g);
+    const auto bytes=ws.encode();
+    FxWorkspace restored;
+    check(restored.decode(bytes.data(),bytes.size()) && restored.buses().size()==2
+          && restored.find(5)->graph()==bus.graph() && restored.globals().width==0.5f,"all bus graphs + Global FX round trip");
+    auto legacy=makeSerialChainTemplate();
+    FxGlobalSettings legacyGlobals;legacyGlobals.outputGainDb=-3.0f;legacy.setGlobals(legacyGlobals);
+    restored.adoptLegacyMainGraph(legacy);
+    check(restored.globals().outputGainDb==-3.0f && restored.find(fxMainBusId)->graph().globals().outputGainDb==0.0f,
+          "P02/P03 MAIN graph adopted; its globals become Global FX (not MAIN bus FX)");
+}
+
+void environmentTests() {
+    FxEnvironment env;
+    env.prepare(sr);
+    auto main=makeDefaultFxGraph(fxMainBusId);
+    auto aux=makeDefaultFxGraph(7);
+    const auto gain=aux.insertEffectBeforeOutput(FxEffectType::Gain);
+    aux.setParameter(gain,1,normalizedFor(FxEffectType::Gain,1,-6.0206f));
+    env.sync({{fxMainBusId,&main},{7,&aux}},FxGlobalSettings{});
+    std::vector<float> l(2048,0.2f),r(2048,0.2f);
+    std::vector<std::vector<float>> buffers(2*(maxRenderBuses-1),std::vector<float>(2048,0.0f));
+    std::fill(buffers[0].begin(),buffers[0].end(),0.4f);
+    std::fill(buffers[1].begin(),buffers[1].end(),0.4f);
+    std::array<float*,2*(maxRenderBuses-1)> ptr{};
+    for(std::size_t i=0;i<buffers.size();++i) ptr[i]=buffers[i].data();
+    for(int pass=0;pass<4;++pass) {
+        std::fill(l.begin(),l.end(),0.2f);std::fill(r.begin(),r.end(),0.2f);
+        std::fill(buffers[0].begin(),buffers[0].end(),0.4f);std::fill(buffers[1].begin(),buffers[1].end(),0.4f);
+        env.process(l.data(),r.data(),ptr.data(),2,2048);
+    }
+    check(std::abs(l.back()-(0.2f+0.4f*0.5f))<1e-3f,"master = MAIN + BUS processed by its own graph (-6 dB)");
+    // Neutral MAIN-only state is a bit-exact pass-through.
+    FxEnvironment neutral;
+    neutral.prepare(sr);
+    auto clean=makeDefaultFxGraph();
+    neutral.sync({{fxMainBusId,&clean}},FxGlobalSettings{});
+    std::vector<float> a(512),b(512);
+    for(int i=0;i<512;++i) a[std::size_t(i)]=b[std::size_t(i)]=sine(i);
+    neutral.process(a.data(),b.data(),nullptr,1,512);
+    bool exact=true;
+    for(int i=0;i<512;++i) exact&=a[std::size_t(i)]==sine(i);
+    check(exact,"MAIN-only neutral environment is bit-exact");
+}
 }
 
 int main() {
@@ -793,6 +1063,16 @@ int main() {
     fxOrderRendererTests();
     authoringTests();
     codecV3Tests();
+    filterTests();
+    compressorTests();
+    equalizerTests();
+    modulationEffectTests();
+    spatialTests();
+    combMigrationTests();
+    busModelP04Tests();
+    multiBusEngineTests();
+    workspaceTests();
+    environmentTests();
     if(failures!=0) {
         std::cerr<<failures<<" of "<<checks<<" FX checks failed\n";
         return 1;

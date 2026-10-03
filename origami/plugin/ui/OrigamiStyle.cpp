@@ -202,7 +202,11 @@ void OrigamiLookAndFeel::drawRotarySlider(juce::Graphics& g,int x,int y,int widt
                                           float sliderPos,float rotaryStartAngle,float rotaryEndAngle,
                                           juce::Slider& slider) {
     auto bounds=juce::Rectangle<float>(float(x),float(y),float(width),float(height)).reduced(3.0f);
-    const float diameter=juce::jmin(bounds.getWidth(),bounds.getHeight());
+    // mct-origami-unified-routing-core-fx-p04: optional visual scale keeps a
+    // comfortable hit area while drawing a smaller, secondary knob.
+    const float visualScale=slider.getProperties().contains("mct.origami.knobScale")
+        ? juce::jlimit(0.3f,1.0f,float(double(slider.getProperties()["mct.origami.knobScale"]))) : 1.0f;
+    const float diameter=juce::jmin(bounds.getWidth(),bounds.getHeight())*visualScale;
     auto circle=juce::Rectangle<float>(diameter,diameter).withCentre(bounds.getCentre());
 
     if(slider.getName()=="OSC PROCESS BIPOLAR") {

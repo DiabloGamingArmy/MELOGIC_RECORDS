@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 #pragma once
@@ -85,7 +86,16 @@ public:
     void prepare(double sampleRate);
     // Compile if topology changed, push parameters + globals, publish.
     // Returns false (keeping the previous plan) if the graph is invalid.
-    bool sync(const FxGraph&);
+    // applyGraphGlobals=false: bus renderers stay graph-only (neutral globals);
+    // GLOBAL FX is applied once on the summed master by FxEnvironment.
+    bool sync(const FxGraph&,bool applyGraphGlobals=true);
+    void setBypassMode(FxBypassMode) noexcept;
+    // Which bus this renderer serves (modulation slots are bus-qualified).
+    // Rebinding to a different bus drops cached effect instances so no DSP
+    // state leaks between bus graphs; message thread only.
+    void bind(FxBusId);
+    FxBusId boundBus() const noexcept { return bus_.load(std::memory_order_relaxed); }
+    bool identity() const noexcept { return identity_.load(std::memory_order_relaxed); }
     std::uint64_t compileCount() const noexcept { return compileCount_; }
 
     // ---- UI telemetry: bounded, lock-free, consumed with reset.
@@ -123,6 +133,8 @@ private:
     // Globals: message thread writes targets, audio thread smooths.
     std::atomic<float> inputGain_{1.0f},dryWet_{1.0f},width_{1.0f},outputGain_{1.0f};
     std::atomic<int> bypassMode_{static_cast<int>(FxBypassMode::Crossfade)};
+    std::atomic<FxBusId> bus_{fxMainBusId};
+    std::atomic<bool> identity_{true};
     float inputGainNow_=1.0f,dryWetNow_=1.0f,widthNow_=1.0f,outputGainNow_=1.0f;
     float postGainNow_=1.0f,postGainTarget_=1.0f;
     bool postGainActive_=false;

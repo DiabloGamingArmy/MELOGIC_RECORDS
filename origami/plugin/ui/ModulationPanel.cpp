@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-v40.5.3-sequencer-transparent-hit-target
 // mct-origami-v40.5.2-sequencer-color-layout
 // mct-origami-v40.5.1-sequencer-reference-ui
@@ -29,6 +30,7 @@
 // mct-origami-v34.2.1-performance-reinforcement
 // mct-origami-v34.3.0-lfo-interaction-mod-properties
 #include "ModulationPanel.h"
+#include "SourceEntity.h"
 #include "ModulationUiTelemetry.h"
 #include "NativeChoiceMenu.h"
 #include <algorithm>
@@ -2381,6 +2383,13 @@ void ModulationPanel::paintSourceHistoryBackgrounds(juce::Graphics& g) {
 void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
     juce::Graphics::ScopedSaveState viewportClip(g);
     g.reduceClipRegion(sourceViewport_.getBounds());
+    // Six-dot grip: every source card is draggable onto any knob, on any page.
+    for(std::size_t tabIndex=0;tabIndex<tabs_.size();++tabIndex) {
+        if(!tabs_[tabIndex].isVisible()) continue;
+        const auto card=getLocalArea(&sourceContent_,tabs_[tabIndex].getBounds()).toFloat();
+        if(!card.intersects(sourceViewport_.getBounds().toFloat())) continue;
+        paintDragGrip(g,card.withWidth(sourceEntityGripWidth+6.0f).withTrimmedLeft(4.0f).withHeight(std::min(card.getHeight(),18.0f)));
+    }
 
     for(std::size_t tabIndex=0;tabIndex<tabs_.size();++tabIndex) {
         const auto source=sourceForTab(tabIndex);
@@ -2401,64 +2410,8 @@ void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
         const auto shown=juce::jmin<std::size_t>(count,6);
         for(std::size_t dot=0;dot<shown;++dot) {
             const auto circle=routeDotBounds(tabIndex,dot,count);
-            const float amount=juce::jlimit(-1.0f,1.0f,matches[dot]->amount);
-            const float magnitude=std::abs(amount);
-
-            const auto c=circle.getCentre();
-            const float radius=circle.getWidth()*0.5f-1.75f;
-
-            g.setColour(Palette::background().withAlpha(0.96f));
-            g.fillEllipse(circle);
-            g.setColour(Palette::borderStrong().withAlpha(0.72f));
-            g.drawEllipse(circle.reduced(1.15f),1.25f);
-
-            // 0% reference is always 12 o'clock.
-            g.setColour(Palette::text().withAlpha(0.56f));
-            g.drawLine(c.x,c.y-radius,
-                       c.x,c.y-radius+3.1f,1.15f);
-
-            // Clockwise magnitude ring. Explicit screen-space trig keeps the
-            // direction unambiguous: -pi/2 is 12 o'clock and increasing angle
-            // moves clockwise because screen Y increases downward.
-            if(magnitude>0.001f) {
-                constexpr int segments=48;
-                const int used=juce::jmax(1,juce::roundToInt(magnitude*segments));
-                juce::Path arc;
-
-                for(int step=0;step<=used;++step) {
-                    const float localT=magnitude*
-                        (static_cast<float>(step)/static_cast<float>(used));
-                    const float angle=-juce::MathConstants<float>::halfPi+
-                                      juce::MathConstants<float>::twoPi*localT;
-                    const juce::Point<float> p{
-                        c.x+std::cos(angle)*radius,
-                        c.y+std::sin(angle)*radius
-                    };
-                    if(step==0) arc.startNewSubPath(p);
-                    else arc.lineTo(p);
-                }
-
-                auto colour=signalSourceColour();
-                if(amount<0.0f) colour=colour.darker(0.34f);
-                g.setColour(colour.withAlpha(0.98f));
-                g.strokePath(arc,juce::PathStrokeType(
-                    2.75f,
-                    juce::PathStrokeType::curved,
-                    juce::PathStrokeType::rounded));
-
-                const float endAngle=-juce::MathConstants<float>::halfPi+
-                                     juce::MathConstants<float>::twoPi*magnitude;
-                const juce::Point<float> endpoint{
-                    c.x+std::cos(endAngle)*radius,
-                    c.y+std::sin(endAngle)*radius
-                };
-                g.setColour(Palette::text().withAlpha(0.95f));
-                g.fillEllipse(juce::Rectangle<float>(3.2f,3.2f).withCentre(endpoint));
-            } else {
-                g.setColour(Palette::text().withAlpha(0.84f));
-                g.fillEllipse(juce::Rectangle<float>(3.0f,3.0f)
-                                  .withCentre({c.x,c.y-radius}));
-            }
+            // Shared source-entity vocabulary (also used by FX MODULATORS).
+            paintModulationMagnitudeRing(g,circle,matches[dot]->amount);
         }
 
         if(count>shown) {

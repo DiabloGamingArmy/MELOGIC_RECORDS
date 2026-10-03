@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
@@ -302,6 +303,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         level.setRange(0.0,1.0,0.001);
         level.setMouseDragSensitivity(180);
         level.setDoubleClickReturnValue(true,1.0);
+        // A send level, not a primary control: small knob, full-size hit area.
+        level.getProperties().set("mct.origami.knobScale",0.62);
         level.onValueChange=[this,i] {
             if(syncingBus_ || !moduleGetter_ || !moduleSetter_) return;
             auto state=moduleGetter_(display_.id);
@@ -1333,6 +1336,7 @@ void OscillatorCard::resized() {
             &phaseRandom_,&phaseFixed_,&phaseFree_,&phaseAngle_,&phaseRandomRange_,
             &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_})
             component->setVisible(phasePage);
+        if(routingPage) refreshRoutingWorkspace(); // route count may have changed elsewhere
         for(std::size_t i=0;i<maxOscBusRoutes;++i) {
             const bool visible=routingPage && i<busRowCount_;
             busSelectors_[i].setVisible(visible);
@@ -1615,7 +1619,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
             auto note=section.withTop(busAdd_.getBottom()+8).withHeight(30);
             g.setColour(Palette::muted().withAlpha(.75f));
             g.setFont(juce::FontOptions(7.6f));
-            g.drawFittedText("BUS 1 feeds the FX page and MASTER OUT. Additional buses are created in the Mixer.",
+            g.drawFittedText("MAIN is the permanent output bus. Add buses in FX > BUSES; each has its own FX graph.",
                              note,juce::Justification::centredLeft,2,1.0f);
         }
         return;

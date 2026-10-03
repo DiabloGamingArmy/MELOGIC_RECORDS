@@ -22,6 +22,9 @@ public:
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     void paintOverChildren(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    bool filterDragStarted_=false;
     ParameterSetter setter_;
     ParameterGetter getter_;
     ModulationBindings bindings_;
@@ -29,6 +32,10 @@ private:
     juce::Slider cutoff_,resonance_;
     juce::Label cutoffLabel_,resonanceLabel_;
     juce::TextButton filter1_{"FILTER 1"},filterAdd_{"+"},filterRemove_{"-"};
+    struct Grip final : juce::Component {
+        Grip() { setInterceptsMouseClicks(false,false); }
+        void paint(juce::Graphics&) override;
+    } filterGrip_;
     juce::Viewport filterViewport_;
     juce::Component filterContent_;
     juce::Rectangle<int> filterRail_{};
