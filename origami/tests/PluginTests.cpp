@@ -1747,7 +1747,7 @@ void fxGraphUxAudit() {
     const auto* b=canvas.nodeComponent(out);
     const auto mid=((a->portCentre(false,0)+a->getPosition().toFloat())+(b->portCentre(true,0)+b->getPosition().toFloat()))*0.5f;
     check(canvas.connectionAt(mid)==wire,"connection hit on the curve");
-    check(canvas.connectionAt(mid+juce::Point<float>(0.0f,ui::FxCanvas::wireHitRadius-2.0f))==wire,"generous invisible hit corridor");
+    check(canvas.connectionAt(mid+juce::Point<float>(0.0f,canvas.wireHitRadius()-2.0f))==wire,"generous invisible hit corridor");
     check(!canvas.connectionAt(mid+juce::Point<float>(0.0f,40.0f)).has_value(),"empty canvas is not a connection");
     check(canvas.toGraph(mid).x==mid.x && canvas.toGraph(mid).y==mid.y,"canvas -> graph coordinates");
 
@@ -1770,12 +1770,14 @@ void fxGraphUxAudit() {
     check(inserted!=0 && page->graph().validate() && page->graph().connectionAt({src,0},false)->to.node==inserted
           && page->graph().connectionAt({out,0},true)->from.node==inserted,"insert on connection: A -> X -> B");
     const auto* insertedNode=page->graph().findNode(inserted);
-    check(std::abs(insertedNode->position.x+106.0f-mid.x)<1.0f && std::abs(insertedNode->position.y+88.0f-mid.y)<1.0f,
+    const auto effectSize=ui::FxNodeComponent::sizeFor(*insertedNode);
+    const float halfW=float(effectSize.getWidth())*0.5f,halfH=float(effectSize.getHeight())*0.5f;
+    check(std::abs(insertedNode->position.x+halfW-mid.x)<1.0f && std::abs(insertedNode->position.y+halfH-mid.y)<1.0f,
           "inserted module is centred on the click");
     const auto before=page->graph();
     check(page->insertEffectOnConnection(9999,FxEffectType::Drive,{0,0})==0 && page->graph()==before,"failed insert preserves graph");
     const auto free=page->addEffectAt(FxEffectType::Reverb,{900.0f,300.0f});
-    check(free!=0 && page->graph().findNode(free)->position.x==900.0f-106.0f,"right-click empty canvas adds at the click");
+    check(free!=0 && page->graph().findNode(free)->position.x==900.0f-halfW,"right-click empty canvas adds at the click");
 
     // Z-order: the active node comes to the front; DSP order is unaffected.
     const auto graphBefore=page->graph();
@@ -1800,6 +1802,246 @@ void fxGraphUxAudit() {
     check(page->graph().sourceForBus(mct::origami::mainBusId)==src,"BUS 1 is the graph source");
     check(page->deleteNode(inserted) && page->selectedNode()==invalidFxNodeId,"deleting selected clears selection");
     check(page->graph().connectionAt({out,0},true)->from.node==src,"deleting the only effect restores BUS 1 -> MASTER OUT");
+}
+
+// mct-origami-fx-modulation-graph-ux-p03
+void fxWorkspaceP03Audit() {
+    using namespace mct::origami::fx;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    check(editor!=nullptr,"Origami editor");
+    ui::FxPage* page=nullptr;
+    juce::TextButton* fxTab=nullptr;
+    juce::TextButton* utility=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) page=candidate;
+        if(auto* b=dynamic_cast<juce::TextButton*>(&c)) {
+            if(b->getButtonText()=="FX") fxTab=b;
+            if(b->getName()=="Origami utility menu") utility=b;
+        }
+    });
+    check(page && fxTab && utility,"FX page, FX tab and utility menu present");
+    check(utility->isEnabled(),"header ... utility menu enabled");
+
+    // Build BUS 1 -> DELAY -> MASTER OUT.
+    FxNodeId delay=0;
+    p.getUiFxDocument().edit([&](FxGraph& g){delay=g.insertEffectBeforeOutput(FxEffectType::Delay);return delay!=0;});
+    page->syncFromModel();
+    auto* delayNode=page->canvas().nodeComponent(delay);
+    juce::Slider* feedbackKnob=nullptr;
+    walk(*delayNode,[&](auto& c){if(auto* s=dynamic_cast<juce::Slider*>(&c)) if(s->getName()=="FX "+juce::String(delay)+" P2") feedbackKnob=s;});
+    check(feedbackKnob!=nullptr,"delay feedback knob");
+    const auto& props=feedbackKnob->getProperties();
+    check(int(props["mct.mod.destination"])==int(mct::origami::ModDestination::FxParameter)
+          && unsigned(int(props["mct.mod.oscillator"]))==delay && int(props["mct.mod.itemId"])==2,
+          "FX knob advertises a stable canonical destination (node + parameter id)");
+
+    // Cross-page drag: Synth -> hover FX tab -> FX opens -> same drag drops on a knob.
+    check(editor->currentPage()==0,"starts on SYNTH");
+    editor->beginModulationDrag(mct::origami::ModSource::Env1);
+    const auto tabPoint=editor->getLocalArea(fxTab,fxTab->getLocalBounds()).getCentre();
+    editor->updateModulationDragHover(tabPoint,1000.0);
+    editor->updateModulationDragHover(tabPoint,1200.0);
+    check(editor->currentPage()==0,"hovering under the threshold does not switch pages");
+    editor->updateModulationDragHover({5,5},1250.0);
+    editor->updateModulationDragHover(tabPoint,1300.0);
+    editor->updateModulationDragHover(tabPoint,1500.0);
+    check(editor->currentPage()==0,"passing over the tab restarts the hover timer");
+    editor->updateModulationDragHover(tabPoint,1650.0);
+    check(editor->currentPage()==2 && page->isVisible(),"deliberate hover switches to FX");
+    check(editor->modulationDragContext().active && editor->modulationDragContext().source==mct::origami::ModSource::Env1
+          && editor->modulationDragContext().originPage==0,"the drag context survives the page switch");
+    check(editor->assignModulator(editor->modulationDragContext().source,*feedbackKnob),"drop creates the route");
+    editor->endModulationDrag();
+    check(!editor->modulationDragContext().active,"drag context ends on drop");
+    const auto countRoutes=[&](mct::origami::ModSource source) {
+        int n=0;
+        for(const auto& r:p.getUiInstrumentState().modulation.routes)
+            n+=r.id && r.source==source && r.destination==mct::origami::fxParameterAddress(delay,2);
+        return n;
+    };
+    check(countRoutes(mct::origami::ModSource::Env1)==1,"ENV 1 -> DELAY / FEEDBACK in the canonical modulation state");
+
+    // Right-click assignment (shared knob menu action): LFO, no duplicates.
+    check(editor->assignModulator(mct::origami::ModSource::Lfo1,*feedbackKnob),"assign LFO 1");
+    check(editor->assignModulator(mct::origami::ModSource::Lfo1,*feedbackKnob) && countRoutes(mct::origami::ModSource::Lfo1)==1,
+          "re-assigning an existing source does not duplicate the route");
+    juce::Slider plain;
+    check(!editor->assignModulator(mct::origami::ModSource::Env2,plain),"non-destination control rejects the drop");
+    float lfoAmount=0.0f;bool lfoBipolar=false;
+    for(const auto& r:p.getUiInstrumentState().modulation.routes)
+        if(r.id && r.source==mct::origami::ModSource::Lfo1) { lfoAmount=r.amount; lfoBipolar=r.bipolar; }
+    check(std::abs(lfoAmount-0.5f)<1e-6f && lfoBipolar,"default amount/polarity match Synth drag-and-drop");
+
+    // Matrix sees FX destinations of the same system.
+    bool matrixListsFx=false;
+    walk(*editor,[&](auto& c){if(auto* combo=dynamic_cast<juce::ComboBox*>(&c))
+        for(int i=0;i<combo->getNumItems();++i) matrixListsFx|=combo->getItemText(i)=="FB";});
+    // Rows only exist once the matrix rebuilds; force it.
+    juce::TextButton* matrixTab=nullptr;
+    walk(*editor,[&](auto& c){if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="MATRIX") matrixTab=b;});
+    matrixTab->onClick();
+    walk(*editor,[&](auto& c){if(auto* m=dynamic_cast<ui::ModulationMatrix*>(&c)) m->syncFromModel();});
+    walk(*editor,[&](auto& c){if(auto* combo=dynamic_cast<juce::ComboBox*>(&c))
+        for(int i=0;i<combo->getNumItems();++i) matrixListsFx|=combo->getItemText(i)=="FB";});
+    check(matrixListsFx,"Matrix destination menus include FX parameters");
+    fxTab->onClick();
+
+    // MODULATION tab lists the routes targeting the selected effect.
+    page->selectNode(delay);
+    page->selectParameterTab(1);
+    page->syncFromModel();
+    check(page->modulationRowCount()==2,"MODULATION tab shows ENV 1 and LFO 1 routes");
+    page->selectParameterTab(2);
+    check(page->parameterTabName()=="ADVANCED","ADVANCED tab");
+    page->selectParameterTab(0);
+
+    // Deleting the node prunes its routes: no dangling destinations.
+    check(page->deleteNode(delay),"delete delay");
+    check(countRoutes(mct::origami::ModSource::Env1)==0 && countRoutes(mct::origami::ModSource::Lfo1)==0,
+          "deleting an FX node removes its modulation routes");
+
+    // Viewport transforms.
+    auto& view=page->graphView();
+    view.setView(1.0f,{0,0});
+    const juce::Point<float> probe{240.0f,170.0f};
+    for(const auto& [z,pan]:std::vector<std::pair<float,juce::Point<float>>>{{1.0f,{0,0}},{2.0f,{0,0}},{0.5f,{0,0}},{1.0f,{120,80}},{1.7f,{300,140}}}) {
+        view.setView(z,pan);
+        const auto g=view.viewToGraph(probe);
+        const auto back=view.graphToView(g);
+        check(std::abs(back.x-probe.x)<0.01f && std::abs(back.y-probe.y)<0.01f,"graph <-> view round trip");
+    }
+    view.setView(1.0f,{0,0});
+    const auto anchorGraph=view.viewToGraph(probe);
+    view.zoomAround(2.0f,probe);
+    const auto stillThere=view.viewToGraph(probe);
+    check(std::abs(stillThere.x-anchorGraph.x)<0.5f && std::abs(stillThere.y-anchorGraph.y)<0.5f,"zoom keeps the point under the pointer");
+    check(view.zoom()==2.0f,"zoom applied");
+    view.setView(10.0f,{0,0});
+    check(view.zoom()==ui::FxGraphView::maxZoom,"zoom clamps");
+    // Hit testing and insertion stay in graph space under zoom + pan.
+    view.setView(1.6f,{60,40});
+    const auto out=page->graph().outputNode(),src=page->graph().sourceNode();
+    const auto wire=page->graph().connectionAt({out,0},true)->id;
+    const auto* a=page->canvas().nodeComponent(src);
+    const auto* b=page->canvas().nodeComponent(out);
+    const auto mid=((a->portCentre(false,0)+a->getPosition().toFloat())+(b->portCentre(true,0)+b->getPosition().toFloat()))*0.5f;
+    const auto viewPoint=view.graphToView({mid.x,mid.y});
+    const auto graphPoint=view.viewToGraph(viewPoint);
+    check(page->canvas().connectionAt({graphPoint.x,graphPoint.y})==wire,"cable hit test is correct under zoom + pan");
+    const auto inserted=page->insertModuleOnConnection(wire,{FxModuleKind::Effect,FxEffectType::Drive,0},graphPoint);
+    check(inserted && page->graph().validate(),"insertion at a zoomed/panned click");
+    view.setView(1.0f,{0,0});
+    page->zoomToFit();
+    check(view.zoom()>=ui::FxGraphView::minZoom && view.zoom()<=ui::FxGraphView::maxZoom,"fit graph");
+
+    // MASTER OUT accessory belongs to the node.
+    auto* outComponent=page->canvas().nodeComponent(out);
+    auto* accessory=outComponent->accessory();
+    check(accessory && accessory->getParentComponent()==outComponent && accessory->isVisible(),"accessory is owned by MASTER OUT");
+    const auto relative=accessory->getBounds();
+    page->commitMove(out,{900,300});
+    check(outComponent->getPosition()==juce::Point<int>(900,300) && accessory->getBounds()==relative,"accessory moves with MASTER OUT");
+    const auto beforeAccessory=page->graph().connectionAt({out,0},true)->from.node;
+    const auto viaAccessory=page->insertBeforeOutput({FxModuleKind::Effect,FxEffectType::Reverb,0});
+    check(page->graph().connectionAt({out,0},true)->from.node==viaAccessory
+          && page->graph().connectionAt({viaAccessory,0},true)->from.node==beforeAccessory,"accessory inserts right before MASTER OUT");
+
+    // Add Module catalog: one list, only real modules.
+    const auto ids=page->moduleMenuIds(true);
+    const auto has=[&ids](int id){return std::find(ids.begin(),ids.end(),id)!=ids.end();};
+    check(has(int(FxEffectType::Delay)) && has(ui::FxModuleMenu::splitId) && has(ui::FxModuleMenu::mergeId),"Add Module: effects + routing");
+    check(!has(ui::FxModuleMenu::sendId) && !has(ui::FxModuleMenu::returnId) && !has(ui::FxModuleMenu::externalId),"pending modules are not active");
+    check(!has(ui::FxModuleMenu::busBase+1),"BUS 1 already in the graph is not offered again");
+    const auto split=page->addModuleAt({FxModuleKind::Split,FxEffectType::None,0},{400,500});
+    const auto merge=page->addModuleAt({FxModuleKind::Merge,FxEffectType::None,0},{700,500});
+    check(page->graph().findNode(split)->ports.outputs==2 && page->graph().findNode(merge)->ports.inputs==2,"Split/Merge authoring");
+    check(page->connectPorts({split,0},{merge,0}) && page->graph().validate(),"manual port connection");
+    check(!page->connectPorts({merge,0},{split,0}),"cycle-forming connection rejected");
+
+    // Sidebar references canonical objects.
+    const auto& modulators=page->sidebar().rows(ui::FxSidebar::Tab::Modulators);
+    bool envDrag=false;
+    for(const auto& r:modulators) envDrag|=r.label=="ENV 1" && r.dragDescription=="MCT_MOD_SOURCE:1";
+    check(envDrag,"MODULATORS drag the same source description as SYNTH");
+    bool splitRow=false,sendPending=false,bus1=false,filterTruth=false;
+    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Routes)) {
+        splitRow|=r.label=="SPLIT" && r.dragDescription=="MCT_FX_MODULE:1001";
+        sendPending|=r.label=="SEND" && !r.enabled;
+    }
+    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Sources)) bus1|=r.label=="BUS 1" && r.active;
+    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Filters)) filterTruth|=r.label=="FILTER 1" && r.detail.contains("before BUS 1");
+    check(splitRow && sendPending && bus1 && filterTruth,"SOURCES / FILTERS / ROUTES rows are truthful");
+
+    // Clear: Origami-native confirmation, one undoable transaction.
+    const auto beforeClear=page->graph();
+    page->requestClear();
+    check(page->clearConfirmationVisible() && page->graph()==beforeClear,"CLEAR asks first and changes nothing");
+    page->confirmClear();
+    check(!page->clearConfirmationVisible() && page->graph().nodes().size()==2
+          && page->graph().connectionAt({page->graph().outputNode(),0},true)!=nullptr,"CLEAR restores BUS 1 -> MASTER OUT");
+    page->undo();
+    check(page->graph()==beforeClear,"one UNDO restores the complete graph");
+
+    // Global FX popup (Origami-native) from the utility menu.
+    editor->openGlobalFx();
+    check(editor->globalFxVisible(),"Global FX popup opens");
+    juce::ComboBox* order=nullptr;
+    walk(*editor,[&](auto& c){if(auto* combo=dynamic_cast<juce::ComboBox*>(&c)) if(combo->getName()=="FX Global order") order=combo;});
+    check(order && order->isEnabled() && order->getNumItems()==2,"FX ORDER is a real choice");
+    order->setSelectedId(int(FxOrder::PreMaster),juce::sendNotificationSync);
+    check(p.getUiFxDocument().graph().globals().order==FxOrder::PreMaster,"FX ORDER edits the canonical globals");
+}
+
+void fxModulationAudioAudit() {
+    using namespace mct::origami::fx;
+    constexpr int blockSize=256;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,blockSize);
+    FxNodeId limiter=0;
+    p.getUiFxDocument().edit([&](FxGraph& g){limiter=g.insertEffectBeforeOutput(FxEffectType::Limiter);return limiter!=0;});
+    // MACRO 1 -> LIMITER / GAIN (+0..24 dB span): modulation reaches DSP via the
+    // engine's canonical evaluation and the prepared FX plan.
+    const unsigned id=p.addUiRoute();
+    auto state=p.getUiInstrumentState();
+    for(auto& r:state.modulation.routes) if(r.id==id) {
+        r.source=mct::origami::ModSource::Macro1;
+        r.destination=mct::origami::fxParameterAddress(limiter,1);
+        r.amount=0.5f;r.enabled=true;r.bipolar=false;
+        check(p.setUiRoute(r),"FX route accepted at the host boundary");
+    }
+    const auto rmsAfter=[&](float macro) {
+        p.setUiMacro(0,macro);
+        juce::AudioBuffer<float> audio(2,blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,57,1.0f),0);
+        for(int n=0;n<40;++n) { audio.clear();p.processBlock(audio,midi);midi.clear(); }
+        double sum=0.0;
+        for(int n=0;n<16;++n) { audio.clear();p.processBlock(audio,midi);for(int i=0;i<blockSize;++i) sum+=double(audio.getSample(0,i))*audio.getSample(0,i); }
+        return std::sqrt(sum/double(16*blockSize));
+    };
+    const double low=rmsAfter(0.0f),high=rmsAfter(1.0f);
+    check(high>low*2.5,"MACRO -> FX parameter audibly changes the DSP");
+
+    // FX ORDER through processBlock: with a linear (neutral) graph moving the
+    // master gain after the FX graph preserves the level. Fresh processors,
+    // one oscillator: deterministic regardless of start phase.
+    const auto orderRms=[&](FxOrder order) {
+        auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& q=*owner;
+        q.prepareToPlay(48000.0,blockSize);
+        disableExtraOscillators(q);
+        q.getUiFxDocument().edit([&](FxGraph& g){FxGlobalSettings s=g.globals();s.order=order;g.setGlobals(s);return true;});
+        juce::AudioBuffer<float> audio(2,blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,57,1.0f),0);
+        for(int n=0;n<40;++n) { audio.clear();q.processBlock(audio,midi);midi.clear(); }
+        double sum=0.0;
+        for(int n=0;n<16;++n) { audio.clear();q.processBlock(audio,midi);for(int i=0;i<blockSize;++i) sum+=double(audio.getSample(0,i))*audio.getSample(0,i); }
+        return std::sqrt(sum/double(16*blockSize));
+    };
+    const double post=orderRms(FxOrder::PostMaster),pre=orderRms(FxOrder::PreMaster);
+    check(post>0.001 && std::abs(pre/post-1.0)<0.02,"PRE MASTER with a linear graph preserves level (master moved after FX)");
 }
 
 float blockRms(const juce::AudioBuffer<float>& audio) {
@@ -1905,6 +2147,8 @@ void run() {
     fxPageAudit();
     fxGraphUxAudit();
     fxAudioPathAudit();
+    fxWorkspaceP03Audit();
+    fxModulationAudioAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

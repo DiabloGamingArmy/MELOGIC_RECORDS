@@ -1,6 +1,8 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 #pragma once
 #include "core/fx/FxGraph.h"
+#include "core/modulation/Modulation.h"
 #include <array>
 #include <atomic>
 #include <map>
@@ -28,8 +30,11 @@ struct FxNodeInstance {
     std::atomic<bool> enabled{true};
     // Audio-thread-owned.
     std::array<float,maxFxParameters> latched{};
-    float wet=1.0f;          // bypass crossfade position (1 = processing)
+    // Offsets from the canonical modulation system (normalized span fraction).
+    std::array<float,maxFxParameters> modulation{};
+    float wet=1.0f;          // bypass crossfade / tail-gate position (1 = processing)
     bool processing=true;    // false once fully bypassed: DSP is skipped
+    int silentSamples=0;     // TAIL PRESERVE: consecutive near-silent tail samples
 };
 
 enum class FxStepKind : std::uint8_t { Source, Effect, Split, Merge, Output };
@@ -87,7 +92,10 @@ public:
     std::pair<float,float> consumePeaks() noexcept;
 
     // ---- realtime
-    void process(float* left,float* right,int samples) noexcept;
+    // modulation: FX destinations of the canonical modulation system (may be null).
+    // preMaster: FX ORDER = PRE MASTER; masterGain is then applied after the graph.
+    void process(float* left,float* right,int samples,const FxModulationOutput* modulation=nullptr,
+                 bool preMaster=false,float masterGain=1.0f) noexcept;
 
 private:
     static std::vector<std::uint32_t> topologyKey(const FxGraph&);
@@ -95,6 +103,8 @@ private:
     void drainRetired() noexcept;
     void adoptPending() noexcept;
     void renderChunk(float* left,float* right,int n) noexcept;
+    void applyModulation(const FxModulationOutput*) noexcept;
+    void processEffect(const FxPlanStep&,float* outL,float* outR,int n) noexcept;
     float* buffer(std::size_t index,int channel) noexcept {
         return pool_.data()+(index*2+static_cast<std::size_t>(channel))*chunk;
     }
@@ -112,10 +122,19 @@ private:
 
     // Globals: message thread writes targets, audio thread smooths.
     std::atomic<float> inputGain_{1.0f},dryWet_{1.0f},width_{1.0f},outputGain_{1.0f};
+    std::atomic<int> bypassMode_{static_cast<int>(FxBypassMode::Crossfade)};
     float inputGainNow_=1.0f,dryWetNow_=1.0f,widthNow_=1.0f,outputGainNow_=1.0f;
+    float postGainNow_=1.0f,postGainTarget_=1.0f;
+    bool postGainActive_=false;
+    double sampleRate_=48000.0;
+    // Modulation slot -> (instance, parameter index), resolved only on change.
+    std::uint64_t modulationGeneration_=~std::uint64_t{0};
+    const PreparedFxPlan* modulationPlan_=nullptr;
+    std::array<FxNodeInstance*,maxFxModulationSlots> modulationTarget_{};
+    std::array<std::uint8_t,maxFxModulationSlots> modulationIndex_{};
     float smoothing_=0.999f,bypassStep_=0.01f;
 
-    std::vector<float> pool_;             // (maxNodes + 2) stereo chunk buffers
+    std::vector<float> pool_;             // (maxNodes + 3) stereo chunk buffers
     std::atomic<float> peakLeft_{0.0f},peakRight_{0.0f};
 };
 }

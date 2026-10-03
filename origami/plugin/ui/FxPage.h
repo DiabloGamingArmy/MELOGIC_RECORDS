@@ -1,8 +1,10 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
+#include "NativeChoiceMenu.h"
 #include "core/fx/FxGraph.h"
 #include <array>
 #include <functional>
@@ -11,20 +13,28 @@
 #include <optional>
 #include <vector>
 
-// FX page: ROUTING TOOLBAR / SOURCE RAIL + ROUTING CANVAS / INSPECTOR.
+// FX workspace: ROUTING TOOLBAR / SIDEBAR + ZOOMABLE GRAPH / INSPECTOR.
 //
 // The canonical FxGraphDocument (owned by the processor, message thread only)
-// is the single source of truth. Components refer to nodes by stable ID and
-// are reconciled only when the document revision changes; dragging moves the
-// component live and commits one undoable model edit on release.
+// is the single source of truth for the graph; FX parameter modulation lives
+// in Origami's one ModulationState (ModDestination::FxParameter). Components
+// refer to nodes by stable ID and are reconciled on document revisions.
 //
-// Layering inside the canvas: grid -> connections -> routing points (all
-// painted by the canvas) -> node components (children; the active node is
-// brought to the front). Z-order is UI-only and never affects DSP order.
+// Coordinates: node positions are graph units. FxCanvas children live in
+// graph units; FxGraphView maps them to the screen with one transform
+// (scale(zoom) then translate(-pan)), so ports, cables, hit tests, drops and
+// right-click insertion all stay in graph space under any zoom/pan.
 namespace mct::origami::ui {
 
 class FxCanvas;
 class FxPage;
+
+// Fixed-size catalog shared by every graph-construction entry point.
+struct FxModuleMenu {
+    static constexpr int splitId=1001,mergeId=1002,sendId=1003,returnId=1004;
+    static constexpr int externalId=1999,busBase=2000;
+    static std::optional<fx::FxModuleSpec> decode(int id);
+};
 
 class FxNodeComponent final : public juce::Component {
 public:
@@ -33,12 +43,11 @@ public:
     fx::FxNodeId id() const noexcept { return id_; }
     void update(const fx::FxNode&,bool selected);
     void setMeter(float left,float right);
-    // Port centre in this component's coordinates.
     juce::Point<float> portCentre(bool input,std::uint8_t port) const noexcept;
     std::optional<std::pair<bool,std::uint8_t>> portAt(juce::Point<float>) const noexcept;
     static juce::Rectangle<int> sizeFor(const fx::FxNode&) noexcept;
+    juce::TextButton* accessory() noexcept { return node_.kind==fx::FxNodeKind::Output ? &accessory_ : nullptr; }
     static constexpr float portRadius=5.0f;
-    static constexpr float portHitRadius=14.0f;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -47,43 +56,44 @@ public:
     void mouseUp(const juce::MouseEvent&) override;
 private:
     void showMenu();
+    float hitRadius() const noexcept;
     FxPage& page_;
     fx::FxNodeId id_;
     fx::FxNode node_;
     bool selected_=false;
     float meterLeft_=0.0f,meterRight_=0.0f;
     juce::TextButton power_{"PWR"},menu_{"..."},remove_{"X"};
+    juce::TextButton accessory_{"+ ADD MODULE"}; // MASTER OUT only: moves with the node
     std::vector<std::unique_ptr<juce::Slider>> quick_;
     std::vector<fx::FxParameterId> quickIds_;
     enum class Drag { None,Move,Wire };
     Drag drag_=Drag::None;
     juce::Point<int> dragOrigin_;
-    std::uint8_t wirePort_=0;
 };
 
-class FxCanvas final : public juce::Component {
+class FxCanvas final : public juce::Component, public juce::DragAndDropTarget {
 public:
-    static constexpr float wireHitRadius=10.0f;   // invisible interaction corridor
     static constexpr float pointHitRadius=9.0f;
     explicit FxCanvas(FxPage&);
     void rebuild(const fx::FxGraph&,fx::FxNodeId selected,int minWidth,int minHeight);
     FxNodeComponent* nodeComponent(fx::FxNodeId) const noexcept;
     std::size_t nodeComponentCount() const noexcept { return nodes_.size(); }
     std::size_t connectionPathCount() const noexcept { return wires_.size(); }
-    // Node components in paint order (back to front).
     std::vector<fx::FxNodeId> nodeZOrder() const;
     void bringToFront(fx::FxNodeId);
-    // Canvas pixels -> graph canvas units (identity today; zoom-ready).
-    fx::FxPoint toGraph(juce::Point<float>) const noexcept;
+    juce::Rectangle<int> contentBounds() const;
+    // Canvas-local coordinates ARE graph coordinates.
+    fx::FxPoint toGraph(juce::Point<float> p) const noexcept { return {p.x,p.y}; }
+    float wireHitRadius() const noexcept;
     std::optional<fx::FxConnectionId> connectionAt(juce::Point<float>) const noexcept;
     std::optional<std::pair<fx::FxConnectionId,std::size_t>> layoutPointAt(juce::Point<float>) const noexcept;
-    // Index at which a new routing point at p keeps the points in path order.
     std::size_t layoutInsertIndex(fx::FxConnectionId,juce::Point<float>) const noexcept;
-    // Live drag support: recompute only wires touching this node.
     void nodeMoved(fx::FxNodeId);
     void beginWire(fx::FxNodeId,std::uint8_t port);
-    void dragWire(juce::Point<int> canvasPoint);
-    void endWire(juce::Point<int> canvasPoint);
+    void dragWire(juce::Point<int>);
+    void endWire(juce::Point<int>);
+    void cancelWire();
+    std::optional<fx::FxPortRef> wireSource() const noexcept { return wireActive_ ? std::optional<fx::FxPortRef>(wireFrom_) : std::nullopt; }
 
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -92,71 +102,165 @@ public:
     void mouseMove(const juce::MouseEvent&) override;
     void mouseExit(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
+    bool isInterestedInDragSource(const SourceDetails&) override;
+    void itemDropped(const SourceDetails&) override;
 private:
     struct Wire {
         fx::FxConnection connection;
-        std::vector<juce::Point<float>> handles; // layout points (canvas px)
+        std::vector<juce::Point<float>> handles;
         juce::Path path;
         juce::Rectangle<int> area;
     };
     juce::Point<float> portInCanvas(fx::FxNodeId,bool input,std::uint8_t port) const noexcept;
     void computeWire(Wire&) const;
-    void repaintWire(const Wire&);
+    void showConnectionMenu(fx::FxConnectionId,juce::Point<float>);
     static juce::Path curve(juce::Point<float>,juce::Point<float>);
     static juce::Path curveThrough(const std::vector<juce::Point<float>>&);
     FxPage& page_;
     std::map<fx::FxNodeId,std::unique_ptr<FxNodeComponent>> nodes_;
     std::vector<Wire> wires_;
-    juce::TextButton addGhost_{"+ ADD EFFECT"};
     bool wireActive_=false;
     fx::FxPortRef wireFrom_{};
     juce::Point<float> wireEnd_{};
-    juce::Point<int> panOrigin_;
     bool panning_=false;
+    juce::Point<float> panMouseStart_,panViewStart_;
     std::optional<std::pair<fx::FxConnectionId,std::size_t>> hoverPoint_,dragPoint_;
 };
 
-// Dynamic source list: the instrument's named audio buses, then concept-level
-// sources. Control sources are listed separately and are never routable audio.
-class FxSourceRail final : public juce::Component {
+// Zoom/pan host for the canvas. Graph <-> view: view = graph*zoom - pan.
+class FxGraphView final : public juce::Component, private juce::ScrollBar::Listener {
 public:
-    struct Entry { BusId bus=0; juce::String label; bool inGraph=false; };
-    void setBuses(std::vector<Entry>);
-    std::function<void(BusId)> onBusClicked;
-    void paint(juce::Graphics&) override;
-    void mouseDown(const juce::MouseEvent&) override;
-    static constexpr int rowHeight=32;
+    static constexpr float minZoom=0.4f,maxZoom=2.5f;
+    explicit FxGraphView(FxCanvas&);
+    ~FxGraphView() override;
+    float zoom() const noexcept { return zoom_; }
+    juce::Point<float> pan() const noexcept { return pan_; }
+    void setView(float zoom,juce::Point<float> pan);
+    void zoomAround(float zoom,juce::Point<float> viewPoint);
+    void panBy(juce::Point<float> viewDelta);
+    void fitTo(juce::Rectangle<int> graphBounds);
+    void contentChanged();
+    juce::Point<float> graphToView(fx::FxPoint) const noexcept;
+    fx::FxPoint viewToGraph(juce::Point<float>) const noexcept;
+    juce::Rectangle<int> viewport() const noexcept; // drawable area (excludes scrollbars)
+    std::function<void()> onViewChanged;
+    void resized() override;
+    void mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails&) override;
+    void mouseMagnify(const juce::MouseEvent&,float scaleFactor) override;
 private:
-    juce::Rectangle<int> rowBounds(std::size_t index) const noexcept;
-    std::vector<Entry> buses_;
+    void scrollBarMoved(juce::ScrollBar*,double) override;
+    void apply();
+    FxCanvas& canvas_;
+    juce::ScrollBar horizontal_{false},vertical_{true};
+    float zoom_=1.0f;
+    juce::Point<float> pan_{};
+    bool updating_=false;
+};
+
+// Resource browser: SOURCES / MODULATORS / FILTERS / ROUTES. Every row is a
+// reference to a canonical Origami object, never a duplicate of it.
+class FxSidebar final : public juce::Component {
+public:
+    enum class Tab { Sources=0,Modulators=1,Filters=2,Routes=3 };
+    struct Row {
+        juce::String label,badge,detail;
+        juce::String dragDescription; // empty: not draggable
+        bool enabled=true,active=false,header=false;
+        std::function<void()> onClick;
+    };
+    FxSidebar();
+    ~FxSidebar() override;
+    void setTab(Tab);
+    Tab tab() const noexcept { return tab_; }
+    void setRows(Tab,std::vector<Row>);
+    const std::vector<Row>& rows(Tab t) const noexcept { return rows_[static_cast<std::size_t>(t)]; }
+    std::function<void(Tab)> onTabChanged;
+    void paint(juce::Graphics&) override;
+    void resized() override;
+    static constexpr int rowHeight=36;
+    static constexpr int width=236;
+private:
+    class List;
+    Tab tab_=Tab::Sources;
+    std::array<juce::TextButton,4> tabs_;
+    std::array<std::vector<Row>,4> rows_;
+    std::array<juce::String,4> signatures_;
+    juce::Viewport viewport_;
+    std::unique_ptr<List> list_;
+};
+
+// Origami-native modal surface (never an OS alert/window).
+class FxModalOverlay final : public juce::Component {
+public:
+    FxModalOverlay();
+    void show(juce::Component& content,juce::Rectangle<int> panelSize);
+    void dismiss();
+    bool isShowing() const noexcept { return isVisible(); }
+    std::function<void()> onDismissed;
+    void paint(juce::Graphics&) override;
+    void resized() override;
+    void mouseDown(const juce::MouseEvent&) override;
+    bool keyPressed(const juce::KeyPress&) override;
+private:
+    juce::Component* content_=nullptr;
+    juce::Rectangle<int> panelSize_;
+};
+
+// GLOBAL FX editor: input -> graph -> dry/wet -> width -> output, plus FX
+// ORDER and BYPASS MODE. Edits the canonical document directly.
+class FxGlobalFxEditor final : public juce::Component {
+public:
+    explicit FxGlobalFxEditor(fx::FxGraphDocument&);
+    void sync();
+    std::function<void()> onClose;
+    void paint(juce::Graphics&) override;
+    void resized() override;
+private:
+    void commit();
+    fx::FxGraphDocument& document_;
+    std::array<juce::Slider,4> knobs_;
+    juce::ComboBox order_,bypass_;
+    juce::TextButton close_{"X"};
+    bool syncing_=false,gesture_=false;
 };
 
 class FxPage final : public juce::Component, private juce::Timer {
 public:
     using PeakSource=std::function<std::pair<float,float>()>;
-    FxPage(fx::FxGraphDocument&,ModulationBindings,PeakSource peaks={});
+    FxPage(fx::FxGraphDocument&,ModulationBindings,PeakSource peaks={},fx::FxViewState* view=nullptr);
     ~FxPage() override;
     void resized() override;
     void paint(juce::Graphics&) override;
     bool keyPressed(const juce::KeyPress&) override;
     void visibilityChanged() override;
-    // Cheap when nothing changed: compares the document revision first.
     void syncFromModel();
+    std::function<void()> onOpenSynthFilter;
 
-    // Interaction API (used by node components, canvas, toolbar, inspector, tests).
+    // Interaction API (node components, canvas, toolbar, sidebar, inspector, tests).
     fx::FxGraphDocument& document() noexcept { return document_; }
     const fx::FxGraph& graph() const noexcept { return document_.graph(); }
     fx::FxNodeId selectedNode() const noexcept { return selected_; }
     void selectNode(fx::FxNodeId);
     bool deleteNode(fx::FxNodeId);
-    fx::FxNodeId addEffect(fx::FxEffectType);
-    fx::FxNodeId addEffectAt(fx::FxEffectType,fx::FxPoint);
-    fx::FxNodeId insertEffectOnConnection(fx::FxConnectionId,fx::FxEffectType,fx::FxPoint);
+    // Workflow-aware add (SERIAL / PARALLEL / SPLIT / CUSTOM semantics).
+    fx::FxNodeId addModule(const fx::FxModuleSpec&);
+    fx::FxNodeId addEffect(fx::FxEffectType type) { return addModule({fx::FxModuleKind::Effect,type,0}); }
+    fx::FxNodeId addModuleAt(const fx::FxModuleSpec&,fx::FxPoint centre);
+    fx::FxNodeId addEffectAt(fx::FxEffectType type,fx::FxPoint centre) { return addModuleAt({fx::FxModuleKind::Effect,type,0},centre); }
+    fx::FxNodeId insertModuleOnConnection(fx::FxConnectionId,const fx::FxModuleSpec&,fx::FxPoint centre);
+    fx::FxNodeId insertEffectOnConnection(fx::FxConnectionId c,fx::FxEffectType t,fx::FxPoint p) { return insertModuleOnConnection(c,{fx::FxModuleKind::Effect,t,0},p); }
+    // MASTER OUT accessory: insert right before MASTER OUT (one input port, so
+    // never ambiguous); unconnected MASTER OUT gets the module wired into it.
+    fx::FxNodeId insertBeforeOutput(const fx::FxModuleSpec&);
+    bool removeConnection(fx::FxConnectionId);
+    bool resetConnectionRouting(fx::FxConnectionId);
     bool addLayoutPoint(fx::FxConnectionId,fx::FxPoint);
     bool moveLayoutPoint(fx::FxConnectionId,std::size_t,fx::FxPoint,bool live);
     bool removeLayoutPoint(fx::FxConnectionId,std::size_t);
     void setRoutingMode(fx::FxRoutingMode);
-    void clearGraph();
+    void requestClear();   // shows the Origami-native confirmation
+    void confirmClear();   // one undoable transaction back to BUS 1 -> MASTER OUT
+    bool clearConfirmationVisible() const noexcept { return overlay_.isShowing(); }
     void undo();
     void redo();
     void commitMove(fx::FxNodeId,juce::Point<int> topLeft);
@@ -165,46 +269,60 @@ public:
     void setNodeEnabled(fx::FxNodeId,bool);
     void beginParameterGesture();
     void setParameter(fx::FxNodeId,fx::FxParameterId,float);
-    void setGlobals(const fx::FxGlobalSettings&);
     void endParameterGesture();
-    // One effect menu (the native catalog menu) for every add/insert gesture.
-    void showAddEffectMenu(juce::Component& anchor,std::function<void(fx::FxEffectType)> chosen={});
+    void applyTemplate(int templateId);
+    // One module catalog / native menu for every entry point.
+    void showModuleMenu(juce::Component& anchor,bool allowSources,std::function<void(fx::FxModuleSpec)> chosen);
+    void showAddEffectMenu(juce::Component& anchor) { showModuleMenu(anchor,true,[this](fx::FxModuleSpec s){addModule(s);}); }
+    std::vector<NativeChoiceItem> moduleMenuItems(bool allowSources) const;
+    std::vector<int> moduleMenuIds(bool allowSources) const;
     void showTemplatesMenu(juce::Component& anchor);
     FxCanvas& canvas() noexcept { return canvas_; }
-    FxSourceRail& sourceRail() noexcept { return rail_; }
-    juce::Viewport& viewport() noexcept { return viewport_; }
+    FxGraphView& graphView() noexcept { return view_; }
+    FxSidebar& sidebar() noexcept { return sidebar_; }
+    float graphZoom() const noexcept { return view_.zoom(); }
     juce::String inspectorHeadline() const;
     juce::String parameterTabName() const;
     void selectParameterTab(int);
+    std::size_t modulationRowCount() const;
     std::pair<float,float> meterLevels() const noexcept { return {meterLeft_,meterRight_}; }
-    void updateMeters(); // pulls peak telemetry; repaints only MASTER OUT
+    void updateMeters();
+    void zoomIn();
+    void zoomOut();
+    void zoomReset();
+    void zoomToFit();
 
 private:
     class SelectedPanel;
     class ParametersPanel;
     class FxMacrosPanel;
-    class GlobalFxPanel;
+    class ConfirmPanel;
     void refresh(bool force=false);
     void refreshToolbar();
-    void refreshRail();
+    void refreshSidebar();
+    void storeView();
     void timerCallback() override { updateMeters(); }
+    fx::FxPoint viewCentre() const;
 
     fx::FxGraphDocument& document_;
     ModulationBindings bindings_;
     PeakSource peaks_;
+    fx::FxViewState* viewState_=nullptr;
     fx::FxNodeId selected_=fx::invalidFxNodeId;
     std::uint64_t lastRevision_=0;
     float meterLeft_=0.0f,meterRight_=0.0f;
 
     std::array<juce::TextButton,5> modes_;
-    juce::TextButton undo_{"UNDO"},redo_{"REDO"},clear_{"CLEAR"},templates_{"TEMPLATES"},add_{"+ ADD EFFECT"};
-    FxSourceRail rail_;
-    juce::Viewport viewport_;
+    juce::TextButton undo_{"UNDO"},redo_{"REDO"},clear_{"CLEAR"},templates_{"TEMPLATES"},add_{"+ ADD MODULE"};
+    juce::TextButton zoomOut_{"-"},zoomReset_{"100%"},zoomIn_{"+"},zoomFit_{"FIT"};
+    FxSidebar sidebar_;
     FxCanvas canvas_;
+    FxGraphView view_;
     std::unique_ptr<SelectedPanel> selectedPanel_;
     std::unique_ptr<ParametersPanel> parametersPanel_;
     std::unique_ptr<FxMacrosPanel> macrosPanel_;
-    std::unique_ptr<GlobalFxPanel> globalPanel_;
+    std::unique_ptr<ConfirmPanel> confirmPanel_;
+    FxModalOverlay overlay_;
     bool gestureActive_=false;
 };
 

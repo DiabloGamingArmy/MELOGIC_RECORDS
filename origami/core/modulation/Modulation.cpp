@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-v40.3.1-sequence-expression
 // mct-origami-v40.2.0-sequence-transport
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
@@ -169,7 +170,11 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
         if(!r.id) {empty=true;continue;}
         if(empty || r.id<=previous || r.id>=s.nextRouteId || !known(r.source) || !range(r.amount,-1,1)) return false;
         previous=r.id;
-        if(isGlobalDestination(r.destination.parameter)) {
+        if(isFxDestination(r.destination.parameter)) {
+            // FX graph existence is enforced by the host boundary, which prunes
+            // routes whose node/parameter no longer exists.
+            if(r.destination.oscillator==0 || r.destination.itemId==0 || r.destination.itemId>0xffffu) return false;
+        } else if(isGlobalDestination(r.destination.parameter)) {
             if(r.destination.oscillator!=0) return false;
         } else {
             const auto d=r.destination.parameter;
@@ -441,14 +446,15 @@ float SequencerGenerator::next(const SequencerSettings& s,double sampleRate) noe
 
 void CompiledModulation::compile(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules,bool immediate) noexcept {
     const auto old=groups_;const auto oldCount=count_;
-    count_=voiceCount_=0;voiceFilter_=false;groups_={};globalSourceUsed_.fill(false);
+    count_=voiceCount_=0;fxCount_=0;fxVoice_=false;++generation_;
+    voiceFilter_=false;groups_={};globalSourceUsed_.fill(false);
     voiceProcessModules_.fill(false);
     smoothingActive_=false;
     filterEnabled_=state.filterEnabled;
     for(const auto& route:state.routes) {
         if(!route.id || !route.enabled || route.amount==0) continue;
         std::size_t slot=0;
-        if(!isGlobalDestination(route.destination.parameter)) {
+        if(!isGlobalDestination(route.destination.parameter) && !isFxDestination(route.destination.parameter)) {
             while(slot<modules.size() && modules[slot].id!=route.destination.oscillator) ++slot;
             if(slot==modules.size()) continue;
         }
@@ -498,6 +504,12 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         for(std::size_t s=0;s<voiceSourceCount;++s)
             if(g.target[globalSourceCount+s]!=0.0f || g.weight[globalSourceCount+s]!=0.0f) g.voiceSlots[g.voiceSlotCount++]=static_cast<std::uint8_t>(s);
         const bool voice=g.voiceSlotCount!=0;
+        if(isFxDestination(g.address.parameter)) {
+            // Evaluated once per block by fxFrame(); never written into voices.
+            fxGroups_[fxCount_++]=i;
+            fxVoice_=fxVoice_ || voice;
+            continue;
+        }
         if(voice) {
             voiceGroups_[voiceCount_++]=i;
             if(g.address.parameter==ModDestination::ProcessAmount ||
@@ -546,6 +558,7 @@ float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept
             return g.itemSlot<m.processCount?m.processes[g.itemSlot].amount:0.0f;
         case ModDestination::RouteAmount:
             return g.itemSlot<m.routeCount?m.routes[g.itemSlot].amount:0.0f;
+        case ModDestination::FxParameter:return 0.0f; // evaluated by fxFrame()
     }
     return 0;
 }
@@ -577,6 +590,7 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
         case ModDestination::RouteAmount:
             if(g.itemSlot<m.routeCount) m.routes[g.itemSlot].amount=v;
             break;
+        case ModDestination::FxParameter:break; // FX parameters live in the FX renderer
     }
 }
 void CompiledModulation::prepare(double sampleRate) noexcept {
@@ -618,6 +632,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
     f.filterEnabled=filterEnabled_;
     for(std::size_t i=0;i<count_;++i) {
         const auto& g=groups_[i];
+        if(isFxDestination(g.address.parameter)) continue;
         const float base=std::clamp(read(f,g),g.minimum,g.maximum);
         float n=g.address.parameter==ModDestination::Cutoff
             ? std::log(base/g.minimum)/std::log(g.maximum/g.minimum)
@@ -646,5 +661,28 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
         if(!std::isfinite(n)) n=0.0f;write(f,g,n);
     }
     if(voiceFilter_) f.filter=filterTable_.make(f.cutoff,f.resonance);
+}
+void CompiledModulation::fxFrame(FxModulationOutput& out,const std::array<float,globalSourceCount>& global,
+                                 const std::array<float,voiceSourceCount>* voice) const noexcept {
+    out.generation=generation_;
+    out.count=fxCount_;
+    for(std::size_t k=0;k<fxCount_;++k) {
+        const auto& g=groups_[fxGroups_[k]];
+        out.node[k]=g.address.oscillator;
+        out.parameter[k]=static_cast<std::uint16_t>(g.address.itemId);
+        float n=0.0f;
+        for(std::size_t j=0;j<g.globalSlotCount;++j) {
+            const auto s=static_cast<std::size_t>(g.globalSlots[j]);
+            n+=(std::isfinite(g.weight[s])?g.weight[s]:0.0f)*routeSourceValue(s,global[s],g.bipolar[s]);
+        }
+        if(voice!=nullptr) {
+            for(std::size_t j=0;j<g.voiceSlotCount;++j) {
+                const auto s=static_cast<std::size_t>(g.voiceSlots[j]);
+                const auto slot=globalSourceCount+s;
+                n+=(std::isfinite(g.weight[slot])?g.weight[slot]:0.0f)*routeSourceValue(slot,(*voice)[s],g.bipolar[slot]);
+            }
+        }
+        out.offset[k]=std::isfinite(n) ? std::clamp(n,-2.0f,2.0f) : 0.0f;
+    }
 }
 }

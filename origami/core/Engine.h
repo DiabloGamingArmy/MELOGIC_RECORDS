@@ -44,6 +44,15 @@ public:
     bool restoreInstrumentState(const InstrumentState&) noexcept; // exclusive, transactional
     // mct-origami-fx-graph-dsp-bus-routing-p02: canonical bus list (Mixer-owned later).
     bool setBusState(const BusState&) noexcept;
+    // mct-origami-fx-modulation-graph-ux-p03
+    // FX destinations of the canonical modulation system, evaluated per span
+    // (audio thread; read by the FX renderer on the same thread).
+    const FxModulationOutput& fxModulationOutput() const noexcept { return fxModulation_; }
+    // FX ORDER = PRE MASTER: voices skip master gain; the host applies
+    // blockMasterGain() after the FX graph. Latched at host-block start.
+    void setMasterAfterFx(bool enabled) noexcept { masterAfterFx_.store(enabled,std::memory_order_relaxed); }
+    bool masterAfterFxActive() const noexcept { return hostMasterAfterFx_; }
+    float blockMasterGain() const noexcept { return blockMaster_; }
     bool setModulationState(const ModulationState&) noexcept; // serialized non-realtime writer
     ParameterValues parameterState() const noexcept;
     // Atomic targets are the sole cross-thread API. Multi-parameter patch commits
@@ -157,6 +166,11 @@ private:
     std::atomic<float> pitchBendDownRange_{2.0f};
     PerformanceState performance_{};
     BusState buses_{}; // non-realtime model; the renderer only reads BUS 1 sends
+    std::array<float,CompiledModulation::globalSourceCount> lastGlobalSources_{};
+    FxModulationOutput fxModulation_{};
+    std::atomic<bool> masterAfterFx_{false};
+    bool hostMasterAfterFx_=false;
+    float blockMaster_=1.0f;
     std::array<HeldNote,128> heldNotes_{};
     std::size_t heldCount_=0;
     // Deep Audit P07: this limits only future polyphonic admissions. Existing

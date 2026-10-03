@@ -68,7 +68,11 @@ public:
     std::uint64_t order() const noexcept { return order_; }
     std::uint8_t channel() const noexcept { return address_.channel; }
     const VoiceVisualizationSnapshot& visualizationSnapshot() const noexcept { return visualization_; }
+    // mct-origami-fx-modulation-graph-ux-p03: latest per-voice sources, kept
+    // only while FX destinations use voice sources (newest-voice policy).
+    const std::array<float,CompiledModulation::voiceSourceCount>& lastSources() const noexcept { return lastSources_; }
 private:
+    std::array<float,CompiledModulation::voiceSourceCount> lastSources_{};
     // mct-origami-unison-detune-v19.2
     static constexpr unsigned maxOscillatorModules = 16;
     static constexpr unsigned maxUnisonVoices = 16;

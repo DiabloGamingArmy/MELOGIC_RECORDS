@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 #include "core/fx/FxRenderer.h"
 #include <algorithm>
@@ -7,7 +8,8 @@
 namespace mct::origami::fx {
 namespace {
 constexpr std::size_t dryBuffer=FxGraph::maxNodes;      // post-input-gain bus
-constexpr std::size_t wetBuffer=FxGraph::maxNodes+1;    // graph output
+constexpr std::size_t wetBuffer=FxGraph::maxNodes+1;    // graph output / effect dry copy
+constexpr std::size_t gateBuffer=FxGraph::maxNodes+2;   // TAIL PRESERVE gate ramp
 float dbToGain(float db) noexcept { return std::pow(10.0f,db*0.05f); }
 bool settled(float now,float target) noexcept { return now==target; }
 float approach(float now,float target,float coef) noexcept {
@@ -142,7 +144,7 @@ void FxGraphCompiler::pushParameters(const FxGraph& graph) noexcept {
 
 // ================================================================ renderer
 
-FxRenderer::FxRenderer():pool_((FxGraph::maxNodes+2)*2*chunk,0.0f) {
+FxRenderer::FxRenderer():pool_((FxGraph::maxNodes+3)*2*chunk,0.0f) {
     prepare(48000.0);
 }
 
@@ -175,6 +177,9 @@ void FxRenderer::prepare(double sampleRate) {
     delete pending_.exchange(nullptr);
     delete active_;
     active_=nullptr;
+    sampleRate_=sampleRate;
+    modulationGeneration_=~std::uint64_t{0};
+    modulationPlan_=nullptr;
     smoothing_=float(std::exp(-1.0/(0.02*sampleRate)));
     bypassStep_=float(1.0/(0.01*sampleRate));
     compiler_.prepare(sampleRate);
@@ -200,6 +205,7 @@ bool FxRenderer::sync(const FxGraph& graph) {
     dryWet_.store(g.dryWet,std::memory_order_relaxed);
     width_.store(g.width,std::memory_order_relaxed);
     outputGain_.store(dbToGain(g.outputGainDb),std::memory_order_relaxed);
+    bypassMode_.store(static_cast<int>(g.bypass),std::memory_order_relaxed);
     return true;
 }
 
@@ -238,15 +244,53 @@ std::pair<float,float> FxRenderer::consumePeaks() noexcept {
     return {peakLeft_.exchange(0.0f,std::memory_order_acq_rel),peakRight_.exchange(0.0f,std::memory_order_acq_rel)};
 }
 
-void FxRenderer::process(float* left,float* right,int samples) noexcept {
+void FxRenderer::applyModulation(const FxModulationOutput* mod) noexcept {
+    const std::uint64_t generation=mod!=nullptr ? mod->generation : 0;
+    if(generation!=modulationGeneration_ || active_!=modulationPlan_) {
+        // Slot map changed: clear every live offset, then resolve each slot
+        // once (bounded search, only on change; never per sample).
+        modulationGeneration_=generation;
+        modulationPlan_=active_;
+        modulationTarget_.fill(nullptr);
+        if(active_!=nullptr)
+            for(std::size_t s=0;s<active_->stepCount;++s)
+                if(auto* fx=active_->steps[s].instance) fx->modulation.fill(0.0f);
+        if(mod!=nullptr && active_!=nullptr) {
+            for(std::size_t k=0;k<mod->count;++k) {
+                for(std::size_t s=0;s<active_->stepCount && modulationTarget_[k]==nullptr;++s) {
+                    auto* fx=active_->steps[s].instance;
+                    if(fx==nullptr || fx->node!=mod->node[k]) continue;
+                    for(std::size_t i=0;i<fx->descriptor->parameterCount;++i)
+                        if(fx->descriptor->parameters[i].id==mod->parameter[k]) {
+                            modulationTarget_[k]=fx;
+                            modulationIndex_[k]=static_cast<std::uint8_t>(i);
+                            break;
+                        }
+                }
+            }
+        }
+    }
+    if(mod==nullptr) return;
+    for(std::size_t k=0;k<mod->count;++k)
+        if(auto* fx=modulationTarget_[k]) fx->modulation[modulationIndex_[k]]=mod->offset[k];
+}
+
+void FxRenderer::process(float* left,float* right,int samples,const FxModulationOutput* modulation,
+                         bool preMaster,float masterGain) noexcept {
     adoptPending();
     if(samples<=0 || left==nullptr || right==nullptr) return;
+    applyModulation(modulation);
+    // FX ORDER = PRE MASTER: master gain follows the graph. Snap on mode
+    // changes (the engine switches in the same block), smooth otherwise.
+    postGainTarget_=preMaster && std::isfinite(masterGain) ? std::clamp(masterGain,0.0f,4.0f) : 1.0f;
+    if(preMaster!=postGainActive_) { postGainNow_=postGainTarget_; postGainActive_=preMaster; }
     const float inputTarget=inputGain_.load(std::memory_order_relaxed);
     const float mixTarget=dryWet_.load(std::memory_order_relaxed);
     const float widthTarget=width_.load(std::memory_order_relaxed);
     const float outputTarget=outputGain_.load(std::memory_order_relaxed);
     const bool neutralGlobals=inputTarget==1.0f && mixTarget==1.0f && widthTarget==1.0f && outputTarget==1.0f
-        && settled(inputGainNow_,1.0f) && settled(dryWetNow_,1.0f) && settled(widthNow_,1.0f) && settled(outputGainNow_,1.0f);
+        && settled(inputGainNow_,1.0f) && settled(dryWetNow_,1.0f) && settled(widthNow_,1.0f) && settled(outputGainNow_,1.0f)
+        && postGainTarget_==1.0f && settled(postGainNow_,1.0f);
 
     // Neutral path: BUS 1 -> MASTER OUT with neutral globals is bit-exact
     // pass-through. Old presets and the Init patch sound exactly as before.
@@ -310,30 +354,10 @@ void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
                     for(int i=0;i<n;++i) { outL[i]+=inL[i]*step.inputGain; outR[i]+=inR[i]*step.inputGain; }
                 }
                 break;
-            case FxStepKind::Effect: {
+            case FxStepKind::Effect:
                 copyInput();
-                auto& fx=*step.instance;
-                const float target=fx.enabled.load(std::memory_order_acquire) ? 1.0f : 0.0f;
-                if(!fx.processing && target==0.0f) break; // fully bypassed: input passes through
-                if(!fx.processing) { fx.processor->reset(); fx.processing=true; }
-                for(std::size_t i=0;i<fx.descriptor->parameterCount;++i)
-                    fx.latched[i]=fx.targets[i].load(std::memory_order_relaxed);
-                const bool fading=fx.wet!=target || fx.wet!=1.0f;
-                // Keep the dry input for the click-free bypass crossfade.
-                float* tmpL=buffer(wetBuffer,0);
-                float* tmpR=buffer(wetBuffer,1);
-                if(fading) { std::memcpy(tmpL,outL,bytes); std::memcpy(tmpR,outR,bytes); }
-                fx.processor->process(outL,outR,n,fx.latched.data());
-                if(fading) {
-                    for(int i=0;i<n;++i) {
-                        fx.wet=target>fx.wet ? std::min(target,fx.wet+bypassStep_) : std::max(target,fx.wet-bypassStep_);
-                        outL[i]=tmpL[i]+fx.wet*(outL[i]-tmpL[i]);
-                        outR[i]=tmpR[i]+fx.wet*(outR[i]-tmpR[i]);
-                    }
-                    if(fx.wet==0.0f) fx.processing=false;
-                }
+                processEffect(step,outL,outR,n);
                 break;
-            }
             }
         }
         if(plan.hasOutput) {
@@ -356,7 +380,8 @@ void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
             const float mid=0.5f*(l+r),side=0.5f*(l-r)*widthNow_;
             l=mid+side; r=mid-side;
         }
-        l*=outputGainNow_; r*=outputGainNow_;
+        postGainNow_=approach(postGainNow_,postGainTarget_,smoothing_);
+        l*=outputGainNow_*postGainNow_; r*=outputGainNow_*postGainNow_;
         left[i]=std::isfinite(l) ? l : 0.0f;
         right[i]=std::isfinite(r) ? r : 0.0f;
         pl=std::max(pl,std::abs(left[i]));
@@ -364,5 +389,76 @@ void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
     }
     if(pl>peakLeft_.load(std::memory_order_relaxed)) peakLeft_.store(pl,std::memory_order_relaxed);
     if(pr>peakRight_.load(std::memory_order_relaxed)) peakRight_.store(pr,std::memory_order_relaxed);
+}
+void FxRenderer::processEffect(const FxPlanStep& step,float* outL,float* outR,int n) noexcept {
+    auto& fx=*step.instance;
+    const auto bytes=static_cast<std::size_t>(n)*sizeof(float);
+    const auto mode=static_cast<FxBypassMode>(bypassMode_.load(std::memory_order_relaxed));
+    const float target=fx.enabled.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    const auto latch=[&] {
+        for(std::size_t i=0;i<fx.descriptor->parameterCount;++i)
+            fx.latched[i]=std::clamp(fx.targets[i].load(std::memory_order_relaxed)+fx.modulation[i],0.0f,1.0f);
+    };
+    float* tmpL=buffer(wetBuffer,0);
+    float* tmpR=buffer(wetBuffer,1);
+
+    if(mode==FxBypassMode::Hard) {
+        if(fx.wet!=target) {
+            fx.wet=target;
+            if(target==1.0f) fx.processor->reset();
+            fx.processing=target==1.0f;
+        }
+        if(!fx.processing) return; // input passes straight through
+        latch();
+        fx.processor->process(outL,outR,n,fx.latched.data());
+        return;
+    }
+
+    if(mode==FxBypassMode::TailPreserve) {
+        if(!fx.processing && target==0.0f) return;
+        if(!fx.processing) { fx.processor->reset(); fx.processing=true; }
+        latch();
+        // Gate the effect INPUT and pass the dry signal around it:
+        //   out = fx(x*g) + (1-g)*x
+        // g=1 is normal processing; g=0 is dry + the effect's own decaying
+        // tail. The expression is continuous for any g, so no click.
+        float* gate=buffer(gateBuffer,0);
+        for(int i=0;i<n;++i) {
+            fx.wet=target>fx.wet ? std::min(target,fx.wet+bypassStep_) : std::max(target,fx.wet-bypassStep_);
+            gate[i]=fx.wet;
+        }
+        std::memcpy(tmpL,outL,bytes); std::memcpy(tmpR,outR,bytes);
+        for(int i=0;i<n;++i) { outL[i]*=gate[i]; outR[i]*=gate[i]; }
+        fx.processor->process(outL,outR,n,fx.latched.data());
+        float tail=0.0f;
+        for(int i=0;i<n;++i) {
+            if(target==0.0f) tail=std::max(tail,std::max(std::abs(outL[i]),std::abs(outR[i])));
+            outL[i]+=(1.0f-gate[i])*tmpL[i];
+            outR[i]+=(1.0f-gate[i])*tmpR[i];
+        }
+        if(target==0.0f && fx.wet==0.0f) {
+            fx.silentSamples=tail<1.0e-5f ? fx.silentSamples+n : 0;
+            if(fx.silentSamples>int(sampleRate_*0.25)) { fx.processing=false; fx.silentSamples=0; }
+        } else {
+            fx.silentSamples=0;
+        }
+        return;
+    }
+
+    // Crossfade (default): short linear crossfade between dry and processed.
+    if(!fx.processing && target==0.0f) return;
+    if(!fx.processing) { fx.processor->reset(); fx.processing=true; }
+    latch();
+    const bool fading=fx.wet!=target || fx.wet!=1.0f;
+    if(fading) { std::memcpy(tmpL,outL,bytes); std::memcpy(tmpR,outR,bytes); }
+    fx.processor->process(outL,outR,n,fx.latched.data());
+    if(fading) {
+        for(int i=0;i<n;++i) {
+            fx.wet=target>fx.wet ? std::min(target,fx.wet+bypassStep_) : std::max(target,fx.wet-bypassStep_);
+            outL[i]=tmpL[i]+fx.wet*(outL[i]-tmpL[i]);
+            outR[i]=tmpR[i]+fx.wet*(outR[i]-tmpR[i]);
+        }
+        if(fx.wet==0.0f) fx.processing=false;
+    }
 }
 }

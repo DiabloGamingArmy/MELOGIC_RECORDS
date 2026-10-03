@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #include "core/fx/FxGraph.h"
@@ -552,6 +553,218 @@ void busAudioTests() {
     check(std::abs(half/unity-0.5f)<0.02f,"send level scales the oscillator into BUS 1");
     check(muted==0.0f,"zero send removes the oscillator from BUS 1");
 }
+// ---------------------------------------------------------------- P03
+
+void fxModulationModelTests() {
+    // A stable destination identity: node + parameter id, never a label.
+    ModulationState m;
+    std::array<OscillatorModuleState,16> modules{};
+    modules[0].id=1;modules[0].enabled=true;
+    m.routes[0]={1,true,ModSource::Macro1,fxParameterAddress(14,2),0.5f,false};
+    m.nextRouteId=2;
+    check(validModulation(m,modules),"FX parameter is a valid canonical modulation destination");
+    auto bad=m;bad.routes[0].destination=fxParameterAddress(0,2);
+    check(!validModulation(bad,modules),"FX destination without node rejected");
+    bad=m;bad.routes[0].destination=fxParameterAddress(14,0);
+    check(!validModulation(bad,modules),"FX destination without parameter rejected");
+
+    CompiledModulation compiled;
+    compiled.prepare(sr);
+    m.routes[1]={2,true,ModSource::Env1,fxParameterAddress(14,3),0.4f,false};
+    m.routes[2]={3,true,ModSource::Lfo1,fxParameterAddress(9,1),0.5f,true};
+    m.nextRouteId=4;
+    const auto before=compiled.generation();
+    compiled.compile(m,modules,true);
+    check(compiled.generation()!=before && compiled.hasFxRoutes() && compiled.hasFxVoiceRoutes(),"FX groups compiled in the one modulation system");
+    std::array<float,CompiledModulation::globalSourceCount> global{};
+    global[4]=1.0f;   // Macro 1
+    global[0]=-1.0f;  // LFO 1 (bipolar route)
+    std::array<float,CompiledModulation::voiceSourceCount> voice{};
+    voice[0]=0.5f;    // ENV 1 of the newest voice
+    FxModulationOutput out;
+    compiled.fxFrame(out,global,&voice);
+    check(out.count==3,"three FX destinations evaluated");
+    const auto offsetFor=[&](std::uint32_t node,std::uint16_t param){for(std::size_t k=0;k<out.count;++k) if(out.node[k]==node && out.parameter[k]==param) return out.offset[k];return 99.0f;};
+    check(std::abs(offsetFor(14,2)-0.5f)<1e-5f,"MACRO -> FX offset = amount x source");
+    check(std::abs(offsetFor(14,3)-0.2f)<1e-5f,"ENV -> FX follows the newest voice");
+    check(std::abs(offsetFor(9,1)+0.25f)<1e-5f,"bipolar LFO -> FX offset");
+    compiled.fxFrame(out,global,nullptr);
+    check(offsetFor(14,3)==0.0f,"no voice playing: per-voice sources contribute nothing");
+}
+
+void fxEngineModulationTests() {
+    OrigamiEngine engine;
+    engine.prepare(sr,512,2);
+    auto state=engine.instrumentState();
+    state.modulation.macros[0]=1.0f;
+    state.modulation.routes[0]={1,true,ModSource::Macro1,fxParameterAddress(7,1),0.25f,false};
+    state.modulation.nextRouteId=2;
+    check(engine.setModulationState(state.modulation),"engine accepts FX route");
+    std::vector<float> l(512),r(512);
+    float* outputs[2]{l.data(),r.data()};
+    engine.process(outputs,2,512);
+    engine.process(outputs,2,512);
+    const auto& fx=engine.fxModulationOutput();
+    check(fx.count==1 && fx.node[0]==7 && fx.parameter[0]==1 && fx.offset[0]>0.2f,"engine publishes FX modulation per block");
+
+    // FX ORDER: PRE MASTER removes master gain from the voices (the FX host re-applies it).
+    const auto peakFor=[](bool preMaster) {
+        OrigamiEngine e;
+        e.prepare(sr,512,2);
+        e.setMasterAfterFx(preMaster);
+        e.noteOn(60,1.0f);
+        std::vector<float> a(4096),b(4096);
+        float* o[2]{a.data(),b.data()};
+        e.process(o,2,4096);
+        return std::make_pair(peak(a,1024),e.blockMasterGain());
+    };
+    const auto post=peakFor(false),pre=peakFor(true);
+    check(std::abs(pre.first*pre.second-post.first)<post.first*0.02f,"PRE MASTER: engine output x master gain == POST MASTER output");
+}
+
+void fxRendererModulationTests() {
+    Rig rig;
+    FxNodeId s=0,o=0;
+    rig.graph=terminals(s,o);
+    const auto limiter=rig.graph.insertEffectBeforeOutput(FxEffectType::Limiter);
+    rig.sync();
+    FxModulationOutput mod;
+    mod.generation=1;mod.count=1;mod.node[0]=limiter;mod.parameter[0]=1;mod.offset[0]=0.5f; // gain +12 dB
+    std::vector<float> l(9600),r(9600);
+    const auto renderWith=[&](const FxModulationOutput* m) {
+        for(int i=0;i<9600;++i) l[std::size_t(i)]=r[std::size_t(i)]=sine(i,220.0f,0.05f);
+        for(int off=0;off<9600;off+=480) rig.fx.process(l.data()+off,r.data()+off,480,m);
+        return peak(l,4800);
+    };
+    const float plain=renderWith(nullptr);
+#ifndef ORIGAMI_SANITIZED
+    allocations=0;guardAllocations=true;
+#endif
+    const float modulated=renderWith(&mod);
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations=false;
+    check(allocations.load()==0,"FX modulation is applied without allocation");
+#endif
+    check(std::abs(modulated/plain-3.98f)<0.2f,"modulation offset drives the canonical DSP parameter (+12 dB)");
+    mod.generation=2;mod.count=0;
+    const float cleared=renderWith(&mod);
+    check(std::abs(cleared/plain-1.0f)<0.02f,"removing the route clears the offset (after 20 ms smoothing)");
+}
+
+void bypassModeTests() {
+    for(const auto mode:{FxBypassMode::Hard,FxBypassMode::TailPreserve,FxBypassMode::Crossfade}) {
+        Rig rig;
+        FxNodeId s=0,o=0;
+        rig.graph=terminals(s,o);
+        const auto delay=rig.graph.insertEffectBeforeOutput(FxEffectType::Delay);
+        rig.graph.setParameter(delay,1,normalizedFor(FxEffectType::Delay,1,100.0f));
+        rig.graph.setParameter(delay,2,0.0f);rig.graph.setParameter(delay,3,1.0f);
+        rig.graph.setParameter(delay,4,0.0f);rig.graph.setParameter(delay,5,0.0f);
+        FxGlobalSettings globals;globals.bypass=mode;
+        rig.graph.setGlobals(globals);
+        rig.sync();
+        // Impulse in, then bypass 50 ms later, before the 100 ms echo.
+        const auto out=render(rig.fx,[](int i){return i==0 ? 1.0f : 0.0f;},9600,[&](int offset){
+            if(offset>=2400 && rig.graph.findNode(delay)->enabled) { rig.graph.setEnabled(delay,false); rig.fx.sync(rig.graph); }
+        });
+        const float echo=peak(out.l,4790,4810);
+        if(mode==FxBypassMode::TailPreserve) check(echo>0.9f,"TAIL PRESERVE: the existing delay tail still rings out");
+        else check(echo<1e-3f,"HARD / CROSSFADE: bypass removes the pending echo");
+        check(allFinite(out),"bypass modes stay finite");
+    }
+    // HARD switches instantly; CROSSFADE ramps.
+    const auto firstBypassedSample=[](FxBypassMode mode) {
+        Rig rig;
+        FxNodeId s=0,o=0;
+        rig.graph=terminals(s,o);
+        const auto limiter=rig.graph.insertEffectBeforeOutput(FxEffectType::Limiter);
+        rig.graph.setParameter(limiter,1,0.5f); // +12 dB
+        rig.graph.setParameter(limiter,2,1.0f); // 0 dB ceiling
+        FxGlobalSettings globals;globals.bypass=mode;
+        rig.graph.setGlobals(globals);
+        rig.sync();
+        std::vector<float> l(256,0.05f),r(256,0.05f);
+        rig.fx.process(l.data(),r.data(),256);
+        rig.graph.setEnabled(limiter,false);
+        rig.fx.sync(rig.graph);
+        std::fill(l.begin(),l.end(),0.05f);std::fill(r.begin(),r.end(),0.05f);
+        rig.fx.process(l.data(),r.data(),256);
+        return l[0];
+    };
+    check(std::abs(firstBypassedSample(FxBypassMode::Hard)-0.05f)<1e-6f,"HARD bypass is instantaneous");
+    check(firstBypassedSample(FxBypassMode::Crossfade)>0.1f,"CROSSFADE bypass ramps out");
+}
+
+void fxOrderRendererTests() {
+    Rig rig;
+    rig.graph=makeDefaultFxGraph();
+    rig.sync();
+    std::vector<float> l(4096,0.5f),r(4096,0.5f);
+    rig.fx.process(l.data(),r.data(),4096,nullptr,true,0.25f);
+    check(std::abs(l[0]-0.125f)<1e-6f && std::abs(l.back()-0.125f)<1e-6f,"PRE MASTER applies master gain after the graph, snapped on mode change");
+    std::fill(l.begin(),l.end(),0.5f);std::fill(r.begin(),r.end(),0.5f);
+    rig.fx.process(l.data(),r.data(),4096,nullptr,false,0.25f);
+    check(l[0]==0.5f && l.back()==0.5f,"POST MASTER leaves the engine's master-scaled signal untouched");
+}
+
+void authoringTests() {
+    auto g=makeDefaultFxGraph();
+    const auto src=g.sourceNode(),out=g.outputNode();
+    auto wire=g.connectionAt({out,0},true)->id;
+    const auto split=g.insertModuleOnConnection(wire,{FxModuleKind::Split,FxEffectType::None,0},{300,100});
+    check(split && g.findNode(split)->kind==FxNodeKind::Split && g.validate(),"insert Split on a connection: in -> output 0");
+    const auto merge=g.addModule({FxModuleKind::Merge,FxEffectType::None,0},{500,100});
+    check(merge && g.findNode(merge)->ports.inputs==2 && g.findNode(merge)->ports.outputs==1,"Add Module creates a Merge");
+    check(g.addModule({FxModuleKind::BusSource,FxEffectType::None,fxMainBusId},{0,0})==invalidFxNodeId,"BUS 1 source is unique");
+    check(g.insertModuleOnConnection(g.connections().front().id,{FxModuleKind::BusSource,FxEffectType::None,2},{0,0})==invalidFxNodeId,"sources cannot be inserted on a wire");
+
+    auto p=makeDefaultFxGraph();
+    wire=p.connectionAt({p.outputNode(),0},true)->id;
+    const auto branch=p.parallelOnConnection(wire,FxEffectType::Reverb);
+    check(branch && p.validate() && p.nodes().size()==5,"PARALLEL scaffold on a connection");
+    auto chain=makeDefaultFxGraph();
+    const auto drive=chain.insertEffectBeforeOutput(FxEffectType::Drive);
+    const auto around=chain.parallelAroundNode(drive,FxEffectType::Chorus);
+    check(around && chain.validate() && chain.connectionAt({drive,0},false)->to.node!=chain.outputNode(),"PARALLEL around a chained effect");
+    auto lonely=makeDefaultFxGraph();
+    const auto unwired=lonely.addEffect(FxEffectType::Drive,{0,0});
+    const auto before=lonely;
+    check(lonely.parallelAroundNode(unwired,FxEffectType::Chorus)==invalidFxNodeId && lonely==before,"ambiguous PARALLEL is refused, graph unchanged");
+    auto sp=makeDefaultFxGraph();
+    wire=sp.connectionAt({sp.outputNode(),0},true)->id;
+    const auto branched=sp.branchFromConnection(wire,FxEffectType::Delay);
+    check(branched && sp.validate() && sp.connectionAt({branched,0},false)==nullptr
+          && sp.connectionAt({sp.outputNode(),0},true)!=nullptr,"SPLIT: dry path kept, new branch left open");
+
+    for(const auto& t:{makeSerialChainTemplate(),makeParallelTemplate(),makeDevelopmentFxGraph()}) {
+        Rig rig; rig.graph=t; rig.sync();
+        const auto o=render(rig.fx,[](int i){return sine(i);},4800);
+        check(t.validate() && allFinite(o) && peak(o.l)>0.05f,"template is a valid, audible graph");
+    }
+    auto cleared=makeDevelopmentFxGraph();
+    cleared.addLayoutPoint(cleared.connections().front().id,0,{1,1});
+    cleared.clearProcessing();
+    check(cleared.nodes().size()==2 && cleared.connections().size()==1 && cleared.connections()[0].layout.empty(),
+          "clear leaves BUS 1 -> MASTER OUT with no routing points");
+    (void)src;
+}
+
+void codecV3Tests() {
+    auto g=makeSerialChainTemplate();
+    FxGlobalSettings s;s.order=FxOrder::PreMaster;s.bypass=FxBypassMode::TailPreserve;
+    g.setGlobals(s);
+    const auto bytes=encodeFxGraph(g);
+    FxGraph decoded;
+    check(decodeFxGraph(bytes.data(),bytes.size(),decoded) && decoded==g,"v3 round trip incl. FX order and bypass mode");
+    // A v2 payload: no order/bypass bytes after the four global floats.
+    std::vector<std::uint8_t> v2(bytes.begin(),bytes.end());
+    v2[5]=2;
+    const std::size_t globalsEnd=4+2+1+16;
+    v2.erase(v2.begin()+std::ptrdiff_t(globalsEnd),v2.begin()+std::ptrdiff_t(globalsEnd+2));
+    FxGraph legacy;
+    check(decodeFxGraph(v2.data(),v2.size(),legacy) && legacy.globals().order==FxOrder::PostMaster
+          && legacy.globals().bypass==FxBypassMode::Crossfade,"v2 graphs decode with default order/bypass");
+}
 }
 
 int main() {
@@ -573,6 +786,13 @@ int main() {
     allocationTests();
     busTests();
     busAudioTests();
+    fxModulationModelTests();
+    fxEngineModulationTests();
+    fxRendererModulationTests();
+    bypassModeTests();
+    fxOrderRendererTests();
+    authoringTests();
+    codecV3Tests();
     if(failures!=0) {
         std::cerr<<failures<<" of "<<checks<<" FX checks failed\n";
         return 1;

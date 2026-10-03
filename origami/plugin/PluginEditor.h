@@ -37,6 +37,29 @@ public:
     void itemDragMove(const SourceDetails&) override;
     void itemDragExit(const SourceDetails&) override;
     void itemDropped(const SourceDetails&) override;
+
+    // mct-origami-fx-modulation-graph-ux-p03
+    // A modulation drag belongs to the editor, not to the component that
+    // started it: hovering a page tab for a deliberate moment switches pages
+    // and the SAME drag continues onto the new page's knobs.
+    struct ModulationDragContext {
+        bool active=false;
+        mct::origami::ModSource source=mct::origami::ModSource::Env1;
+        int originPage=0;
+        int hoverMode=-1;
+        double hoverStartMs=0.0;
+        juce::Point<int> lastPosition;
+    };
+    static constexpr double pageSwitchHoverMs=300.0;
+    const ModulationDragContext& modulationDragContext() const noexcept { return modulationDrag_; }
+    void beginModulationDrag(mct::origami::ModSource);
+    void updateModulationDragHover(juce::Point<int> editorPoint,double nowMs);
+    void endModulationDrag();
+    int currentPage() const noexcept { return currentPage_; }
+    void openGlobalFx();
+    bool globalFxVisible() const noexcept { return globalOverlay_.isShowing(); }
+    // Shared knob menu actions (also used by tests).
+    bool assignModulator(mct::origami::ModSource,juce::Slider&);
 private:
     class WavetableEditorSurface final : public juce::Component {
         static constexpr int editorHeaderHeight=30;
@@ -2395,6 +2418,8 @@ private:
     bool arpSelected_=false;
     bool globalSelected_=false;
     bool fxSelected_=false;
+    int currentPage_=0;
+    ModulationDragContext modulationDrag_;
     bool wavetableEditorSelected_=false;
     unsigned wavetableEditorOscillatorId_=0;
     WavetableEditorSurface wavetableEditor_;
@@ -2412,6 +2437,8 @@ private:
     mct::origami::ui::ArpeggiatorPanel arpeggiator_;
     mct::origami::ui::GlobalPanel global_;
     mct::origami::ui::FxPage fxPage_;
+    mct::origami::ui::FxModalOverlay globalOverlay_;
+    std::unique_ptr<mct::origami::ui::FxGlobalFxEditor> globalFx_;
     // Tooltips intentionally disabled. Origami now relies on direct labels,
     // native context menus and explicit controls instead of stale hover copy.
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessorEditor)

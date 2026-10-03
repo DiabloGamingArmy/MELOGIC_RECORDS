@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-v40.3.1-sequence-expression
 // mct-origami-v40.2.0-sequence-transport
 // mct-origami-v39.2.1-sequence-ui-monitor
@@ -36,7 +37,10 @@ enum class ModDestination : std::uint32_t {
     WtPosition=101, Octave=102, Semitone=103, Fine=104, Detune=105, Pan=106, Level=107,
     Process1Amount=108, Process2Amount=109, Route1Amount=110, Route2Amount=111,
     // Stable-ID dynamic destinations. 108..111 remain readable legacy values.
-    ProcessAmount=112, RouteAmount=113
+    ProcessAmount=112, RouteAmount=113,
+    // FX graph parameter. ModAddress.oscillator carries the FxNodeId and
+    // ModAddress.itemId the stable FxParameterId (never a display label).
+    FxParameter=201
 };
 enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
 // Preserve serialized values: legacy NoteRetrigger (2) is now named Loop.
@@ -104,6 +108,10 @@ struct ModAddress {
         return parameter==o.parameter && oscillator==o.oscillator && itemId==o.itemId;
     }
 };
+inline bool isFxDestination(ModDestination d) noexcept { return d==ModDestination::FxParameter; }
+inline ModAddress fxParameterAddress(std::uint32_t node,std::uint32_t parameter) noexcept {
+    return {ModDestination::FxParameter,node,parameter};
+}
 struct ModRoute {
     std::uint32_t id=0;
     bool enabled=true;
@@ -138,6 +146,20 @@ struct ModulationState {
     // ENV1 is the only source that cannot be removed.
     std::uint32_t generatorActiveMask=0x1Fu;
     bool filterEnabled=true;
+};
+
+// Block-rate FX destination output. FX run after the voice sum, so they are
+// global destinations: global sources use their latest value and per-voice
+// sources (ENV, velocity, keytrack...) follow the most recently played voice.
+// Offsets are normalized fractions of the parameter span, exactly like every
+// other Origami route; the FX renderer adds them to the canonical value.
+inline constexpr std::size_t maxFxModulationSlots=ModulationState::capacity;
+struct FxModulationOutput {
+    std::uint64_t generation=0; // changes whenever the slot -> address map changes
+    std::size_t count=0;
+    std::array<std::uint32_t,maxFxModulationSlots> node{};
+    std::array<std::uint16_t,maxFxModulationSlots> parameter{};
+    std::array<float,maxFxModulationSlots> offset{};
 };
 
 const LfoSettings& lfoSettings(const ModulationState&,std::size_t index) noexcept;
@@ -250,6 +272,8 @@ struct ModulationFrame {
     float portaTime=0.0f,envelopeScaling=1.0f,lfoScaling=1.0f,swing=0.0f;
     dsp::LowPassCoefficients filter{};
     bool filterEnabled=true;
+    // False when FX ORDER = PRE MASTER: the renderer applies master gain after the FX graph.
+    bool applyMaster=true;
     std::array<float,ModulationState::capacity> normalized{};
 };
 
@@ -264,6 +288,11 @@ public:
     void globalFrame(ModulationFrame&,const std::array<float,globalSourceCount>&,double sampleRate) const noexcept;
     void voiceFrame(ModulationFrame&,const std::array<float,voiceSourceCount>&,double sampleRate) const noexcept;
     bool hasVoiceRoutes() const noexcept {return voiceCount_!=0;}
+    bool hasFxRoutes() const noexcept {return fxCount_!=0;}
+    bool hasFxVoiceRoutes() const noexcept {return fxVoice_;}
+    std::uint64_t generation() const noexcept {return generation_;}
+    void fxFrame(FxModulationOutput&,const std::array<float,globalSourceCount>&,
+                 const std::array<float,voiceSourceCount>* newestVoice) const noexcept;
     bool hasVoiceProcessRoutes(std::size_t module) const noexcept {return voiceProcessModules_[module];}
     bool usesGlobalSource(std::size_t index) const noexcept {
         return index<globalSourceCount && globalSourceUsed_[index];
@@ -290,6 +319,10 @@ private:
     std::array<std::size_t,ModulationState::capacity> voiceGroups_{};
     std::array<bool,globalSourceCount> globalSourceUsed_{};
     std::size_t count_=0,voiceCount_=0;
+    std::array<std::size_t,ModulationState::capacity> fxGroups_{};
+    std::size_t fxCount_=0;
+    bool fxVoice_=false;
+    std::uint64_t generation_=0;
     std::array<bool,16> voiceProcessModules_{};
     bool voiceFilter_=false;
     bool filterEnabled_=true;

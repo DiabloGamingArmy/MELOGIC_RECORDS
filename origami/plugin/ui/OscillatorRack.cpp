@@ -310,11 +310,11 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             moduleSetter_(display_.id,state);
             repaint();
         };
-        auto& remove=busRemoves_[i];
-        addChildComponent(remove);
-        remove.setButtonText("-");
-        remove.setName("Remove bus route "+juce::String(int(i)+1));
-        remove.onClick=[this,i]{removeBusRoute(i);};
+        auto& removeButton=busRemoves_[i];
+        addChildComponent(removeButton);
+        removeButton.setButtonText("-");
+        removeButton.setName("Remove bus route "+juce::String(int(i)+1));
+        removeButton.onClick=[this,i]{removeBusRoute(i);};
     }
     addChildComponent(busAdd_);
     busAdd_.setName("Add bus route");

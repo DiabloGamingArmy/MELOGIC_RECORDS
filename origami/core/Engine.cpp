@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-deep-audit-p07-enforced-qos
 // mct-origami-deep-audit-p01-no-rt-spectral-build
 // mct-origami-audio-reengineer-p17-global-qos-budget
@@ -368,6 +369,7 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     std::size_t activeModules=0;
     for(const auto& m:hostModules_) if(m.enabled) ++activeModules;
     hostNormalization_=activeModules ? 1.0/static_cast<double>(activeModules) : 1.0;
+    hostMasterAfterFx_=masterAfterFx_.load(std::memory_order_relaxed);
     hostBendRange_=pitchBendRange();
     hostBendDownRange_=pitchBendDownRange();
     hostChannels_=channels;
@@ -484,7 +486,10 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         frame.mainTuning=0.0f;frame.transpose=0.0f;
         frame.portaTime=performance_.glideSeconds;
         frame.envelopeScaling=1.0f;frame.lfoScaling=1.0f;frame.swing=globalSwingBase_;
+        frame.applyMaster=!hostMasterAfterFx_;
         compiledModulation_.globalFrame(frame,sources,sampleRate_);
+        if(hostMasterAfterFx_) blockMaster_=frame.master;
+        if(compiledModulation_.hasFxRoutes()) lastGlobalSources_=sources;
         currentPortaTime_=std::clamp(frame.portaTime,0.0f,5.0f);
         currentEnvelopeScaling_=std::clamp(frame.envelopeScaling,0.0f,2.0f);
         currentLfoScaling_=std::clamp(frame.lfoScaling,0.0f,2.0f);
@@ -588,6 +593,18 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             output[0][sample]=finite(left*master);
             output[1][sample]=finite(right*master);
         }
+    }
+    // FX parameter modulation: one evaluation per span, newest-voice policy
+    // for per-voice sources. Fixed-size, allocation-free.
+    if(compiledModulation_.hasFxRoutes()) {
+        const Voice* newest=nullptr;
+        for(const auto& voice:voices_)
+            if(voice.active() && (newest==nullptr || voice.order()>newest->order())) newest=&voice;
+        compiledModulation_.fxFrame(fxModulation_,lastGlobalSources_,
+                                    newest!=nullptr && compiledModulation_.hasFxVoiceRoutes() ? &newest->lastSources() : nullptr);
+    } else {
+        fxModulation_.count=0;
+        fxModulation_.generation=compiledModulation_.generation();
     }
     return true;
 }

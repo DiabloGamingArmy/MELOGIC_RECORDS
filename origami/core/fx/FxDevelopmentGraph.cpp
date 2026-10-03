@@ -23,4 +23,22 @@ FxGraph makeDevelopmentFxGraph() {
     g.connect({merge,0},{output,0});
     return g;
 }
+
+FxGraph makeSerialChainTemplate() {
+    FxGraph g=makeDefaultFxGraph();
+    g.insertEffectBeforeOutput(FxEffectType::Drive);
+    g.insertEffectBeforeOutput(FxEffectType::Delay);
+    g.insertEffectBeforeOutput(FxEffectType::Reverb);
+    g.setRoutingMode(FxRoutingMode::Serial);
+    return g;
+}
+
+FxGraph makeParallelTemplate() {
+    FxGraph g=makeDefaultFxGraph();
+    const auto wire=g.connectionAt({g.outputNode(),0},true)->id;
+    const auto reverb=g.parallelOnConnection(wire,FxEffectType::Reverb);
+    g.setParameter(reverb,3,1.0f); // wet-only branch; the dry branch carries the source
+    g.setRoutingMode(FxRoutingMode::Parallel);
+    return g;
+}
 }

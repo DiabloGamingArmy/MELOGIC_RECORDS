@@ -6,7 +6,14 @@ class OrigamiHeader final : public juce::Component {
 public:
     OrigamiHeader();
     std::function<void(int)> onModeSelected;
+    // mct-origami-fx-modulation-graph-ux-p03
+    std::function<void()> onGlobalFxRequested;
     void selectSynth();
+    // Programmatic page switch (cross-page modulation drag); notifies onModeSelected.
+    void selectMode(int mode);
+    // Navigation tab bounds in header coordinates; -1 when none is under the point.
+    int modeAt(juce::Point<int>) const noexcept;
+    bool modeEnabled(int mode) const noexcept;
     void paint(juce::Graphics&) override;
     void resized() override;
 private:

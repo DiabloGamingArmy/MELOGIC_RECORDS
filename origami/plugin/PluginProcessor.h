@@ -102,6 +102,7 @@ public:
     // Peak output since the previous call (UI meter telemetry, lock-free).
     std::pair<float,float> consumeUiFxPeaks() noexcept { return fxRenderer_.consumePeaks(); }
     std::uint64_t getFxCompileCount() const noexcept { return fxRenderer_.compileCount(); }
+    mct::origami::fx::FxViewState& getUiFxViewState() noexcept { return fxViewState_; }
 
     // P0 audio-continuity diagnostics. These counters are observational only:
     // they never participate in rendering decisions and remain allocation-free.
@@ -241,6 +242,8 @@ private:
     mct::origami::fx::FxRenderer fxRenderer_;
     juce::CriticalSection fxCompileLock_; // non-realtime compile/prepare only
     void syncFxRenderer();
+    void pruneFxModulationRoutes();
+    mct::origami::fx::FxViewState fxViewState_{};
     static constexpr std::uint32_t fxStateMagic=0x46584732u; // 'FXG2'
 
     // UI telemetry is intentionally control-rate, not render-span-rate.

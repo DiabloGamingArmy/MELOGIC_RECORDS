@@ -1161,6 +1161,8 @@ juce::String ModulationPanel::routeTargetLabel(std::uint32_t routeId) const {
 
     juce::String target;
     switch(found->destination.parameter) {
+        case ModDestination::FxParameter:
+            target="FX / NODE "+juce::String(found->destination.oscillator)+" / P"+juce::String(found->destination.itemId);break;
         case ModDestination::Cutoff:target="FILTER / CUTOFF";break;
         case ModDestination::Resonance:target="FILTER / RESONANCE";break;
         case ModDestination::MasterGain:target="GLOBAL / MASTER GAIN";break;

@@ -64,6 +64,7 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     voiceSources[11]=std::clamp(pitchBendNormalized,-1.0f,1.0f);
     voiceSources[12]=releasing_ ? 0.0f : 1.0f;
     if(observe) visualization_.sources=voiceSources;
+    if(compiled.hasFxVoiceRoutes()) lastSources_=voiceSources;
     auto& local=localFrame_;const ModulationFrame* effective=&global;
     if(compiled.hasVoiceRoutes()){local=global;compiled.voiceFrame(local,voiceSources,sampleRate_);effective=&local;}
     const auto& modules=effective->modules;
@@ -288,7 +289,10 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     }
 
     if(envelope_.stage()==dsp::Envelope::Stage::Idle && filtersQuiet) reset();
-    outputs.left*=effective->master;outputs.right*=effective->master;outputs.mono*=effective->master;
+    // FX ORDER = PRE MASTER: master gain is applied after the FX graph instead.
+    if(effective->applyMaster) {
+        outputs.left*=effective->master;outputs.right*=effective->master;outputs.mono*=effective->master;
+    }
     return outputs;
 }
 VoiceInfo Voice::info() const noexcept {

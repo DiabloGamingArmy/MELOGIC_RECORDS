@@ -1,8 +1,10 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-page-foundation-p01
 // mct-origami-v34.5.0-ui-rebrand
 // mct-origami-v25.1.0-arp-advanced-page
 #include "OrigamiHeader.h"
 #include <BinaryData.h>
+#include "NativeChoiceMenu.h"
 namespace mct::origami::ui {
 OrigamiHeader::OrigamiHeader() {
     // V34.5: one authoritative, precomposed MCT Origami header asset.
@@ -11,6 +13,15 @@ OrigamiHeader::OrigamiHeader() {
                                          BinaryData::oragami_header_pngSize);
     wordmark_={};
     for(auto* button:{&previous_,&next_,&preset_,&browse_,&save_,&settings_}) {addAndMakeVisible(button);button->setEnabled(false);button->setTooltip("Preset and utility controls are reserved for a later release.");}
+    // The "..." utility menu: global tools reachable from every page.
+    settings_.setEnabled(true);
+    settings_.setName("Origami utility menu");
+    settings_.onClick=[this] {
+        auto safe=juce::Component::SafePointer<OrigamiHeader>(this);
+        showNativeChoiceMenu(settings_,"UTILITIES",{{1,"Global FX...",true,"FX"}},0,[safe](int choice) {
+            if(safe!=nullptr && choice==1 && safe->onGlobalFxRequested) safe->onGlobalFxRequested();
+        });
+    };
     const juce::StringArray labels{"SYNTH","MIXER","FX","MATRIX","GLOBAL"};
     for(int i=0;i<5;++i) {auto& button=modes_[static_cast<std::size_t>(i)];button.setButtonText(labels[i]);button.setToggleState(i==0,juce::dontSendNotification);button.setEnabled(i==0 || i==2 || i==3 || i==4);button.setTooltip(i==0?"Synthesizer":i==2?"Effect routing":i==3?"Modulation routing":i==4?"Global visualization settings":"Not implemented");addAndMakeVisible(button);
         button.onClick=[this,i] {for(std::size_t j=0;j<modes_.size();++j) modes_[j].setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);if(onModeSelected) onModeSelected(i);};}
@@ -18,6 +29,18 @@ OrigamiHeader::OrigamiHeader() {
 void OrigamiHeader::selectSynth() {
     for(std::size_t i=0;i<modes_.size();++i)
         modes_[i].setToggleState(i==0,juce::dontSendNotification);
+}
+void OrigamiHeader::selectMode(int mode) {
+    if(mode<0 || mode>=static_cast<int>(modes_.size()) || !modes_[static_cast<std::size_t>(mode)].isEnabled()) return;
+    for(std::size_t j=0;j<modes_.size();++j) modes_[j].setToggleState(j==static_cast<std::size_t>(mode),juce::dontSendNotification);
+    if(onModeSelected) onModeSelected(mode);
+}
+int OrigamiHeader::modeAt(juce::Point<int> p) const noexcept {
+    for(std::size_t i=0;i<modes_.size();++i) if(modes_[i].getBounds().contains(p)) return static_cast<int>(i);
+    return -1;
+}
+bool OrigamiHeader::modeEnabled(int mode) const noexcept {
+    return mode>=0 && mode<static_cast<int>(modes_.size()) && modes_[static_cast<std::size_t>(mode)].isEnabled();
 }
 void OrigamiHeader::paint(juce::Graphics& g) {
     // Supplied artwork is 800x182. Display the complete composition without

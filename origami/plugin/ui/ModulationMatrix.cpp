@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
@@ -91,6 +92,8 @@ public:
                     "[OC] "+juce::String(oscRouteName(m.routes[i].type))+
                     " #"+juce::String(m.routes[i].id));
         }
+        if(bindings_.fxDestinations)
+            for(const auto& fx:bindings_.fxDestinations()) add(juce::String(fx.group),fx.address,juce::String(fx.label));
         addAndMakeVisible(enabled_);addAndMakeVisible(bipolar_);addAndMakeVisible(duplicate_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
         enabled_.setClickingTogglesState(true);enabled_.setName("MATRIX ROUTE ENABLE");
         bipolar_.setClickingTogglesState(true);bipolar_.setName("MATRIX ROUTE POLARITY");
@@ -195,6 +198,9 @@ void ModulationMatrix::syncFromModel() {
                 static_cast<std::uint32_t>(module.routes[i].type)});
     }
     for(const auto& r:state.modulation.routes) if(r.id) ids.push_back(r.id);
+    if(bindings_.fxDestinations)
+        for(const auto& fx:bindings_.fxDestinations())
+            dynamicDestinations.push_back({fx.address,static_cast<std::uint32_t>(std::hash<std::string>{}(fx.group+fx.label))});
     bool rebuild=modules!=moduleIds_ || ids.size()!=rows_.size() ||
                  dynamicDestinations!=dynamicDestinations_ ||
                  envMask_!=state.modulation.envActiveMask ||

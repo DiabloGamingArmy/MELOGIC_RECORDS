@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-page-foundation-p01
 // mct-origami-deep-audit-p02-lockfree-ui-midi
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
@@ -35,7 +36,22 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
         [&owner]{return owner.getUiPerformanceInputSnapshot();},
         [&owner]{return owner.getUiHostBpm();},
         [&owner]{return owner.getUiRuntimeVisualizationSnapshot();},
-        [&owner]{return owner.getUiVisualizationMask();}};
+        [&owner]{return owner.getUiVisualizationMask();},
+        // FX parameters as destinations of the one modulation system.
+        [&owner] {
+            std::vector<mct::origami::ui::FxModulationDestination> out;
+            for(const auto& node:owner.getUiFxDocument().graph().nodes()) {
+                if(node.kind!=mct::origami::fx::FxNodeKind::Effect) continue;
+                const auto* d=mct::origami::fx::findFxEffect(node.effect);
+                if(d==nullptr) continue;
+                for(std::size_t i=0;i<d->parameterCount;++i) {
+                    if(d->parameters[i].curve==mct::origami::fx::FxParameterCurve::Choice) continue;
+                    out.push_back({mct::origami::fxParameterAddress(node.id,d->parameters[i].id),
+                                   "FX / "+node.name+" "+std::to_string(node.id),d->parameters[i].label});
+                }
+            }
+            return out;
+        }};
 }
 }
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)
@@ -72,7 +88,8 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner]{owner.clearUiArpeggiatorLatch();}),
       global_([&owner]{return owner.getUiVisualizationMask();},
               [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);}),
-      fxPage_(owner.getUiFxDocument(),modulationBindings(owner),[&owner]{return owner.consumeUiFxPeaks();}) {
+      fxPage_(owner.getUiFxDocument(),modulationBindings(owner),[&owner]{return owner.consumeUiFxPeaks();},&owner.getUiFxViewState()),
+      globalFx_(std::make_unique<mct::origami::ui::FxGlobalFxEditor>(owner.getUiFxDocument())) {
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,13> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_}};
     for(auto* component:components) addAndMakeVisible(component);
@@ -84,7 +101,12 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     // mct-origami-fixed-ratio-zoom-v1
     // Resize behaves as whole-interface zoom: the editor is constrained to one
     // canonical 16:10 canvas and every child is scaled from that same design space.
+    addChildComponent(globalOverlay_);
+    globalFx_->onClose=[this]{globalOverlay_.dismiss();};
+    header_.onGlobalFxRequested=[this]{openGlobalFx();};
+    fxPage_.onOpenSynthFilter=[this]{header_.selectMode(0);};
     header_.onModeSelected=[this](int mode){
+        currentPage_=mode;
         fxSelected_=mode==2;
         matrixSelected_=mode==3;
         globalSelected_=mode==4;
@@ -150,12 +172,16 @@ bool OrigamiAudioProcessorEditor::isInterestedInDragSource(const SourceDetails& 
 }
 
 void OrigamiAudioProcessorEditor::itemDragEnter(const SourceDetails& details) {
+    mct::origami::ModSource source{};
+    if(decodeDraggedModSource(details.description,source) && !modulationDrag_.active) beginModulationDrag(source);
     itemDragMove(details);
 }
 
 void OrigamiAudioProcessorEditor::itemDragMove(const SourceDetails& details) {
     mct::origami::ModSource source{};
     if(!decodeDraggedModSource(details.description,source)) return;
+    if(!modulationDrag_.active) beginModulationDrag(source);
+    updateModulationDragHover(details.localPosition.toInt(),juce::Time::getMillisecondCounterHiRes());
     modulation_.revealSourceAtParentPoint(details.localPosition.toInt());
     // Keep the JUCE drag alive while source tabs also act as navigation targets.
     modulation_.revealSourceAtParentPoint(details.localPosition);
@@ -167,6 +193,7 @@ void OrigamiAudioProcessorEditor::itemDragMove(const SourceDetails& details) {
 }
 
 void OrigamiAudioProcessorEditor::itemDragExit(const SourceDetails&) {
+    endModulationDrag();
     dragPreviewTarget_=nullptr;
     repaint();
 }
@@ -225,8 +252,10 @@ void OrigamiAudioProcessorEditor::itemDropped(const SourceDetails& details) {
     if(target!=nullptr && decodeDraggedModSource(details.description,source))
         createDraggedRoute(source,*target);
     dragPreviewTarget_=nullptr;
+    endModulationDrag();
     modulation_.syncFromModel();
     matrix_.syncFromModel();
+    fxPage_.syncFromModel();
     repaint();
 }
 
@@ -279,6 +308,9 @@ void OrigamiAudioProcessorEditor::timerCallback() {
     if(arpSelected_) arpeggiator_.syncFromModel();
     if(globalSelected_) global_.syncFromModel();
     if(fxSelected_) fxPage_.syncFromModel();
+    // A held drag over a page tab produces no move events: poll the hover.
+    if(modulationDrag_.active) updateModulationDragHover(modulationDrag_.lastPosition,juce::Time::getMillisecondCounterHiRes());
+    if(globalOverlay_.isShowing()) globalFx_->sync();
 }
 
 juce::Slider* OrigamiAudioProcessorEditor::sliderFromMouseEvent(const juce::MouseEvent& event) noexcept {
@@ -385,13 +417,16 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
         static_cast<int>(slider.getProperties()["mct.mod.destination"]));
     const unsigned oscillator=slider.getProperties().contains("mct.mod.oscillator")
         ? static_cast<unsigned>(static_cast<int>(slider.getProperties()["mct.mod.oscillator"])) : 0u;
+    const auto itemId=slider.getProperties().contains("mct.mod.itemId")
+        ? static_cast<std::uint32_t>(static_cast<int>(slider.getProperties()["mct.mod.itemId"])) : 0u;
 
     const auto state=dragBindings_.snapshot();
     std::vector<mct::origami::ModRoute> matches;
     for(const auto& route:state.modulation.routes) {
         if(route.id!=0 && route.enabled &&
            route.destination.parameter==destination &&
-           route.destination.oscillator==oscillator)
+           route.destination.oscillator==oscillator &&
+           route.destination.itemId==itemId)
             matches.push_back(route);
     }
 
@@ -417,21 +452,53 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
         return "Generators";
     };
 
+    // One knob menu for every page: assign (no duplicates), remove, reset.
+    using S=mct::origami::ModSource;
+    std::vector<S> sources{S::Env1,S::Env2,S::Env3};
+    for(const auto s:{S::Lfo1,S::Lfo2,S::Lfo3,S::Lfo4}) sources.push_back(s);
+    for(const auto s:{S::Macro1,S::Macro2,S::Macro3,S::Macro4}) sources.push_back(s);
+    for(const auto s:{S::Random,S::Function,S::Chaos,S::Drift,S::Sequencer}) sources.push_back(s);
+    for(const auto s:{S::Velocity,S::ModWheel,S::Keytrack,S::Aftertouch,S::PitchBend,S::NoteGate}) sources.push_back(s);
+    const auto available=[&state](S s) {
+        const auto raw=static_cast<std::uint32_t>(s);
+        if(raw>=1 && raw<=3) return (state.modulation.envActiveMask&(1u<<(raw-1)))!=0;
+        if(raw>=101 && raw<=104) return (state.modulation.lfoActiveMask&(1u<<(raw-101)))!=0;
+        if(s==S::Random) return (state.modulation.generatorActiveMask&0x02u)!=0;
+        if(s==S::Function) return (state.modulation.generatorActiveMask&0x01u)!=0;
+        if(s==S::Chaos) return (state.modulation.generatorActiveMask&0x04u)!=0;
+        if(s==S::Drift) return (state.modulation.generatorActiveMask&0x08u)!=0;
+        if(s==S::Sequencer) return (state.modulation.generatorActiveMask&0x10u)!=0;
+        return true;
+    };
     std::vector<mct::origami::ui::NativeChoiceItem> items;
+    for(const auto s:sources) {
+        if(!available(s)) continue;
+        bool routed=false;
+        for(const auto& r:matches) routed|=r.source==s;
+        items.push_back({1000+static_cast<int>(s),sourceName(s),true,"ASSIGN MODULATOR / "+groupName(s),routed});
+    }
     if(matches.empty()) {
-        items.push_back({1,"No Modulators",false,"",false});
+        items.push_back({1,"No Modulators",false,"REMOVE MODULATION",false});
     } else {
-        items.push_back({1,"Remove All Modulators",true,"",false});
+        items.push_back({1,"Remove All Modulators",true,"REMOVE MODULATION",false});
         int menuId=100;
         for(const auto& route:matches)
-            items.push_back({menuId++,sourceName(route.source),true,groupName(route.source),true});
+            items.push_back({menuId++,sourceName(route.source),true,"REMOVE MODULATION",false});
     }
+    items.push_back({5000,"Reset Parameter",true,"PARAMETER",false});
 
     auto safe=juce::Component::SafePointer<juce::Slider>(&slider);
     showNativeChoiceMenu(slider,"KNOB PROPERTIES",items,0,
         [this,safe,matches](int id) {
             if(safe==nullptr || !dragBindings_.removeRoute) return;
-            if(id==1) {
+            if(id>=1000 && id<5000) {
+                assignModulator(static_cast<mct::origami::ModSource>(id-1000),*safe);
+            } else if(id==5000) {
+                const auto& props=safe->getProperties();
+                if(props.contains("mct.origami.knobDefault"))
+                    safe->setValue(juce::jlimit(safe->getMinimum(),safe->getMaximum(),static_cast<double>(props["mct.origami.knobDefault"])),
+                                   juce::sendNotificationSync);
+            } else if(id==1) {
                 for(const auto& route:matches) dragBindings_.removeRoute(route.id);
             } else if(id>=100) {
                 const auto index=static_cast<std::size_t>(id-100);
@@ -439,6 +506,7 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
             }
             modulation_.syncFromModel();
             matrix_.syncFromModel();
+            fxPage_.syncFromModel();
             repaint();
         });
 }
@@ -573,8 +641,9 @@ void OrigamiAudioProcessorEditor::resized() {
     const float scale=juce::jmin(sx,sy);
 
     const auto transform=juce::AffineTransform::scale(scale);
-    const std::array<juce::Component*,11> visibleComponents{{
-        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_,&wavetableEditor_
+    globalOverlay_.setBounds(designBounds);
+    const std::array<juce::Component*,12> visibleComponents{{
+        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_,&wavetableEditor_,&globalOverlay_
     }};
 
     for(auto* component:visibleComponents)
@@ -582,4 +651,48 @@ void OrigamiAudioProcessorEditor::resized() {
 
     if(wavetableEditorSelected_)
         wavetableEditor_.toFront(false);
+    if(globalOverlay_.isShowing()) globalOverlay_.toFront(true);
+}
+
+void OrigamiAudioProcessorEditor::openGlobalFx() {
+    globalFx_->sync();
+    globalOverlay_.show(*globalFx_,{0,0,620,330});
+}
+
+void OrigamiAudioProcessorEditor::beginModulationDrag(mct::origami::ModSource source) {
+    modulationDrag_={};
+    modulationDrag_.active=true;
+    modulationDrag_.source=source;
+    modulationDrag_.originPage=currentPage_;
+}
+
+void OrigamiAudioProcessorEditor::updateModulationDragHover(juce::Point<int> point,double nowMs) {
+    if(!modulationDrag_.active) return;
+    modulationDrag_.lastPosition=point;
+    const int mode=header_.modeAt(header_.getLocalPoint(this,point));
+    if(mode!=modulationDrag_.hoverMode) {
+        modulationDrag_.hoverMode=mode;
+        modulationDrag_.hoverStartMs=nowMs;
+        return;
+    }
+    // Deliberate hover only: passing over a tab never switches pages.
+    if(mode>=0 && mode!=currentPage_ && header_.modeEnabled(mode)
+       && nowMs-modulationDrag_.hoverStartMs>=pageSwitchHoverMs)
+        header_.selectMode(mode);
+}
+
+void OrigamiAudioProcessorEditor::endModulationDrag() {
+    modulationDrag_={};
+}
+
+bool OrigamiAudioProcessorEditor::assignModulator(mct::origami::ModSource source,juce::Slider& slider) {
+    if(!slider.getProperties().contains("mct.mod.destination") || !dragBindings_.snapshot) return false;
+    const auto destination=static_cast<mct::origami::ModDestination>(static_cast<int>(slider.getProperties()["mct.mod.destination"]));
+    const auto oscillator=slider.getProperties().contains("mct.mod.oscillator") ? static_cast<unsigned>(static_cast<int>(slider.getProperties()["mct.mod.oscillator"])) : 0u;
+    const auto itemId=slider.getProperties().contains("mct.mod.itemId") ? static_cast<std::uint32_t>(static_cast<int>(slider.getProperties()["mct.mod.itemId"])) : 0u;
+    // An existing identical source -> destination route is kept as is (its
+    // amount is the user's); assignment never creates a duplicate row.
+    for(const auto& r:dragBindings_.snapshot().modulation.routes)
+        if(r.id && r.source==source && r.destination==mct::origami::ModAddress{destination,oscillator,itemId}) return true;
+    return createDraggedRoute(source,slider);
 }

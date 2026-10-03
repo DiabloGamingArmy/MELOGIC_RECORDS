@@ -7,7 +7,16 @@
 #include "core/Voice.h"
 #include "core/Engine.h"
 #include <functional>
+#include <string>
+#include <vector>
 namespace mct::origami::ui {
+// mct-origami-fx-modulation-graph-ux-p03: an FX graph parameter exposed as a
+// destination of the one canonical modulation system.
+struct FxModulationDestination {
+    ModAddress address;
+    std::string group; // e.g. "FX / DELAY 4"
+    std::string label; // e.g. "TIME"
+};
 // UI commands mutate only their own model field under the processor's writer lock.
 struct ModulationBindings {
     std::function<InstrumentState()> snapshot;
@@ -22,5 +31,6 @@ struct ModulationBindings {
     std::function<double()> hostBpm;
     std::function<RuntimeVisualizationSnapshot()> visualization;
     std::function<std::uint32_t()> visualizationMask;
+    std::function<std::vector<FxModulationDestination>()> fxDestinations;
 };
 }

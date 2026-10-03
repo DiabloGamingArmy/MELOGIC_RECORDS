@@ -135,6 +135,24 @@ neutral graph (BUS 1 -> MASTER OUT, neutral globals) is a bit-exact
 pass-through. Host state appends the FX graph as a trailer; states without it
 restore the neutral graph, so old patches never gain effects.
 
+## FX modulation, order and bypass
+
+FX parameters are destinations of the one modulation system:
+`ModDestination::FxParameter` with `ModAddress{node id, parameter id}`.
+Routes created by Synth drag-and-drop, the FX sidebar, the shared knob menu
+or the Matrix are identical `ModRoute`s. `CompiledModulation` evaluates FX
+groups once per render span (global sources at their latest value, per-voice
+sources from the newest active voice, since FX follow the voice sum) into a
+fixed `FxModulationOutput`; the renderer resolves slot -> instance only when
+that mapping changes and adds the offsets to the canonical parameter values.
+Removing an FX node (or clearing the graph) prunes its routes.
+
+FX ORDER: POST MASTER (voices -> master gain -> FX) or PRE MASTER (voices ->
+FX -> master gain; the engine skips master per voice and the renderer applies
+the block master gain after the graph). BYPASS MODE: CROSSFADE (10 ms),
+HARD (instant) or TAIL PRESERVE (input gated, `out = fx(x*g) + (1-g)*x`, so
+tails ring out before DSP stops). Graph codec v3 stores both; v2 decodes.
+
 ## Build and verify
 
 From the repository root, with CMake 3.20+ and a C++17 compiler:

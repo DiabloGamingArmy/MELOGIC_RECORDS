@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #pragma once
@@ -166,6 +167,17 @@ struct FxConnection {
     std::vector<FxPoint> layout;
 };
 
+// Where the FX graph sits in the synth path (prepared, never UI-rewired):
+//   PostMaster: voices -> master gain -> FX graph -> out   (default)
+//   PreMaster:  voices -> FX graph -> master gain -> out   (drive/limit before volume)
+enum class FxOrder : std::uint8_t { PostMaster=1, PreMaster=2 };
+// How an effect's PWR switch behaves:
+//   Crossfade:    10 ms equal-gain transition, then DSP is skipped
+//   Hard:         instant switch (state reset when re-enabled)
+//   TailPreserve: new input stops feeding the effect; existing delay/reverb
+//                 tails keep ringing until silent, then DSP is skipped
+enum class FxBypassMode : std::uint8_t { Crossfade=1, Hard=2, TailPreserve=3 };
+
 // Environment-wide controls applied around the complete graph:
 // input gain -> graph -> dry/wet -> stereo width -> output gain.
 struct FxGlobalSettings {
@@ -173,6 +185,17 @@ struct FxGlobalSettings {
     float dryWet=1.0f;
     float width=1.0f;
     float outputGainDb=0.0f;
+    FxOrder order=FxOrder::PostMaster;
+    FxBypassMode bypass=FxBypassMode::Crossfade;
+};
+
+// One catalog entry for every graph-construction entry point (toolbar,
+// canvas right-click, connection insert, MASTER OUT accessory, sidebar).
+enum class FxModuleKind : std::uint8_t { Effect=1, Split=2, Merge=3, BusSource=4 };
+struct FxModuleSpec {
+    FxModuleKind kind=FxModuleKind::Effect;
+    FxEffectType effect=FxEffectType::None;
+    FxBusId bus=0;
 };
 
 enum class FxEditResult : std::uint8_t {
@@ -197,6 +220,7 @@ public:
     FxNodeId addSplit(FxPoint,std::uint8_t outputs=2);
     FxNodeId addMerge(FxPoint,std::uint8_t inputs=2);
     FxNodeId addOutput(FxPoint);
+    FxNodeId addModule(const FxModuleSpec&,FxPoint);
 
     // Removes the node and every connection touching it. Source and Output
     // terminals are protected: the graph always runs a bus -> MASTER OUT.
@@ -216,6 +240,19 @@ public:
     // A -> B becomes A -> NEW -> B. Atomic: on any failure the graph is
     // returned unchanged (A -> B preserved) and invalidFxNodeId is returned.
     FxNodeId insertEffectOnConnection(FxConnectionId,FxEffectType,FxPoint);
+    // Generalized insert: effects and routing nodes (Split: in -> output 0,
+    // Merge: input 0 -> out). Bus sources cannot be inserted.
+    FxNodeId insertModuleOnConnection(FxConnectionId,const FxModuleSpec&,FxPoint);
+
+    // PARALLEL workflow, atomic:
+    //   on a connection A -> B:  A -> SPLIT -> MERGE -> B  plus  SPLIT -> NEW -> MERGE
+    //   around a chained node T: A -> SPLIT -> T -> MERGE -> B  plus  SPLIT -> NEW -> MERGE
+    // Returns the new effect; the graph is unchanged on failure.
+    FxNodeId parallelOnConnection(FxConnectionId,FxEffectType);
+    FxNodeId parallelAroundNode(FxNodeId,FxEffectType);
+    // SPLIT workflow, atomic: A -> B becomes A -> SPLIT -> B and SPLIT -> NEW,
+    // leaving NEW's output for the user to route.
+    FxNodeId branchFromConnection(FxConnectionId,FxEffectType);
 
     FxEditResult addLayoutPoint(FxConnectionId,std::size_t index,FxPoint);
     FxEditResult moveLayoutPoint(FxConnectionId,std::size_t index,FxPoint);
@@ -273,15 +310,27 @@ private:
 // explicit feedback node with a guaranteed minimum delay, compiled into the
 // plan as a delayed edge, never as a raw cycle.
 
-// Versioned, bounded binary codec (version 2: bus sources, layout points).
+// Versioned, bounded binary codec (v3: + FX order / bypass mode; v2 still decodes).
 std::vector<std::uint8_t> encodeFxGraph(const FxGraph&);
 bool decodeFxGraph(const void*,std::size_t,FxGraph&) noexcept;
 
 // Production default: BUS 1 -> MASTER OUT. Audibly neutral.
 FxGraph makeDefaultFxGraph();
+// TEMPLATES (complete graph presets; each is a valid, audible graph):
+FxGraph makeSerialChainTemplate();      // BUS 1 -> DRIVE -> DELAY -> REVERB -> MASTER OUT
+FxGraph makeParallelTemplate();         // BUS 1 -> SPLIT -> {dry, REVERB 100% wet} -> MERGE -> MASTER OUT
 // DEVELOPMENT demo (explicit opt-in via TEMPLATES, never a default):
 // BUS 1 -> DRIVE -> SPLIT -> {DELAY, REVERB} -> MERGE -> MASTER OUT.
 FxGraph makeDevelopmentFxGraph();
+
+// Editor view state for the FX workspace (UI only, never graph semantics).
+// Held by the processor for the session so reopening the editor restores it.
+struct FxViewState {
+    float zoom=1.0f;
+    float panX=0.0f,panY=0.0f;
+    int sidebarTab=0;
+    bool valid=false;
+};
 
 // Message-thread document: canonical graph + snapshot undo/redo + revision.
 // UI widgets observe revision(); the processor observes onChanged to compile.

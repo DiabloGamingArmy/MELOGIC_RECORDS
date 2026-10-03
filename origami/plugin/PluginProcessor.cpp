@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-deep-audit-p07-enforced-qos
 // mct-origami-deep-audit-p03-fix2-canonical-state-repair
@@ -44,8 +45,34 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
     syncFxRenderer();
 }
 void OrigamiAudioProcessor::syncFxRenderer() {
-    const juce::ScopedLock lock(fxCompileLock_);
-    fxRenderer_.sync(fxDocument_.graph());
+    {
+        const juce::ScopedLock lock(fxCompileLock_);
+        fxRenderer_.sync(fxDocument_.graph());
+    }
+    engine_.setMasterAfterFx(fxDocument_.graph().globals().order==mct::origami::fx::FxOrder::PreMaster);
+    pruneFxModulationRoutes();
+}
+void OrigamiAudioProcessor::pruneFxModulationRoutes() {
+    // FX parameters are destinations of the ONE modulation system. When a node
+    // (or the whole graph) disappears its routes go too: no dangling targets.
+    using namespace mct::origami;
+    const auto& graph=fxDocument_.graph();
+    const auto alive=[&graph](const ModRoute& r) {
+        if(!isFxDestination(r.destination.parameter)) return true;
+        const auto* node=graph.findNode(r.destination.oscillator);
+        return node!=nullptr && node->parameter(static_cast<fx::FxParameterId>(r.destination.itemId)).has_value();
+    };
+    const juce::ScopedLock lock(stateLock_);
+    auto mod=uiInstrumentState_.modulation;
+    std::size_t out=0;
+    bool changed=false;
+    for(const auto& route:mod.routes) {
+        if(!route.id) continue;
+        if(alive(route)) mod.routes[out++]=route; else changed=true;
+    }
+    if(!changed) return;
+    while(out<mod.routes.size()) mod.routes[out++]={};
+    if(engine_.setModulationState(mod)) uiInstrumentState_.modulation=mod;
 }
 void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     sampleRate_=sampleRate>1.0?sampleRate:44100.0;
@@ -567,7 +594,8 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // BUS 1 -> prepared FX plan -> MASTER OUT. Allocation/lock free; the
     // neutral graph is a bit-exact pass-through.
     if(buffer.getNumChannels()>=2)
-        fxRenderer_.process(buffer.getWritePointer(0),buffer.getWritePointer(1),total);
+        fxRenderer_.process(buffer.getWritePointer(0),buffer.getWritePointer(1),total,
+                            &engine_.fxModulationOutput(),engine_.masterAfterFxActive(),engine_.blockMasterGain());
 
     bool callbackHasSignal=false;
     float callbackPeak=0.0f,callbackMaxDelta=0.0f;

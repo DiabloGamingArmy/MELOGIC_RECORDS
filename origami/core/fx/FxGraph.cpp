@@ -1,3 +1,4 @@
+// mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #include "core/fx/FxGraph.h"
@@ -204,6 +205,16 @@ FxNodeId FxGraph::addOutput(FxPoint at) {
     return appendNode(std::move(node));
 }
 
+FxNodeId FxGraph::addModule(const FxModuleSpec& spec,FxPoint at) {
+    switch(spec.kind) {
+    case FxModuleKind::Effect: return addEffect(spec.effect,at);
+    case FxModuleKind::Split: return addSplit(at);
+    case FxModuleKind::Merge: return addMerge(at);
+    case FxModuleKind::BusSource: return addBusSource(spec.bus,at);
+    }
+    return invalidFxNodeId;
+}
+
 FxEditResult FxGraph::removeNode(FxNodeId id) {
     const auto* node=findNode(id);
     if(node==nullptr) return FxEditResult::UnknownNode;
@@ -304,12 +315,82 @@ std::size_t FxGraph::disconnectPort(FxNodeId node,bool input,std::uint8_t port) 
 }
 
 FxNodeId FxGraph::insertEffectOnConnection(FxConnectionId id,FxEffectType type,FxPoint at) {
+    return insertModuleOnConnection(id,{FxModuleKind::Effect,type,0},at);
+}
+
+FxNodeId FxGraph::parallelOnConnection(FxConnectionId id,FxEffectType type) {
     const auto* original=findConnection(id);
     if(original==nullptr || findFxEffect(type)==nullptr) return invalidFxNodeId;
     const auto snapshot=*this;
     const auto from=original->from,to=original->to;
+    const auto* a=findNode(from.node);
+    const auto* b=findNode(to.node);
+    const FxPoint start=a->position,end=b->position;
+    const float midX=(start.x+end.x)*0.5f;
     disconnect(id);
-    const auto created=addEffect(type,at);
+    const auto split=addSplit({std::max(0.0f,midX-200.0f),start.y+30.0f});
+    const auto merge=addMerge({midX+200.0f,start.y+30.0f});
+    const auto created=addEffect(type,{midX-106.0f,start.y+150.0f});
+    const bool ok=split && merge && created
+        && connect(from,{split,0})==FxEditResult::Ok
+        && connect({split,0},{merge,0})==FxEditResult::Ok
+        && connect({split,1},{created,0})==FxEditResult::Ok
+        && connect({created,0},{merge,1})==FxEditResult::Ok
+        && connect({merge,0},to)==FxEditResult::Ok;
+    if(!ok) { *this=snapshot; return invalidFxNodeId; }
+    return created;
+}
+
+FxNodeId FxGraph::parallelAroundNode(FxNodeId target,FxEffectType type) {
+    const auto* node=findNode(target);
+    if(node==nullptr || node->kind!=FxNodeKind::Effect || findFxEffect(type)==nullptr) return invalidFxNodeId;
+    const auto* in=connectionAt({target,0},true);
+    const auto* out=connectionAt({target,0},false);
+    if(in==nullptr || out==nullptr) return invalidFxNodeId; // ambiguous: not a chained node
+    const auto snapshot=*this;
+    const auto from=in->from,to=out->to;
+    const auto position=node->position;
+    disconnectPort(target,true,0);
+    disconnectPort(target,false,0);
+    const auto split=addSplit({std::max(0.0f,position.x-140.0f),position.y+50.0f});
+    const auto merge=addMerge({position.x+260.0f,position.y+50.0f});
+    const auto created=addEffect(type,{position.x,position.y+200.0f});
+    const bool ok=split && merge && created
+        && connect(from,{split,0})==FxEditResult::Ok
+        && connect({split,0},{target,0})==FxEditResult::Ok
+        && connect({target,0},{merge,0})==FxEditResult::Ok
+        && connect({split,1},{created,0})==FxEditResult::Ok
+        && connect({created,0},{merge,1})==FxEditResult::Ok
+        && connect({merge,0},to)==FxEditResult::Ok;
+    if(!ok) { *this=snapshot; return invalidFxNodeId; }
+    return created;
+}
+
+FxNodeId FxGraph::branchFromConnection(FxConnectionId id,FxEffectType type) {
+    const auto* original=findConnection(id);
+    if(original==nullptr || findFxEffect(type)==nullptr) return invalidFxNodeId;
+    const auto snapshot=*this;
+    const auto from=original->from,to=original->to;
+    const auto start=findNode(from.node)->position;
+    disconnect(id);
+    const auto split=addSplit({start.x+200.0f,start.y+30.0f});
+    const auto created=addEffect(type,{start.x+340.0f,start.y+170.0f});
+    const bool ok=split && created
+        && connect(from,{split,0})==FxEditResult::Ok
+        && connect({split,0},to)==FxEditResult::Ok
+        && connect({split,1},{created,0})==FxEditResult::Ok;
+    if(!ok) { *this=snapshot; return invalidFxNodeId; }
+    return created;
+}
+
+FxNodeId FxGraph::insertModuleOnConnection(FxConnectionId id,const FxModuleSpec& spec,FxPoint at) {
+    const auto* original=findConnection(id);
+    if(original==nullptr || spec.kind==FxModuleKind::BusSource) return invalidFxNodeId;
+    if(spec.kind==FxModuleKind::Effect && findFxEffect(spec.effect)==nullptr) return invalidFxNodeId;
+    const auto snapshot=*this;
+    const auto from=original->from,to=original->to;
+    disconnect(id);
+    const auto created=addModule(spec,at);
     if(created==invalidFxNodeId || connect(from,{created,0})!=FxEditResult::Ok
        || connect({created,0},to)!=FxEditResult::Ok) {
         *this=snapshot;
@@ -448,6 +529,9 @@ void FxGraph::setGlobals(const FxGlobalSettings& g) noexcept {
     globals_.dryWet=pick(g.dryWet,0.0f,1.0f,globals_.dryWet);
     globals_.width=pick(g.width,0.0f,maxWidth,globals_.width);
     globals_.outputGainDb=pick(g.outputGainDb,minGainDb,maxGainDb,globals_.outputGainDb);
+    if(g.order==FxOrder::PostMaster || g.order==FxOrder::PreMaster) globals_.order=g.order;
+    if(g.bypass==FxBypassMode::Crossfade || g.bypass==FxBypassMode::Hard || g.bypass==FxBypassMode::TailPreserve)
+        globals_.bypass=g.bypass;
 }
 
 bool FxGraph::validate(std::string* error) const {
@@ -460,6 +544,9 @@ bool FxGraph::validate(std::string* error) const {
        || !finite(globals_.dryWet) || globals_.dryWet<0.0f || globals_.dryWet>1.0f
        || !finite(globals_.width) || globals_.width<0.0f || globals_.width>maxWidth)
         return fail("invalid global settings");
+    if((globals_.order!=FxOrder::PostMaster && globals_.order!=FxOrder::PreMaster)
+       || (globals_.bypass!=FxBypassMode::Crossfade && globals_.bypass!=FxBypassMode::Hard
+           && globals_.bypass!=FxBypassMode::TailPreserve)) return fail("invalid global modes");
     int sources=0,outputs=0;
     for(std::size_t i=0;i<nodes_.size();++i) {
         const auto& n=nodes_[i];
@@ -534,7 +621,10 @@ bool FxGraph::validate(std::string* error) const {
 
 bool FxGraph::operator==(const FxGraph& o) const noexcept {
     if(nextNodeId_!=o.nextNodeId_ || nextConnectionId_!=o.nextConnectionId_ || mode_!=o.mode_) return false;
-    if(std::memcmp(&globals_,&o.globals_,sizeof(globals_))!=0) return false;
+    const auto& a=globals_;
+    const auto& b=o.globals_;
+    if(a.inputGainDb!=b.inputGainDb || a.dryWet!=b.dryWet || a.width!=b.width || a.outputGainDb!=b.outputGainDb
+       || a.order!=b.order || a.bypass!=b.bypass) return false;
     if(nodes_.size()!=o.nodes_.size() || connections_.size()!=o.connections_.size()) return false;
     for(std::size_t i=0;i<nodes_.size();++i) {
         const auto& a=nodes_[i];
@@ -568,7 +658,7 @@ FxGraph makeDefaultFxGraph() {
 
 namespace {
 constexpr std::uint8_t magic[4]{'M','F','X','G'};
-constexpr std::uint16_t codecVersion=2;
+constexpr std::uint16_t codecVersion=3;
 
 struct Writer {
     std::vector<std::uint8_t> bytes;
@@ -596,6 +686,7 @@ std::vector<std::uint8_t> encodeFxGraph(const FxGraph& graph) {
     w.u8(static_cast<std::uint8_t>(graph.routingMode()));
     const auto& g=graph.globals();
     w.f32(g.inputGainDb); w.f32(g.dryWet); w.f32(g.width); w.f32(g.outputGainDb);
+    w.u8(static_cast<std::uint8_t>(g.order)); w.u8(static_cast<std::uint8_t>(g.bypass));
     // Persist the allocators too, so IDs stay unique across save/load even
     // after deletions (a deleted ID is never handed out again).
     w.u32(graph.nextNodeId_);
@@ -632,13 +723,18 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
         if(data==nullptr || size>1u<<20) return false;
         Reader r{static_cast<const std::uint8_t*>(data),size};
         for(auto b:magic) if(r.u8()!=b) return false;
-        if(r.u16()!=codecVersion) return false;
+        const auto version=r.u16();
+        if(version<2 || version>codecVersion) return false;
         FxGraph graph;
         graph.mode_=static_cast<FxRoutingMode>(r.u8());
         graph.globals_.inputGainDb=r.f32();
         graph.globals_.dryWet=r.f32();
         graph.globals_.width=r.f32();
         graph.globals_.outputGainDb=r.f32();
+        if(version>=3) {
+            graph.globals_.order=static_cast<FxOrder>(r.u8());
+            graph.globals_.bypass=static_cast<FxBypassMode>(r.u8());
+        }
         graph.nextNodeId_=r.u32();
         graph.nextConnectionId_=r.u32();
         const auto nodeCount=r.u16();
