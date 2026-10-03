@@ -1101,6 +1101,7 @@ public:
         const auto& rows=owner_.rows(owner_.tab());
         for(std::size_t i=0;i<rows.size();++i) {
             const auto& row=rows[i];
+            if(row.modulationSource) continue; // a hosted ModulationSourceRow paints itself
             auto r=rowBounds(i);
             if(row.header) { text(g,row.label,r.withTrimmedTop(12),8.5f,Palette::muted()); continue; }
             SourceEntityStyle style;
@@ -1166,12 +1167,17 @@ public:
         pressed_=-1;
         ringRoute_=0;
     }
-    int contentHeight() const { return int(owner_.rows(owner_.tab()).size())*rowHeight+8; }
+    int contentHeight() const { return bounds_.empty() ? 8 : bounds_.back().getBottom()+8; }
+    // Row geometry for the current tab (FxSidebar::layoutList).
+    std::vector<juce::Rectangle<int>> bounds_;
 private:
-    juce::Rectangle<int> rowBounds(std::size_t i) const { return {0,int(i)*rowHeight,getWidth(),rowHeight-4}; }
+    juce::Rectangle<int> rowBounds(std::size_t i) const {
+        return i<bounds_.size() ? bounds_[i] : juce::Rectangle<int>{0,int(i)*rowHeight,getWidth(),rowHeight-4};
+    }
     int indexAt(juce::Point<int> p) const {
         const auto& rows=owner_.rows(owner_.tab());
-        for(std::size_t i=0;i<rows.size();++i) if(!rows[i].header && rowBounds(i).contains(p)) return int(i);
+        for(std::size_t i=0;i<rows.size();++i)
+            if(!rows[i].header && !rows[i].modulationSource && rowBounds(i).contains(p)) return int(i);
         return -1;
     }
     FxSidebar& owner_;
@@ -1199,7 +1205,10 @@ FxSidebar::FxSidebar():list_(std::make_unique<List>(*this)) {
     addAndMakeVisible(viewport_);
 }
 
-FxSidebar::~FxSidebar() { viewport_.setViewedComponent(nullptr,false); }
+FxSidebar::~FxSidebar() {
+    modulatorRows_.clear();
+    viewport_.setViewedComponent(nullptr,false);
+}
 
 void FxSidebar::setTab(Tab tab) {
     tab_=tab;
@@ -1211,10 +1220,99 @@ void FxSidebar::setTab(Tab tab) {
 void FxSidebar::setRows(Tab tab,std::vector<Row> rows) {
     juce::String signature;
     for(const auto& r:rows) signature<<r.label<<"|"<<r.badge<<"|"<<int(r.active)<<int(r.enabled)<<";";
-    const bool changed=signature!=signatures_[static_cast<std::size_t>(tab)];
+    bool changed=signature!=signatures_[static_cast<std::size_t>(tab)];
     signatures_[static_cast<std::size_t>(tab)]=signature;
     rows_[static_cast<std::size_t>(tab)]=std::move(rows); // fresh callbacks either way
-    if(changed && tab==tab_) { resized(); list_->repaint(); }
+    // Modulator cards change height with their route count: that is a layout
+    // change of the list, independent of which tab is showing.
+    if(tab==Tab::Modulators) changed|=syncModulatorRows();
+    if(changed) { layoutList(); list_->repaint(); }
+}
+
+const ModulationSourceRow* FxSidebar::modulatorRow(ModSource source) const noexcept {
+    for(const auto& row:modulatorRows_) if(row->source()==source) return row.get();
+    return nullptr;
+}
+
+bool FxSidebar::syncModulatorRows() {
+    const auto& rows=rows_[static_cast<std::size_t>(Tab::Modulators)];
+    bool changed=false;
+    std::vector<std::unique_ptr<ModulationSourceRow>> next;
+    for(const auto& row:rows) {
+        if(!row.modulationSource) continue;
+        const auto source=*row.modulationSource;
+        std::unique_ptr<ModulationSourceRow> card;
+        for(auto& existing:modulatorRows_)
+            if(existing!=nullptr && existing->source()==source) card=std::move(existing);
+        if(card==nullptr) {
+            changed=true;
+            card=std::make_unique<ModulationSourceRow>(source,row.label,"MOD SOURCE TAB FX "+row.label);
+            card->setClickingTogglesState(false);
+            card->setToggleState(selectedModulator_==source,juce::dontSendNotification);
+            // Callbacks resolve the CURRENT row: rows are rebuilt on every refresh.
+            const auto current=[this,source]()->const Row* {
+                for(const auto& r:rows_[static_cast<std::size_t>(Tab::Modulators)])
+                    if(r.modulationSource==source) return &r;
+                return nullptr;
+            };
+            card->onRouteAmount=[current](std::uint32_t id,float amount){
+                if(const auto* r=current(); r!=nullptr && r->onMagnitude) r->onMagnitude(id,amount);
+            };
+            card->onRouteRemove=[current](std::uint32_t id){
+                if(const auto* r=current(); r!=nullptr && r->onRemoveRoute) r->onRemoveRoute(id);
+            };
+            card->onHoverChanged=[this]{repaint();};
+            card->onClick=[this,source,current]{
+                selectedModulator_=source;
+                for(auto& c:modulatorRows_) c->setToggleState(c->source()==source,juce::dontSendNotification);
+                if(const auto* r=current(); r!=nullptr && r->onClick) r->onClick();
+            };
+            list_->addChildComponent(*card);
+        }
+        std::vector<ModulationSourceRoute> routes;
+        for(const auto& m:row.magnitudes) routes.push_back({m.routeId,m.amount});
+        changed|=card->setRoutes(std::move(routes));
+        next.push_back(std::move(card));
+    }
+    for(auto& stale:modulatorRows_) if(stale!=nullptr) { list_->removeChildComponent(stale.get()); changed=true; }
+    modulatorRows_=std::move(next);
+    return changed;
+}
+
+void FxSidebar::layoutList() {
+    const auto& rows=rows_[static_cast<std::size_t>(tab_)];
+    const int width=juce::jmax(1,viewport_.getWidth()-10);
+    auto& bounds=list_->bounds_;
+    bounds.clear();
+    int y=0;
+    for(const auto& row:rows) {
+        if(row.modulationSource) {
+            // The SYNTH card's own height rule; same 2 px gap as the SYNTH rail.
+            const int h=ModulationSourceRow::heightFor(row.magnitudes.size());
+            bounds.push_back({0,y,width,h-2});
+            y+=h;
+        } else {
+            bounds.push_back({0,y,width,rowHeight-4});
+            y+=rowHeight;
+        }
+    }
+    const bool showCards=tab_==Tab::Modulators;
+    for(auto& card:modulatorRows_) {
+        card->setVisible(showCards);
+        for(std::size_t i=0;showCards && i<rows.size();++i)
+            if(rows[i].modulationSource==card->source()) card->setBounds(bounds[i]);
+    }
+    list_->setSize(width,std::max(viewport_.getHeight(),list_->contentHeight()));
+}
+
+void FxSidebar::paintOverChildren(juce::Graphics& g) {
+    if(tab_!=Tab::Modulators || !routeLabel) return;
+    for(const auto& card:modulatorRows_) {
+        if(card->hoveredRoute()==0 || !card->isShowing()) continue;
+        paintModulationRouteTooltip(g,routeLabel(card->hoveredRoute()),getLocalPoint(card.get(),card->hoverPoint()),
+                                    getLocalBounds().toFloat().reduced(4.0f));
+        break;
+    }
 }
 
 void FxSidebar::resized() {
@@ -1229,7 +1327,7 @@ void FxSidebar::resized() {
     tabs_[3].setBounds(bottom.reduced(1,0));
     area.removeFromTop(6);
     viewport_.setBounds(area);
-    list_->setSize(area.getWidth()-10,std::max(area.getHeight(),list_->contentHeight()));
+    layoutList();
 }
 
 void FxSidebar::paint(juce::Graphics& g) {
@@ -2006,6 +2104,11 @@ FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings h
     for(auto* b:{&undo_,&redo_,&clear_,&templates_,&add_,&zoomOut_,&zoomReset_,&zoomIn_,&zoomFit_}) addAndMakeVisible(b);
     addAndMakeVisible(sidebar_);
     sidebar_.onTabChanged=[this](FxSidebar::Tab){storeView();};
+    sidebar_.routeLabel=[this](std::uint32_t id) {
+        InstrumentState state;
+        if(bindings_.snapshot) state=bindings_.snapshot();
+        return modulationRouteTargetLabel(state,id);
+    };
     addAndMakeVisible(view_);
     view_.onViewChanged=[this] {
         zoomReset_.setButtonText(juce::String(juce::roundToInt(view_.zoom()*100.0f))+"%");
@@ -2138,22 +2241,26 @@ void FxPage::refreshSidebar() {
          [safe]{if(safe!=nullptr) safe->selectNode(safe->graph().sourceForBus(safe->selectedBus()));}},
         {"EXTERNAL IN","PENDING","Not available yet",{},false,false,false,{}}});
 
-    // MODULATORS: references to the canonical sources, same entity as SYNTH:
-    // grip (drag = identical drag description), rings = routes into THIS bus graph.
+    // MODULATORS: the SYNTH page's own source cards (ModulationSourceRow), fed
+    // from the same canonical routes: every route of the source, wherever it
+    // lands, exactly as the SYNTH rail shows it.
     std::vector<Row> modulators;
     const char* lastGroup="";
     for(const auto& s:availableSources(state.modulation)) {
         if(std::strcmp(lastGroup,s.group)!=0) { modulators.push_back({s.group,{},{},{},true,false,true,{}}); lastGroup=s.group; }
         Row row{sourceName(s.source),{},{},juce::String(sourceDragPrefix)+juce::String(int(s.source)),true,false,false,{}};
-        for(const auto& r:state.modulation.routes)
-            if(r.id && r.source==s.source && isFxDestination(r.destination.parameter) && fxAddressBus(r.destination)==bus_)
-                row.magnitudes.push_back({r.id,r.amount});
+        for(const auto& r:modulationSourceRoutes(state.modulation,s.source)) row.magnitudes.push_back({r.id,r.amount});
         row.active=!row.magnitudes.empty();
-        if(row.magnitudes.size()>3) row.badge=juce::String(row.magnitudes.size())+" FX";
+        row.modulationSource=s.source;
         row.onMagnitude=[safe](std::uint32_t id,float amount) {
             if(safe==nullptr || !safe->bindings_.snapshot || !safe->bindings_.route) return;
             for(auto r:safe->bindings_.snapshot().modulation.routes)
                 if(r.id==id) { r.amount=amount; safe->bindings_.route(r); }
+            safe->refreshSidebar();
+        };
+        row.onRemoveRoute=[safe](std::uint32_t id) {
+            if(safe==nullptr || !safe->bindings_.removeRoute) return;
+            safe->bindings_.removeRoute(id);
             safe->refreshSidebar();
         };
         modulators.push_back(std::move(row));

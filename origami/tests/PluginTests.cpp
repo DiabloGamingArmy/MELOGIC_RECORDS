@@ -2265,6 +2265,104 @@ void fxAudioPathAudit() {
 }
 
 
+
+// mct-origami-modulation-row-consistency
+// A source card's height follows its route count the moment the model changes
+// (no selection or other UI event), and SYNTH / FX MODULATORS show the same
+// shared card fed from the same canonical routes.
+void modulationRowConsistencyAudit() {
+    using mct::origami::ModSource;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    ui::ModulationPanel* synth=nullptr;
+    ui::FxPage* fx=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* m=dynamic_cast<ui::ModulationPanel*>(&c)) synth=m;
+        if(auto* f=dynamic_cast<ui::FxPage*>(&c)) fx=f;});
+    check(synth && fx,"SYNTH modulation panel and FX page");
+    editor->setVisible(true); // hit-testing needs a visible editor, as in a host window
+    fx->sidebar().setTab(ui::FxSidebar::Tab::Modulators);
+    editor->refreshModulationViews();
+
+    const auto* env1=synth->sourceRow(ModSource::Env1);
+    const auto* env2=synth->sourceRow(ModSource::Env2);
+    const auto* fxEnv1=fx->sidebar().modulatorRow(ModSource::Env1);
+    check(env1 && env2 && fxEnv1,"ENV cards exist on SYNTH and FX");
+    check(env1->getName().startsWith("MOD SOURCE TAB") && fxEnv1->getName().startsWith("MOD SOURCE TAB"),
+          "FX MODULATORS hosts the SYNTH card (same component class and look)");
+    const auto envRoutes=[&]{return ui::modulationSourceRoutes(p.getUiInstrumentState().modulation,ModSource::Env1);};
+    const auto sameIds=[](const std::vector<ui::ModulationSourceRoute>& a,const std::vector<ui::ModulationSourceRoute>& b) {
+        if(a.size()!=b.size()) return false;
+        for(std::size_t i=0;i<a.size();++i) if(a[i].id!=b[i].id || a[i].amount!=b[i].amount) return false;
+        return true;
+    };
+    check(envRoutes().empty() && env1->routes().empty() && fxEnv1->routes().empty(),"no ENV 1 assignments yet");
+    const int collapsed=env1->getHeight();
+    const int env2Y=env2->getY();
+    check(collapsed==ui::ModulationSourceRow::baseHeight-2 && fxEnv1->getHeight()==collapsed,"collapsed card height (SYNTH == FX)");
+
+    // Knobs a real drop can land on (top-most component under their centre).
+    std::vector<juce::Slider*> knobs;
+    walk(*editor,[&](auto& c){
+        auto* slider=dynamic_cast<juce::Slider*>(&c);
+        if(slider==nullptr || !slider->isRotary() || !slider->getProperties().contains("mct.mod.destination")) return;
+        if(int(slider->getProperties()["mct.mod.destination"])==int(mct::origami::ModDestination::FxParameter)) return;
+        auto* hit=editor->getComponentAt(editor->getLocalArea(slider,slider->getLocalBounds()).getCentre());
+        while(hit!=nullptr && hit!=slider) hit=hit->getParentComponent();
+        if(hit==slider) knobs.push_back(slider);});
+    check(knobs.size()>=3,"three droppable SYNTH knobs");
+    if(knobs.size()<3) return;
+
+    // 1) Drag-and-drop: the card grows inside the same event.
+    const auto drop=[&](juce::Slider& knob) {
+        juce::DragAndDropTarget::SourceDetails details("MCT_MOD_SOURCE:"+juce::String(int(ModSource::Env1)),
+            const_cast<ui::ModulationSourceRow*>(env1),editor->getLocalArea(&knob,knob.getLocalBounds()).getCentre());
+        editor->itemDropped(details);
+    };
+    drop(*knobs[0]);
+    check(envRoutes().size()==1,"drop creates the assignment");
+    check(env1->getHeight()==ui::ModulationSourceRow::routedHeight-2 && env1->routes().size()==1,
+          "SYNTH card expands immediately after the drop (no click)");
+    check(env2->getY()==env2Y+(ui::ModulationSourceRow::routedHeight-ui::ModulationSourceRow::baseHeight),
+          "cards below move down immediately (rail re-laid out, not just repainted)");
+    check(fxEnv1->getHeight()==env1->getHeight() && sameIds(fxEnv1->routes(),envRoutes()),"FX card expands from the same route");
+
+    // 2) Ring double-click removal on SYNTH: collapses in the same call.
+    env1->onRouteRemove(env1->routes()[0].id);
+    check(envRoutes().empty() && env1->routes().empty() && env1->getHeight()==collapsed && env2->getY()==env2Y,
+          "SYNTH card collapses immediately after removing its assignment");
+    check(editor->modulationRefreshPending(),"removal notifies every modulation view");
+    editor->flushModulationRefresh();
+    check(fxEnv1->routes().empty() && fxEnv1->getHeight()==collapsed,"FX card follows the removal");
+
+    // 3) Several assignments made outside the rail (knob menu / FX graph path).
+    for(std::size_t i=0;i<3;++i) check(editor->assignModulator(ModSource::Env1,*knobs[i]),"assign ENV 1");
+    check(editor->modulationRefreshPending(),"assignments post one refresh");
+    editor->flushModulationRefresh(); // the next message-loop turn; no UI event involved
+    check(env1->routes().size()==3 && env1->getHeight()==ui::ModulationSourceRow::routedHeight-2,"three rings, expanded card");
+    check(sameIds(env1->routes(),envRoutes()) && sameIds(fxEnv1->routes(),envRoutes()),
+          "SYNTH and FX rows derive their rings from the same canonical routes");
+    check(fxEnv1->ringBounds(2).getWidth()>0.0f && fxEnv1->getHeight()==env1->getHeight(),"FX card shows the same rings and height");
+
+    // 4) Remove all (from FX): the FX card collapses at once, SYNTH on the posted refresh.
+    for(const auto& r:envRoutes()) fxEnv1->onRouteRemove(r.id);
+    check(envRoutes().empty() && fxEnv1->routes().empty() && fxEnv1->getHeight()==collapsed,"FX card collapses immediately on remove-all");
+    editor->flushModulationRefresh();
+    check(env1->routes().empty() && env1->getHeight()==collapsed && env2->getY()==env2Y,"SYNTH card collapses after remove-all");
+
+    // 5) A model change from outside the UI (host/preset) still re-lays out on the next sync.
+    const auto id=p.addUiRoute();
+    auto route=mct::origami::ModRoute{};
+    for(const auto& r:p.getUiInstrumentState().modulation.routes) if(r.id==id) route=r;
+    route.source=ModSource::Env1;route.destination={mct::origami::ModDestination::Cutoff,0,0};route.amount=0.4f;
+    check(p.setUiRoute(route),"external route edit");
+    synth->syncFromModel();
+    check(env1->routes().size()==1 && env1->getHeight()==ui::ModulationSourceRow::routedHeight-2,"external change expands the card on sync");
+}
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -2272,6 +2370,7 @@ void run() {
     fxWorkspaceP03Audit();
     fxModulationAudioAudit();
     busWorkspaceP04Audit();
+    modulationRowConsistencyAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

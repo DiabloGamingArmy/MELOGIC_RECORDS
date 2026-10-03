@@ -18,8 +18,10 @@
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
+#include "ModulationSourceRow.h"
 #include "VisualizationSettings.h"
 #include <deque>
+#include <memory>
 #include <optional>
 
 namespace mct::origami::ui {
@@ -36,13 +38,13 @@ public:
     void resized() override;
     void syncFromModel();
     bool revealSourceAtParentPoint(juce::Point<int> parentPoint);
+    // The rail's card for a source (null when the source has no card).
+    const ModulationSourceRow* sourceRow(ModSource) const noexcept;
 
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
-    void mouseMove(const juce::MouseEvent&) override;
-    void mouseExit(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails&) override;
 
 private:
@@ -87,25 +89,22 @@ private:
     void showAddSourceMenu();
     void allocateSource(int sourceType);
     void removeSelectedSource();
-    std::optional<std::uint32_t> routeDotAt(juce::Point<float>) const noexcept;
-    juce::Rectangle<float> routeDotBounds(std::size_t tabIndex,
-                                          std::size_t dotIndex,
-                                          std::size_t dotCount) const noexcept;
+    // Single entry for every model refresh: updates the cache and re-lays out
+    // the source rail whenever a card's height or presence changes.
+    void applyModulationState(const ModulationState&);
+    void layoutSourceRail();
     void setRouteAmount(std::uint32_t routeId,float amount);
+    void removeRoute(std::uint32_t routeId);
     void updateSourceHistory(float dt);
     void paintSourceHistoryBackgrounds(juce::Graphics&);
-    void paintSourceRouteOverlays(juce::Graphics&);
     void paintEnvelopeTimeMarkers(juce::Graphics&) const;
     void paintOverChildren(juce::Graphics&) override;
-    juce::String routeTargetLabel(std::uint32_t routeId) const;
 
-    std::array<juce::TextButton,14> tabs_;
+    std::array<std::unique_ptr<ModulationSourceRow>,14> tabs_;
     juce::TextButton sourceAdd_{"+"},sourceRemove_{"-"};
     juce::Viewport sourceViewport_;
     juce::Component sourceContent_;
     juce::Rectangle<int> sourceRail_{};
-    int sourceDragTab_=-1;
-    juce::Point<float> sourceDragStart_{};
     ParameterSetter setter_;
     ParameterGetter getter_;
     ModulationBindings bindings_;
@@ -243,12 +242,6 @@ private:
     // UI-only high-density Chaos monitor. Restores the V38.2 genuine ODE
     // trajectory used by the large Chaos viewport; it never feeds audio DSP.
     ChaosGenerator sourceMonitorChaos_{};
-
-    std::uint32_t routeDragId_=0;
-    float routeDragStartY_=0.0f;
-    float routeDragStartAmount_=0.0f;
-    std::uint32_t routeHoverId_=0;
-    juce::Point<float> routeHoverPoint_{};
 
     DragTarget dragTarget_=DragTarget::None;
     juce::Point<float> dragStart_{};

@@ -24,7 +24,8 @@ class OrigamiAudioProcessor;
 class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropContainer,
                                          public juce::DragAndDropTarget,
-                                         private juce::Timer {
+                                         private juce::Timer,
+                                         private juce::AsyncUpdater {
 public:
     explicit OrigamiAudioProcessorEditor(OrigamiAudioProcessor&);
     ~OrigamiAudioProcessorEditor() override;
@@ -56,6 +57,14 @@ public:
     void updateModulationDragHover(juce::Point<int> editorPoint,double nowMs);
     void endModulationDrag();
     int currentPage() const noexcept { return currentPage_; }
+    // mct-origami-modulation-row-consistency
+    // Every route mutation (from any view, via the modulation bindings) posts
+    // one coalesced refresh of every view of the ModulationState. It is posted,
+    // not run inline, because the mutating control may be rebuilt by it.
+    void modulationRoutesChanged();
+    void refreshModulationViews();
+    bool modulationRefreshPending() const noexcept { return isUpdatePending(); }
+    void flushModulationRefresh() { handleUpdateNowIfNeeded(); }
     void openGlobalFx();
     bool globalFxVisible() const noexcept { return globalOverlay_.isShowing(); }
     // Shared knob menu actions (also used by tests).
@@ -2399,6 +2408,7 @@ private:
     void openWavetableEditor(unsigned oscillatorId);
     void closeWavetableEditor();
     void timerCallback() override;
+    void handleAsyncUpdate() override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
     static juce::Slider* sliderFromMouseEvent(const juce::MouseEvent&) noexcept;
@@ -2413,6 +2423,7 @@ private:
     mct::origami::ui::ModulationBindings dragBindings_;
     juce::Component::SafePointer<juce::Slider> dragPreviewTarget_;
     float dragPreviewAmount_=0.5f;
+    mct::origami::ModulationState lastModulationView_{};
 
     bool matrixSelected_=false;
     bool arpSelected_=false;
@@ -2423,7 +2434,7 @@ private:
     bool wavetableEditorSelected_=false;
     unsigned wavetableEditorOscillatorId_=0;
     WavetableEditorSurface wavetableEditor_;
-    [[maybe_unused]] OrigamiAudioProcessor& processor_;
+    OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;
     mct::origami::ui::OrigamiHeader header_;
     mct::origami::ui::OscillatorRack oscillators_;

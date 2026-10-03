@@ -5,6 +5,7 @@
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
+#include "ModulationSourceRow.h"
 #include "NativeChoiceMenu.h"
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxWorkspace.h"
@@ -161,8 +162,9 @@ private:
 };
 
 // Resource browser: SOURCES / MODULATORS / FILTERS / BUSES. Every row is a
-// reference to a canonical Origami object, never a duplicate of it, painted
-// with the shared source-entity vocabulary (SourceEntity.h).
+// reference to a canonical Origami object, never a duplicate of it. MODULATORS
+// rows are the SYNTH page's own ModulationSourceRow cards; the other tabs are
+// painted with the shared source-entity vocabulary (SourceEntity.h).
 class FxSidebar final : public juce::Component {
 public:
     enum class Tab { Sources=0,Modulators=1,Filters=2,Buses=3 };
@@ -175,6 +177,8 @@ public:
         std::function<void()> onSecondaryClick; // right-click
         std::vector<Magnitude> magnitudes;       // canonical route amounts (rings)
         std::function<void(std::uint32_t,float)> onMagnitude; // drag a ring
+        std::optional<ModSource> modulationSource; // hosted as a ModulationSourceRow
+        std::function<void(std::uint32_t)> onRemoveRoute; // double-click a ring
     };
     FxSidebar();
     ~FxSidebar() override;
@@ -182,14 +186,22 @@ public:
     Tab tab() const noexcept { return tab_; }
     void setRows(Tab,std::vector<Row>);
     const std::vector<Row>& rows(Tab t) const noexcept { return rows_[static_cast<std::size_t>(t)]; }
+    // The hosted modulator card for a source (MODULATORS tab), or null.
+    const ModulationSourceRow* modulatorRow(ModSource) const noexcept;
     std::function<void(Tab)> onTabChanged;
+    std::function<juce::String(std::uint32_t)> routeLabel; // ring hover label
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     static constexpr int rowHeight=36;
     static constexpr int width=236;
 private:
     class List;
+    bool syncModulatorRows();
+    void layoutList();
     Tab tab_=Tab::Sources;
+    std::vector<std::unique_ptr<ModulationSourceRow>> modulatorRows_;
+    std::optional<ModSource> selectedModulator_;
     std::array<juce::TextButton,4> tabs_;
     std::array<std::vector<Row>,4> rows_;
     std::array<juce::String,4> signatures_;

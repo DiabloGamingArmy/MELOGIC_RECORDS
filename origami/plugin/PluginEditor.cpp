@@ -25,14 +25,17 @@
 #include <cstring>
 using namespace mct::origami::ui;
 namespace {
-ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
+// `routesChanged` fires after every successful route/modulation mutation, from
+// whichever view made it, so every view of the one ModulationState can follow.
+ModulationBindings modulationBindings(OrigamiAudioProcessor& owner,std::function<void()> routesChanged) {
+    const auto notify=[routesChanged](bool ok){ if(ok && routesChanged) routesChanged(); return ok; };
     return {[&owner]{return owner.getUiInstrumentState();},
         [&owner](unsigned i,float v){return owner.setUiMacro(i,v);},
         [&owner](const mct::origami::LfoSettings& s){return owner.setUiLfo(s);},
-        [&owner]{return owner.addUiRoute();},
-        [&owner](const mct::origami::ModRoute& r){return owner.setUiRoute(r);},
-        [&owner](unsigned id){return owner.removeUiRoute(id);},
-        [&owner](const mct::origami::ModulationState& s){return owner.setUiModulationState(s);},
+        [&owner,routesChanged]{const auto id=owner.addUiRoute(); if(id!=0 && routesChanged) routesChanged(); return id;},
+        [&owner,notify](const mct::origami::ModRoute& r){return notify(owner.setUiRoute(r));},
+        [&owner,notify](unsigned id){return notify(owner.removeUiRoute(id));},
+        [&owner,notify](const mct::origami::ModulationState& s){return notify(owner.setUiModulationState(s));},
         [&owner]{return owner.getUiEnvelopeTraceSnapshot();},
         [&owner]{return owner.getUiPerformanceInputSnapshot();},
         [&owner]{return owner.getUiHostBpm();},
@@ -62,7 +65,7 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
 }
 }
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)
-    : AudioProcessorEditor(&owner), dragBindings_(modulationBindings(owner)), processor_(owner),
+    : AudioProcessorEditor(&owner), dragBindings_(modulationBindings(owner,[this]{modulationRoutesChanged();})), processor_(owner),
       oscillators_(
           [&owner](mct::origami::ParameterId id,float value) { return owner.setUiParameter(id,value); },
           [&owner](mct::origami::ParameterId id) { return owner.getUiParameter(id); },
@@ -76,9 +79,9 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner] { return owner.getUiOscillatorRevision(); }),
       filter_([&owner](auto id,float v){return owner.setUiParameter(id,v);},
               [&owner](auto id){return owner.getUiParameter(id);},
-              modulationBindings(owner)),
-      modulation_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);},modulationBindings(owner)),
-      macros_(modulationBindings(owner)),matrix_(modulationBindings(owner)),
+              modulationBindings(owner,[this]{modulationRoutesChanged();})),
+      modulation_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);},modulationBindings(owner,[this]{modulationRoutesChanged();})),
+      macros_(modulationBindings(owner,[this]{modulationRoutesChanged();})),matrix_(modulationBindings(owner,[this]{modulationRoutesChanged();})),
       performance_([&owner](int note,bool on,float velocity){return owner.enqueueUiKeyboardNote(note,on,velocity);},
           [&owner](float v){owner.setUiPitchWheel(v);},
           [&owner](float v){owner.setUiModWheel(v);},
@@ -95,7 +98,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner]{owner.clearUiArpeggiatorLatch();}),
       global_([&owner]{return owner.getUiVisualizationMask();},
               [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);}),
-      fxPage_(owner.getUiFxWorkspace(),modulationBindings(owner),
+      fxPage_(owner.getUiFxWorkspace(),modulationBindings(owner,[this]{modulationRoutesChanged();}),
               mct::origami::ui::FxPageHost{[&owner]{return owner.consumeUiFxPeaks();},
                                             [&owner]{return owner.addUiBus();},
                                             [&owner](mct::origami::BusId id){return owner.removeUiBus(id);},
@@ -268,10 +271,44 @@ void OrigamiAudioProcessorEditor::itemDropped(const SourceDetails& details) {
         createDraggedRoute(source,*target);
     dragPreviewTarget_=nullptr;
     endModulationDrag();
+    refreshModulationViews();
+    repaint();
+}
+
+void OrigamiAudioProcessorEditor::modulationRoutesChanged() {
+    triggerAsyncUpdate();
+}
+
+namespace {
+// What the modulation views render from: which sources exist and their routes.
+bool sameModulationView(const mct::origami::ModulationState& a,const mct::origami::ModulationState& b) noexcept {
+    if(a.envActiveMask!=b.envActiveMask || a.lfoActiveMask!=b.lfoActiveMask
+       || a.generatorActiveMask!=b.generatorActiveMask || a.performanceSourceActiveMask!=b.performanceSourceActiveMask)
+        return false;
+    for(std::size_t i=0;i<a.routes.size();++i) {
+        const auto& x=a.routes[i];
+        const auto& y=b.routes[i];
+        if(x.id!=y.id || x.enabled!=y.enabled || x.source!=y.source || !(x.destination==y.destination)
+           || x.amount!=y.amount || x.bipolar!=y.bipolar)
+            return false;
+    }
+    return true;
+}
+}
+
+void OrigamiAudioProcessorEditor::handleAsyncUpdate() {
+    // Envelope/LFO edits also go through the bindings; only a change to what
+    // the modulation views show is worth a refresh.
+    if(sameModulationView(processor_.getUiInstrumentState().modulation,lastModulationView_)) return;
+    refreshModulationViews();
+}
+
+void OrigamiAudioProcessorEditor::refreshModulationViews() {
+    cancelPendingUpdate();
+    lastModulationView_=processor_.getUiInstrumentState().modulation;
     modulation_.syncFromModel();
     matrix_.syncFromModel();
     fxPage_.syncFromModel();
-    repaint();
 }
 
 void OrigamiAudioProcessorEditor::paintOverChildren(juce::Graphics& g) {
@@ -519,9 +556,7 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
                 const auto index=static_cast<std::size_t>(id-100);
                 if(index<matches.size()) dragBindings_.removeRoute(matches[index].id);
             }
-            modulation_.syncFromModel();
-            matrix_.syncFromModel();
-            fxPage_.syncFromModel();
+            refreshModulationViews();
             repaint();
         });
 }

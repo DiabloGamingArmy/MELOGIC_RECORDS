@@ -92,18 +92,21 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         "FUNCTION","RANDOM","CHAOS","DRIFT","SEQ","VELOCITY","NOTE"
     };
     for(int i=0;i<14;++i) {
-        auto& tab=tabs_[static_cast<std::size_t>(i)];
+        auto& slot=tabs_[static_cast<std::size_t>(i)];
+        slot=std::make_unique<ModulationSourceRow>(sourceForTab(static_cast<std::size_t>(i)),names[i],
+                                                   "MOD SOURCE TAB "+juce::String(i+1));
+        auto& tab=*slot;
         sourceContent_.addAndMakeVisible(tab);
-        tab.setButtonText(names[i]);
-        tab.setName("MOD SOURCE TAB "+juce::String(i+1));
         tab.setClickingTogglesState(true);
         tab.setToggleState(i==0,juce::dontSendNotification);
-        tab.addMouseListener(this,false);
+        tab.onRouteAmount=[this](std::uint32_t id,float amount){setRouteAmount(id,amount);};
+        tab.onRouteRemove=[this](std::uint32_t id){removeRoute(id);};
+        tab.onHoverChanged=[this]{repaint();};
         tab.onClick=[this,i]{
             if(!sourceTabActive(static_cast<std::size_t>(i))) return;
             selected_=i;
             for(std::size_t j=0;j<tabs_.size();++j)
-                tabs_[j].setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);
+                tabs_[j]->setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);
             scrollSeconds_=0.0;
             sourceRemove_.setEnabled(i!=0);
             syncFromModel();
@@ -397,14 +400,14 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         }
         commitSequenceSteps();sequenceContent_.repaint();repaint();
     };
-    auto commitSequenceTransport=[this]{ if(selected_!=11 || !bindings_.snapshot || !bindings_.modulation) return; auto mod=bindings_.snapshot().modulation; mod.sequencer.activeSteps=static_cast<std::uint32_t>(juce::jlimit(1,8,sequenceStepCount_.getSelectedId())); mod.sequencer.direction=static_cast<SequenceDirection>(juce::jlimit(1,3,sequenceDirection_.getSelectedId())); mod.sequencer.loop=sequenceLoopMode_.getSelectedId()!=2; if(bindings_.modulation(mod)){cached_=mod;sequenceContent_.repaint();} };
+    auto commitSequenceTransport=[this]{ if(selected_!=11 || !bindings_.snapshot || !bindings_.modulation) return; auto mod=bindings_.snapshot().modulation; mod.sequencer.activeSteps=static_cast<std::uint32_t>(juce::jlimit(1,8,sequenceStepCount_.getSelectedId())); mod.sequencer.direction=static_cast<SequenceDirection>(juce::jlimit(1,3,sequenceDirection_.getSelectedId())); mod.sequencer.loop=sequenceLoopMode_.getSelectedId()!=2; if(bindings_.modulation(mod)){applyModulationState(mod);sequenceContent_.repaint();} };
     sequenceStepCount_.onChange=commitSequenceTransport;sequenceDirection_.onChange=commitSequenceTransport;sequenceLoopMode_.onChange=commitSequenceTransport;
     auto commitSequenceExpression=[this]{
         if(selected_!=11 || !bindings_.snapshot || !bindings_.modulation) return;
         auto mod=bindings_.snapshot().modulation;
         for(std::size_t i=0;i<sequenceSteps_.size();++i) { mod.sequencer.probability[i]=static_cast<float>(sequenceGatePreview_[i].getValue()); mod.sequencer.ratchets[i]=static_cast<std::uint32_t>(juce::jlimit(1,4,sequenceRatchet_[i].getSelectedId())); }
         mod.sequencer.humanize=static_cast<float>(sequenceHumanize_.getValue());
-        if(bindings_.modulation(mod)){cached_=mod;sequenceContent_.repaint();}
+        if(bindings_.modulation(mod)){applyModulationState(mod);sequenceContent_.repaint();}
     };
     for(std::size_t i=0;i<sequenceSteps_.size();++i) { sequenceGatePreview_[i].onValueChange=commitSequenceExpression; sequenceRatchet_[i].onChange=commitSequenceExpression; }
     sequenceHumanize_.onValueChange=commitSequenceExpression;
@@ -450,7 +453,6 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 ModulationPanel::~ModulationPanel() {
     stopTimer();
     envScroll_.removeListener(this);
-    for(auto& tab:tabs_) tab.removeMouseListener(this);
     sourceViewport_.setViewedComponent(nullptr,false);
 }
 
@@ -467,18 +469,23 @@ bool ModulationPanel::sourceTabActive(std::size_t index) const noexcept {
     return false;
 }
 
+const ModulationSourceRow* ModulationPanel::sourceRow(ModSource source) const noexcept {
+    for(const auto& row:tabs_) if(row->source()==source) return row.get();
+    return nullptr;
+}
+
 bool ModulationPanel::revealSourceAtParentPoint(juce::Point<int> parentPoint) {
     auto* parent=getParentComponent();
     if(parent==nullptr) return false;
     const auto local=getLocalPoint(parent,parentPoint);
     for(std::size_t i=0;i<tabs_.size();++i) {
-        if(!sourceTabActive(i) || !tabs_[i].isShowing()) continue;
-        const auto bounds=getLocalArea(&tabs_[i],tabs_[i].getLocalBounds());
+        if(!sourceTabActive(i) || !tabs_[i]->isShowing()) continue;
+        const auto bounds=getLocalArea(tabs_[i].get(),tabs_[i]->getLocalBounds());
         if(!bounds.contains(local)) continue;
         if(selected_==static_cast<int>(i)) return true;
         selected_=static_cast<int>(i);
         for(std::size_t j=0;j<tabs_.size();++j)
-            tabs_[j].setToggleState(j==i,juce::dontSendNotification);
+            tabs_[j]->setToggleState(j==i,juce::dontSendNotification);
         sourceRemove_.setEnabled(i!=0);scrollSeconds_=0.0;
         syncFromModel();resized();repaint();return true;
     }
@@ -537,11 +544,11 @@ void ModulationPanel::allocateSource(int sourceType) {
     }
     if(slot<0 || !bindings_.modulation(mod)) return;
 
-    cached_=mod;
+    applyModulationState(mod);
     selected_=slot;
     for(std::size_t i=0;i<tabs_.size();++i) {
-        tabs_[i].setVisible(sourceTabActive(i));
-        tabs_[i].setToggleState(i==static_cast<std::size_t>(slot),juce::dontSendNotification);
+        tabs_[i]->setVisible(sourceTabActive(i));
+        tabs_[i]->setToggleState(i==static_cast<std::size_t>(slot),juce::dontSendNotification);
     }
     sourceRemove_.setEnabled(true);
     updateVisibleControls();
@@ -573,11 +580,11 @@ void ModulationPanel::removeSelectedSource() {
     mod.routes=compact;
 
     if(!bindings_.modulation(mod)) return;
-    cached_=mod;
+    applyModulationState(mod);
     selected_=0;
     for(std::size_t i=0;i<tabs_.size();++i) {
-        tabs_[i].setVisible(sourceTabActive(i));
-        tabs_[i].setToggleState(i==0,juce::dontSendNotification);
+        tabs_[i]->setVisible(sourceTabActive(i));
+        tabs_[i]->setToggleState(i==0,juce::dontSendNotification);
     }
     sourceRemove_.setEnabled(false);
     updateVisibleControls();
@@ -608,7 +615,7 @@ void ModulationPanel::setCurrentCurves(const std::array<float,3>& c) {
     } else if(selected_==2) {
         mod.env3.attackCurve=c[0];mod.env3.decayCurve=c[1];mod.env3.releaseCurve=c[2];
     } else return;
-    if(bindings_.modulation(mod)) cached_=mod;
+    if(bindings_.modulation(mod)) applyModulationState(mod);
 }
 
 void ModulationPanel::commitEnvelope() {
@@ -622,7 +629,7 @@ void ModulationPanel::commitEnvelope() {
     auto mod=bindings_.snapshot().modulation;
     auto e=currentEnvelope();
     (selected_==1?mod.env2:mod.env3)=e;
-    if(bindings_.modulation(mod)) cached_=mod;
+    if(bindings_.modulation(mod)) applyModulationState(mod);
 }
 
 bool ModulationPanel::commitSequenceSteps() {
@@ -631,7 +638,7 @@ bool ModulationPanel::commitSequenceSteps() {
     for(std::size_t i=0;i<sequenceSteps_.size();++i)
         mod.sequencer.steps[i]=static_cast<float>(sequenceSteps_[i].getValue());
     if(!bindings_.modulation(mod)) return false;
-    cached_=mod; return true;
+    applyModulationState(mod); return true;
 }
 
 void ModulationPanel::commitGenerator() {
@@ -672,7 +679,7 @@ void ModulationPanel::commitGenerator() {
     } else if(selected_==11) {
         mod.sequencer.rateHz=static_cast<float>(rate_.getValue());
     } else return;
-    if(bindings_.modulation(mod)) cached_=mod;
+    if(bindings_.modulation(mod)) applyModulationState(mod);
 }
 
 void ModulationPanel::updateVisibleControls() {
@@ -727,11 +734,22 @@ void ModulationPanel::updateVisibleControls() {
     performanceInputLabel_.setVisible(performance);
 }
 
+void ModulationPanel::applyModulationState(const ModulationState& mod) {
+    cached_=mod;
+    // Route topology decides each source card's height and active sources
+    // decide which cards exist: either change invalidates the rail layout
+    // (bounds + scroll content height), not just its pixels.
+    bool layoutChanged=false;
+    for(std::size_t i=0;i<tabs_.size();++i) {
+        layoutChanged|=tabs_[i]->setRoutes(modulationSourceRoutes(cached_,sourceForTab(i)));
+        layoutChanged|=tabs_[i]->isVisible()!=sourceTabActive(i);
+    }
+    if(layoutChanged) layoutSourceRail();
+}
+
 void ModulationPanel::syncFromModel() {
-    if(bindings_.snapshot) cached_=bindings_.snapshot().modulation;
+    if(bindings_.snapshot) applyModulationState(bindings_.snapshot().modulation);
     if(!sourceTabActive(static_cast<std::size_t>(selected_))) selected_=0;
-    for(std::size_t i=0;i<tabs_.size();++i)
-        tabs_[i].setVisible(sourceTabActive(i));
     sourceRemove_.setEnabled(selected_!=0);
     if(selected_==0) {
         if(getter_) for(std::size_t i=0;i<4;++i)
@@ -906,24 +924,6 @@ void ModulationPanel::mouseDown(const juce::MouseEvent& e) {
         return;
     }
 
-    sourceDragTab_=-1;
-    for(std::size_t i=0;i<tabs_.size();++i) {
-        if(e.eventComponent==&tabs_[i] && sourceTabActive(i)) {
-            sourceDragTab_=static_cast<int>(i);
-            sourceDragStart_=local.position;
-            break;
-        }
-    }
-
-    if(const auto routeId=routeDotAt(local.position)) {
-        sourceDragTab_=-1;
-        routeDragId_=*routeId;
-        routeDragStartY_=local.position.y;
-        routeDragStartAmount_=0.0f;
-        for(const auto& route:cached_.routes)
-            if(route.id==routeDragId_) {routeDragStartAmount_=route.amount;break;}
-        return;
-    }
     if(e.eventComponent!=this) return;
 
     dragTarget_=DragTarget::None;lfoPointDrag_=-1;lfoCurveDrag_=-1;
@@ -949,27 +949,6 @@ void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
         }
     }
     const auto local=e.getEventRelativeTo(this);
-
-    // Double-clicking a route gauge removes only that Matrix assignment.
-    if(const auto routeId=routeDotAt(local.position)) {
-        if(bindings_.modulation) {
-            auto mod=bindings_.snapshot ? bindings_.snapshot().modulation : cached_;
-
-            std::array<ModRoute,ModulationState::capacity> compact{};
-            std::size_t write=0;
-            for(const auto& route:mod.routes)
-                if(route.id!=0 && route.id!=*routeId)
-                    compact[write++]=route;
-
-            mod.routes=compact;
-            if(bindings_.modulation(mod)) {
-                cached_=mod;
-                routeDragId_=0;
-                repaint();
-            }
-        }
-        return;
-    }
 
     if(e.eventComponent==this && (selected_==12 || selected_==13) &&
        performanceCurveCanvas_.contains(local.position)) {
@@ -1049,27 +1028,6 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
         }
         commitPerformanceShape();repaint();return;
     }
-    if(routeDragId_!=0) {
-        const auto local=e.getEventRelativeTo(this);
-        const float amount=juce::jlimit(-1.0f,1.0f,
-            routeDragStartAmount_+(routeDragStartY_-local.position.y)/42.0f);
-        setRouteAmount(routeDragId_,amount);
-        return;
-    }
-
-    if(sourceDragTab_>=0) {
-        const auto local=e.getEventRelativeTo(this);
-        if(local.position.getDistanceFrom(sourceDragStart_)>7.0f) {
-            if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) {
-                const auto source=sourceForTab(static_cast<std::size_t>(sourceDragTab_));
-                const juce::String description="MCT_MOD_SOURCE:"+juce::String(static_cast<int>(source));
-                container->startDragging(description,&tabs_[static_cast<std::size_t>(sourceDragTab_)]);
-            }
-            sourceDragTab_=-1;
-        }
-        if(sourceDragTab_>=0) return;
-    }
-
     if(selected_>=3 && selected_<=6 && (lfoPointDrag_>=0 || lfoCurveDrag_>=0)) {
         auto& shape=lfoMseg_[static_cast<std::size_t>(selected_-3)];
         if(lfoPointDrag_>=0) {
@@ -1151,70 +1109,6 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
 void ModulationPanel::mouseUp(const juce::MouseEvent&) {
     performancePointDrag_=-1;performanceCurveDrag_=-1;
     dragTarget_=DragTarget::None;lfoPointDrag_=-1;lfoCurveDrag_=-1;
-    routeDragId_=0;
-    sourceDragTab_=-1;
-}
-
-juce::String ModulationPanel::routeTargetLabel(std::uint32_t routeId) const {
-    const ModRoute* found=nullptr;
-    for(const auto& route:cached_.routes)
-        if(route.id==routeId) {found=&route;break;}
-    if(!found) return {};
-
-    juce::String target;
-    switch(found->destination.parameter) {
-        case ModDestination::FxParameter:
-            target="FX / NODE "+juce::String(found->destination.oscillator)+" / P"+juce::String(found->destination.itemId);break;
-        case ModDestination::Cutoff:target="FILTER / CUTOFF";break;
-        case ModDestination::Resonance:target="FILTER / RESONANCE";break;
-        case ModDestination::MasterGain:target="GLOBAL / MASTER GAIN";break;
-        case ModDestination::WtPosition:target="WT POSITION";break;
-        case ModDestination::Octave:target="OCTAVE";break;
-        case ModDestination::Semitone:target="SEMITONE";break;
-        case ModDestination::Fine:target="FINE";break;
-        case ModDestination::Detune:target="DETUNE";break;
-        case ModDestination::Pan:target="PAN";break;
-        case ModDestination::Level:target="LEVEL";break;
-        case ModDestination::Process1Amount:target="PROCESS 1 AMOUNT";break;
-        case ModDestination::Process2Amount:target="PROCESS 2 AMOUNT";break;
-        case ModDestination::Route1Amount:target="ROUTE 1 AMOUNT";break;
-        case ModDestination::Route2Amount:target="ROUTE 2 AMOUNT";break;
-        case ModDestination::ProcessAmount:target="OSC PROCESS AMOUNT";break;
-        case ModDestination::RouteAmount:target="OSC ROUTE AMOUNT";break;
-    }
-
-    if(found->destination.oscillator!=0 && bindings_.snapshot) {
-        const auto state=bindings_.snapshot();
-        unsigned ordinal=0;
-        for(const auto& osc:state.oscillators) {
-            if(!osc.id) continue;
-            ++ordinal;
-            if(osc.id==found->destination.oscillator) {
-                target="OSC "+juce::String(ordinal)+" / "+target;
-                break;
-            }
-        }
-    }
-
-    return target;
-}
-
-void ModulationPanel::mouseMove(const juce::MouseEvent& e) {
-    const auto local=e.getEventRelativeTo(this);
-    const auto hit=routeDotAt(local.position);
-    const auto id=hit.value_or(0);
-    if(id!=routeHoverId_ || (id!=0 && local.position.getDistanceFrom(routeHoverPoint_)>2.0f)) {
-        routeHoverId_=id;
-        routeHoverPoint_=local.position;
-        repaint();
-    }
-}
-
-void ModulationPanel::mouseExit(const juce::MouseEvent&) {
-    if(routeHoverId_!=0) {
-        routeHoverId_=0;
-        repaint();
-    }
 }
 
 void ModulationPanel::mouseWheelMove(const juce::MouseEvent& e,
@@ -1405,6 +1299,33 @@ void ModulationPanel::updateScrollbar() {
     envScroll_.setSingleStepSize(gridStepSeconds());
 }
 
+void ModulationPanel::layoutSourceRail() {
+    // V32.2: source cards no longer shrink to fit the rail. The list is a real
+    // scrolling collection with stable item geometry. A route-bearing card gets
+    // additional height only for its divider + magnitude-ring chamber; the card
+    // itself owns that rule (ModulationSourceRow::preferredHeight).
+    // The rebuilt rail has no visible scrollbar, so every source card owns the
+    // complete viewport width. Selection borders therefore remain fully inside
+    // the clip while preserving the rail width established by the surrounding UI.
+    const int contentWidth=juce::jmax(1,sourceViewport_.getWidth());
+    // Small breathing gap below the fixed SOURCE header before the first row.
+    constexpr int sourceListTopGap=3;
+    int y=sourceListTopGap;
+    for(std::size_t i=0;i<tabs_.size();++i) {
+        auto& row=*tabs_[i];
+        row.setVisible(sourceTabActive(i));
+        if(!row.isVisible()) {
+            row.setBounds({});
+            continue;
+        }
+        const int h=row.preferredHeight();
+        row.setBounds(0,y,contentWidth,h-2);
+        y+=h;
+    }
+    sourceContent_.setSize(contentWidth,juce::jmax(y,sourceViewport_.getHeight()));
+    repaint(sourceRail_); // history backgrounds are painted by the panel
+}
+
 void ModulationPanel::resized() {
     auto body=contentBounds();
     // Keep the MODULATION title band visually isolated from all working surfaces.
@@ -1440,37 +1361,7 @@ void ModulationPanel::resized() {
     // scrolling collection with stable item geometry. A route-bearing item gets
     // additional height only for its divider + magnitude-circle chamber.
     sourceViewport_.setBounds(rail);
-
-    std::array<bool,12> routed{};
-    for(std::size_t i=0;i<tabs_.size();++i) {
-        const auto source=sourceForTab(i);
-        for(const auto& route:cached_.routes) {
-            if(route.id!=0 && route.enabled && route.source==source) {
-                routed[i]=true;
-                break;
-            }
-        }
-    }
-
-    constexpr int baseRowHeight=36;
-    constexpr int routedRowHeight=54;
-    // The rebuilt rail has no visible scrollbar, so every source card owns the
-    // complete viewport width. Selection borders therefore remain fully inside
-    // the clip while preserving the rail width established by the surrounding UI.
-    const int contentWidth=juce::jmax(1,sourceViewport_.getWidth());
-    // Small breathing gap below the fixed SOURCE header before the first row.
-    constexpr int sourceListTopGap=3;
-    int y=sourceListTopGap;
-    for(std::size_t i=0;i<tabs_.size();++i) {
-        if(!sourceTabActive(i)) {
-            tabs_[i].setBounds({});
-            continue;
-        }
-        const int h=routed[i]?routedRowHeight:baseRowHeight;
-        tabs_[i].setBounds(0,y,contentWidth,h-2);
-        y+=h;
-    }
-    sourceContent_.setSize(contentWidth,juce::jmax(y,sourceViewport_.getHeight()));
+    layoutSourceRail();
 
     auto controls=body.removeFromBottom(62);
     if(selected_<=6) {
@@ -1690,7 +1581,7 @@ bool ModulationPanel::commitMsegShape() {
         l.points[i]={editor.points[i].x,editor.points[i].y,editor.points[i].curve};
 
     if(!bindings_.modulation(mod)) return false;
-    cached_=mod;
+    applyModulationState(mod);
     return true;
 }
 
@@ -2184,59 +2075,40 @@ ModSource ModulationPanel::sourceForTab(std::size_t index) noexcept {
     return sources[juce::jmin(index,sources.size()-1)];
 }
 
-juce::Rectangle<float> ModulationPanel::routeDotBounds(
-    std::size_t tabIndex,std::size_t dotIndex,std::size_t dotCount) const noexcept {
-    if(tabIndex>=tabs_.size() || dotCount==0) return {};
-    auto b=getLocalArea(&sourceContent_,tabs_[tabIndex].getBounds())
-               .toFloat().reduced(5.0f,1.5f);
-    auto dotArea=b.withTrimmedTop(17.5f);
-    // Route gauges need enough visual area to read as controls, not status LEDs.
-    constexpr float diameter=16.0f;
-    constexpr float gap=5.0f;
-    const auto shown=juce::jmin<std::size_t>(dotCount,6);
-    const float total=shown*diameter+(shown>0 ? (shown-1)*gap : 0.0f);
-    const float x0=dotArea.getCentreX()-total*0.5f;
-    return {x0+static_cast<float>(dotIndex)*(diameter+gap),
-            dotArea.getCentreY()-diameter*0.5f,diameter,diameter};
-}
-
-std::optional<std::uint32_t> ModulationPanel::routeDotAt(
-    juce::Point<float> point) const noexcept {
-    if(!sourceViewport_.getBounds().toFloat().contains(point))
-        return std::nullopt;
-    for(std::size_t tabIndex=0;tabIndex<tabs_.size();++tabIndex) {
-        const auto source=sourceForTab(tabIndex);
-        std::array<const ModRoute*,ModulationState::capacity> matches{};
-        std::size_t count=0;
-        for(const auto& route:cached_.routes)
-            if(route.id!=0 && route.enabled && route.source==source)
-                matches[count++]=&route;
-
-        const auto shown=juce::jmin<std::size_t>(count,6);
-        for(std::size_t dot=0;dot<shown;++dot)
-            if(routeDotBounds(tabIndex,dot,count).expanded(2.0f).contains(point))
-                return matches[dot]->id;
-    }
-    return std::nullopt;
-}
-
 void ModulationPanel::setRouteAmount(std::uint32_t routeId,float amount) {
     if(routeId==0 || !bindings_.route) return;
-    for(auto& route:cached_.routes) {
+    for(const auto& route:cached_.routes) {
         if(route.id!=routeId) continue;
         auto updated=route;
         updated.amount=juce::jlimit(-1.0f,1.0f,amount);
         if(bindings_.route(updated)) {
-            route=updated;
-            repaint();
+            auto mod=cached_;
+            for(auto& r:mod.routes) if(r.id==routeId) r=updated;
+            applyModulationState(mod);
         }
         return;
     }
 }
 
+void ModulationPanel::removeRoute(std::uint32_t routeId) {
+    // Removes only that Matrix assignment; the owning card collapses at once.
+    if(routeId==0 || !bindings_.modulation) return;
+    auto mod=bindings_.snapshot ? bindings_.snapshot().modulation : cached_;
+    std::array<ModRoute,ModulationState::capacity> compact{};
+    std::size_t write=0;
+    for(const auto& route:mod.routes)
+        if(route.id!=0 && route.id!=routeId)
+            compact[write++]=route;
+    mod.routes=compact;
+    if(bindings_.modulation(mod)) {
+        applyModulationState(mod);
+        repaint();
+    }
+}
+
 void ModulationPanel::updateSourceHistory(float) {
     if(bindings_.snapshot)
-        cached_=bindings_.snapshot().modulation;
+        applyModulationState(bindings_.snapshot().modulation);
 
     if(bindings_.envelopeTrace)
         sourceTrace_=bindings_.envelopeTrace();
@@ -2334,7 +2206,7 @@ void ModulationPanel::updateSourceHistory(float) {
     for(std::size_t i=0;i<sourceHistory_.size();++i) {
         // Histories exist only to paint the list cards. Do not maintain rolling
         // buffers for cards that are currently scrolled out of view.
-        const auto card=getLocalArea(&sourceContent_,tabs_[i].getBounds()).toFloat();
+        const auto card=getLocalArea(&sourceContent_,tabs_[i]->getBounds()).toFloat();
         if(!card.intersects(visibleRail)) continue;
 
         auto& history=sourceHistory_[i];
@@ -2353,7 +2225,7 @@ void ModulationPanel::paintSourceHistoryBackgrounds(juce::Graphics& g) {
     g.reduceClipRegion(sourceViewport_.getBounds());
 
     for(std::size_t i=0;i<tabs_.size();++i) {
-        auto b=getLocalArea(&sourceContent_,tabs_[i].getBounds())
+        auto b=getLocalArea(&sourceContent_,tabs_[i]->getBounds())
                    .toFloat().reduced(0.75f);
         if(b.isEmpty() || !b.intersects(sourceViewport_.getBounds().toFloat())) continue;
 
@@ -2376,50 +2248,6 @@ void ModulationPanel::paintSourceHistoryBackgrounds(juce::Graphics& g) {
             const float x=right-strip*static_cast<float>(count-h);
             g.setColour(colour.withAlpha(0.34f+0.26f*magnitude));
             g.fillRect(juce::Rectangle<float>(x,b.getY(),strip+0.5f,b.getHeight()));
-        }
-    }
-}
-
-void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
-    juce::Graphics::ScopedSaveState viewportClip(g);
-    g.reduceClipRegion(sourceViewport_.getBounds());
-    // Six-dot grip: every source card is draggable onto any knob, on any page.
-    for(std::size_t tabIndex=0;tabIndex<tabs_.size();++tabIndex) {
-        if(!tabs_[tabIndex].isVisible()) continue;
-        const auto card=getLocalArea(&sourceContent_,tabs_[tabIndex].getBounds()).toFloat();
-        if(!card.intersects(sourceViewport_.getBounds().toFloat())) continue;
-        paintDragGrip(g,card.withWidth(sourceEntityGripWidth+6.0f).withTrimmedLeft(4.0f).withHeight(std::min(card.getHeight(),18.0f)));
-    }
-
-    for(std::size_t tabIndex=0;tabIndex<tabs_.size();++tabIndex) {
-        const auto source=sourceForTab(tabIndex);
-        std::array<const ModRoute*,ModulationState::capacity> matches{};
-        std::size_t count=0;
-        for(const auto& route:cached_.routes)
-            if(route.id!=0 && route.enabled && route.source==source)
-                matches[count++]=&route;
-
-        if(count==0) continue;
-
-        const auto tab=getLocalArea(&sourceContent_,tabs_[tabIndex].getBounds())
-                           .toFloat().reduced(4.0f,1.0f);
-        const float dividerY=tab.getY()+16.5f;
-        g.setColour(Palette::borderStrong().withAlpha(0.58f));
-        g.drawLine(tab.getX()+4.0f,dividerY,tab.getRight()-4.0f,dividerY,0.75f);
-
-        const auto shown=juce::jmin<std::size_t>(count,6);
-        for(std::size_t dot=0;dot<shown;++dot) {
-            const auto circle=routeDotBounds(tabIndex,dot,count);
-            // Shared source-entity vocabulary (also used by FX MODULATORS).
-            paintModulationMagnitudeRing(g,circle,matches[dot]->amount);
-        }
-
-        if(count>shown) {
-            g.setColour(Palette::muted());
-            g.setFont(juce::FontOptions(7.0f));
-            g.drawText("+"+juce::String(static_cast<int>(count-shown)),
-                       juce::Rectangle<float>(tab.getRight()-18.0f,dividerY+1.0f,16.0f,11.0f),
-                       juce::Justification::centred);
         }
     }
 }
@@ -2465,31 +2293,16 @@ void ModulationPanel::paintEnvelopeTimeMarkers(juce::Graphics& g) const {
 }
 
 void ModulationPanel::paintOverChildren(juce::Graphics& g) {
-    paintSourceRouteOverlays(g);
     paintEnvelopeTimeMarkers(g);
-
-    if(routeHoverId_!=0) {
-        const auto label=routeTargetLabel(routeHoverId_);
-        if(label.isNotEmpty()) {
-            g.setFont(juce::FontOptions(9.0f));
-            // Avoid JUCE Font width APIs here: this project is building against
-            // a JUCE revision where both getStringWidthFloat() and getStringWidth()
-            // are unavailable. This tooltip is short, fixed-font UI text, so a
-            // deterministic character-width estimate is sufficient and portable.
-            const int w=juce::jlimit(92,220,18+label.length()*7);
-            juce::Rectangle<float> box(routeHoverPoint_.x+12.0f,routeHoverPoint_.y-30.0f,
-                                       float(w),24.0f);
-            const auto bounds=getLocalBounds().toFloat().reduced(4.0f);
-            if(box.getRight()>bounds.getRight()) box.setX(routeHoverPoint_.x-float(w)-12.0f);
-            if(box.getY()<bounds.getY()) box.setY(routeHoverPoint_.y+12.0f);
-
-            g.setColour(juce::Colours::black.withAlpha(.94f));
-            g.fillRoundedRectangle(box,4.0f);
-            g.setColour(Palette::borderStrong());
-            g.drawRoundedRectangle(box,4.0f,.9f);
-            g.setColour(Palette::text());
-            g.drawText(label,box.reduced(8.0f,2.0f),juce::Justification::centredLeft);
-        }
+    // Route hover label for the source card under the mouse (cards are clipped
+    // to the rail, so the label is painted here).
+    for(const auto& row:tabs_) {
+        if(row->hoveredRoute()==0 || !row->isShowing()) continue;
+        InstrumentState state;
+        if(bindings_.snapshot) state=bindings_.snapshot(); else state.modulation=cached_;
+        paintModulationRouteTooltip(g,modulationRouteTargetLabel(state,row->hoveredRoute()),
+                                    getLocalPoint(row.get(),row->hoverPoint()),getLocalBounds().toFloat().reduced(4.0f));
+        break;
     }
 }
 
@@ -2517,7 +2330,7 @@ bool ModulationPanel::commitPerformanceShape() {
     for(std::size_t i=0;i<dst.pointCount;++i)
         dst.points[i]={src.points[i].x,juce::jlimit(0.0f,1.0f,src.points[i].y),src.points[i].curve};
     if(!bindings_.modulation(mod)) return false;
-    cached_=mod;return true;
+    applyModulationState(mod);return true;
 }
 float ModulationPanel::performanceMsegValue(const MsegShape& shape,float x) const noexcept {
     if(shape.count<2) return juce::jlimit(0.0f,1.0f,x);
