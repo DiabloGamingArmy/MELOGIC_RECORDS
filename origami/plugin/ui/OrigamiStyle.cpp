@@ -23,6 +23,18 @@ void NativeComboBox::addNativeSeparator(const juce::String& group) {
     nativeSeparators_.push_back({getNumItems(),group});
 }
 
+void NativeComboBox::setNativeItemUnavailable(int id,const juce::String& reason) {
+    setItemEnabled(id,reason.isEmpty());
+    for(auto it=nativeReasons_.begin();it!=nativeReasons_.end();++it)
+        if(it->first==id) { nativeReasons_.erase(it); break; }
+    if(reason.isNotEmpty()) nativeReasons_.push_back({id,reason});
+}
+
+juce::String NativeComboBox::nativeItemReason(int id) const {
+    for(const auto& entry:nativeReasons_) if(entry.first==id) return entry.second;
+    return {};
+}
+
 void NativeComboBox::mouseDown(const juce::MouseEvent&) {
     std::vector<NativeChoiceItem> items;
     items.reserve(static_cast<std::size_t>(getNumItems()));
@@ -33,7 +45,9 @@ void NativeComboBox::mouseDown(const juce::MouseEvent&) {
         juce::String group;
         for(const auto& entry:nativeGroups_)
             if(entry.first==id) {group=entry.second;break;}
-        items.push_back({id,getItemText(i),true,group});
+        const auto reason=nativeItemReason(id);
+        const bool enabled=isItemEnabled(id);
+        items.push_back({id,enabled || reason.isEmpty() ? getItemText(i) : getItemText(i)+"  -  "+reason,enabled,group,false,reason});
     }
     showNativeChoiceMenu(*this,getName().isNotEmpty()?getName():juce::String("Select"),
                          items,getSelectedId(),
@@ -80,7 +94,7 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
         return;
     }
 
-    if(button.getName()=="MATRIX ROUTE DUPLICATE" || button.getName()=="MATRIX ROUTE DELETE") {
+    if(button.getName()=="MATRIX ROUTE DELETE") {
         auto fill=Palette::inset();
         if(over) fill=fill.brighter(.09f);
         if(down) fill=fill.brighter(.14f);
@@ -133,15 +147,6 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
     }
 
     if(button.getName()=="MATRIX ROUTE ENABLE") return;
-
-    if(button.getName()=="MATRIX ROUTE DUPLICATE") {
-        const auto colour=button.isEnabled()?Palette::text():Palette::muted();
-        auto icon=button.getLocalBounds().toFloat().withSizeKeepingCentre(14.0f,14.0f);
-        g.setColour(colour.withAlpha(.92f));
-        g.drawRoundedRectangle(icon.translated(-2.0f,2.0f).reduced(1.5f),1.5f,1.0f);
-        g.drawRoundedRectangle(icon.translated(2.0f,-2.0f).reduced(1.5f),1.5f,1.0f);
-        return;
-    }
 
     if(button.getName()=="MATRIX ROUTE DELETE") {
         const auto colour=button.isEnabled()?Palette::text():Palette::muted();

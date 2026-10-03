@@ -1619,7 +1619,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
             auto note=section.withTop(busAdd_.getBottom()+8).withHeight(30);
             g.setColour(Palette::muted().withAlpha(.75f));
             g.setFont(juce::FontOptions(7.6f));
-            g.drawFittedText("MAIN is the permanent output bus. Add buses in FX > BUSES; each has its own FX graph.",
+            g.drawFittedText("MAIN is the permanent output bus. Add buses in NODES > BUSES; each has its own node graph.",
                              note,juce::Justification::centredLeft,2,1.0f);
         }
         return;

@@ -47,6 +47,7 @@ bool known(ModSource s) {
         case ModSource::PitchBend:case ModSource::NoteGate:
         case ModSource::Random:case ModSource::Function:
         case ModSource::Chaos:case ModSource::Drift:case ModSource::Sequencer:return true;
+        case ModSource::None:return false;
     }
     return false;
 }
@@ -89,6 +90,7 @@ std::size_t slotFor(ModSource source,const ModulationState& state) {
         case ModSource::Velocity:return 20u;case ModSource::ModWheel:return 21u;
         case ModSource::Keytrack:return 22u;case ModSource::Aftertouch:return 23u;
         case ModSource::PitchBend:return 24u;case ModSource::NoteGate:return 25u;
+        case ModSource::None:break; // incomplete routes are never compiled
     }
     return 0u;
 }
@@ -168,9 +170,14 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
     if(s.nextRouteId==0) return false;
     for(const auto& r:s.routes) {
         if(!r.id) {empty=true;continue;}
-        if(empty || r.id<=previous || r.id>=s.nextRouteId || !known(r.source) || !range(r.amount,-1,1)) return false;
+        if(empty || r.id<=previous || r.id>=s.nextRouteId || !range(r.amount,-1,1)) return false;
+        if(r.source!=ModSource::None && !known(r.source)) return false;
         previous=r.id;
-        if(isFxDestination(r.destination.parameter)) {
+        // Complete routes are unique per (source, destination).
+        if(routeComplete(r) && routeDuplicates(s,r)) return false;
+        if(r.destination.parameter==ModDestination::None) {
+            if(r.destination.oscillator!=0 || r.destination.itemId!=0) return false;
+        } else if(isFxDestination(r.destination.parameter)) {
             // FX graph existence is enforced by the host boundary, which prunes
             // routes whose node/parameter no longer exists.
             if(r.destination.oscillator==0 || fxAddressParameter(r.destination)==0) return false;
@@ -452,7 +459,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     smoothingActive_=false;
     filterEnabled_=state.filterEnabled;
     for(const auto& route:state.routes) {
-        if(!route.id || !route.enabled || route.amount==0) continue;
+        if(!route.id || !route.enabled || route.amount==0 || !routeComplete(route)) continue;
         std::size_t slot=0;
         if(!isGlobalDestination(route.destination.parameter) && !isFxDestination(route.destination.parameter)) {
             while(slot<modules.size() && modules[slot].id!=route.destination.oscillator) ++slot;
@@ -559,6 +566,7 @@ float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept
         case ModDestination::RouteAmount:
             return g.itemSlot<m.routeCount?m.routes[g.itemSlot].amount:0.0f;
         case ModDestination::FxParameter:return 0.0f; // evaluated by fxFrame()
+        case ModDestination::None:return 0.0f; // incomplete routes are never compiled
     }
     return 0;
 }
@@ -591,6 +599,7 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
             if(g.itemSlot<m.routeCount) m.routes[g.itemSlot].amount=v;
             break;
         case ModDestination::FxParameter:break; // FX parameters live in the FX renderer
+        case ModDestination::None:break;
     }
 }
 void CompiledModulation::prepare(double sampleRate) noexcept {
@@ -627,6 +636,46 @@ inline float routeSourceValue(std::size_t slot,float raw,bool bipolar) noexcept 
     if(bipolar) return raw*0.5f;
     return std::clamp(raw*0.5f+0.5f,0.0f,1.0f);
 }
+}
+static_assert(modulationSourceSlotCount==CompiledModulation::sourceSlotCount,"monitor slots mirror the evaluator");
+
+bool routeDuplicates(const ModulationState& state,const ModRoute& candidate) noexcept {
+    if(!routeComplete(candidate)) return false;
+    for(const auto& r:state.routes)
+        if(r.id!=0 && r.id!=candidate.id && r.source==candidate.source && r.destination==candidate.destination)
+            return true;
+    return false;
+}
+
+std::size_t mergeDuplicateRoutes(ModulationState& state) noexcept {
+    std::size_t removed=0;
+    for(std::size_t i=0;i<state.routes.size();++i) {
+        auto& keep=state.routes[i];
+        if(!keep.id || !routeComplete(keep)) continue;
+        float sum=keep.enabled ? keep.amount : 0.0f;
+        bool anyEnabled=keep.enabled;
+        for(std::size_t j=i+1;j<state.routes.size();++j) {
+            auto& other=state.routes[j];
+            if(!other.id || other.source!=keep.source || !(other.destination==keep.destination)) continue;
+            if(other.enabled) { sum+=other.amount; anyEnabled=true; keep.bipolar=other.bipolar; }
+            other.id=0;
+            ++removed;
+        }
+        if(anyEnabled) { keep.enabled=true; keep.amount=std::clamp(sum,-1.0f,1.0f); }
+    }
+    if(removed!=0) {
+        std::size_t write=0;
+        for(const auto& r:state.routes) if(r.id) state.routes[write++]=r;
+        while(write<state.routes.size()) state.routes[write++]={};
+    }
+    return removed;
+}
+
+float routeContribution(const ModRoute& route,const ModulationState& state,const ModulationSourceSlots& slots) noexcept {
+    if(!route.id || !route.enabled || !routeComplete(route) || route.amount==0.0f) return 0.0f;
+    const auto slot=slotFor(route.source,state);
+    const float contribution=route.amount*routeSourceValue(slot,slots[slot],route.bipolar);
+    return std::isfinite(contribution) ? std::clamp(contribution,-1.0f,1.0f) : 0.0f;
 }
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {
     f.filterEnabled=filterEnabled_;

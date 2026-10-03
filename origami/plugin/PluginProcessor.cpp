@@ -865,7 +865,10 @@ unsigned OrigamiAudioProcessor::addUiRoute() noexcept {
     auto mod=uiInstrumentState_.modulation;
     if(mod.nextRouteId==std::numeric_limits<unsigned>::max()) return 0;
     for(auto& route:mod.routes) if(!route.id) {
-        route.id=mod.nextRouteId++;route.amount=.35f;
+        // ON / UNIPOLAR / no source / no destination / 0%: inert until both
+        // ends are chosen (mct-origami-nodes-n01).
+        route=mct::origami::ModRoute{};
+        route.id=mod.nextRouteId++;
         if(!engine_.setModulationState(mod)) return 0;
         uiInstrumentState_.modulation=mod;
         return route.id;

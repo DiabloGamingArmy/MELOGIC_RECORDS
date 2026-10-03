@@ -145,8 +145,13 @@ public:
     using juce::ComboBox::ComboBox;
     void addNativeItem(const juce::String& group,const juce::String& label,int id);
     void addNativeSeparator(const juce::String& group);
+    // Disable an item and say why; the reason is shown beside the item and as
+    // its tooltip. An empty reason re-enables it.
+    void setNativeItemUnavailable(int id,const juce::String& reason);
+    juce::String nativeItemReason(int id) const;
     void mouseDown(const juce::MouseEvent&) override;
 private:
+    std::vector<std::pair<int,juce::String>> nativeReasons_;
     std::vector<std::pair<int,juce::String>> nativeGroups_;
     std::vector<std::pair<int,juce::String>> nativeSeparators_;
 };

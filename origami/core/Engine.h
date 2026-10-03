@@ -22,6 +22,10 @@ struct RuntimeVisualizationSnapshot {
     std::array<float,12> sourcePhases{};
     // Observed voice's MIDI/control sources, copied at visualization cadence.
     std::array<float,4> performanceSources{}; // wheel, pressure, bend, gate
+    // mct-origami-nodes-n01: raw modulation source slots exactly as the route
+    // evaluator reads them (global slots, then the newest voice's slots; voice
+    // slots are 0 while no voice sounds). Feeds the Matrix route monitors.
+    ModulationSourceSlots routeSources{};
     float chaosY=0.5f;
     std::array<OscillatorModuleId,16> moduleIds{};
     std::array<float,16> oscillatorPhases{};
