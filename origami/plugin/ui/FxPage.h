@@ -6,6 +6,7 @@
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
 #include "ModulationSourceRow.h"
+#include "ModulationMatrix.h"
 #include "NativeChoiceMenu.h"
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxWorkspace.h"
@@ -161,13 +162,14 @@ private:
     bool updating_=false;
 };
 
-// Resource browser: SOURCES / MODULATORS / FILTERS / BUSES. Every row is a
+// Resource browser: SOURCES / MODULATORS / FILTERS / BUSES / MATRIX. Every row is a
 // reference to a canonical Origami object, never a duplicate of it. MODULATORS
 // rows are the SYNTH page's own ModulationSourceRow cards; the other tabs are
 // painted with the shared source-entity vocabulary (SourceEntity.h).
 class FxSidebar final : public juce::Component {
 public:
-    enum class Tab { Sources=0,Modulators=1,Filters=2,Buses=3 };
+    enum class Tab { Sources=0,Modulators=1,Filters=2,Buses=3,Matrix=4 };
+    static constexpr int tabCount=5;
     struct Magnitude { std::uint32_t routeId=0; float amount=0.0f; };
     struct Row {
         juce::String label,badge,detail;
@@ -188,13 +190,16 @@ public:
     const std::vector<Row>& rows(Tab t) const noexcept { return rows_[static_cast<std::size_t>(t)]; }
     // The hosted modulator card for a source (MODULATORS tab), or null.
     const ModulationSourceRow* modulatorRow(ModSource) const noexcept;
+    // MATRIX tab content: the canonical Matrix view, owned by the page.
+    void setMatrixView(juce::Component*);
+    juce::String tabLabel(Tab t) const { return tabs_[static_cast<std::size_t>(t)].getButtonText(); }
     std::function<void(Tab)> onTabChanged;
     std::function<juce::String(std::uint32_t)> routeLabel; // ring hover label
     void paint(juce::Graphics&) override;
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     static constexpr int rowHeight=36;
-    static constexpr int width=236;
+    static constexpr int width=268;
 private:
     class List;
     bool syncModulatorRows();
@@ -202,9 +207,10 @@ private:
     Tab tab_=Tab::Sources;
     std::vector<std::unique_ptr<ModulationSourceRow>> modulatorRows_;
     std::optional<ModSource> selectedModulator_;
-    std::array<juce::TextButton,4> tabs_;
-    std::array<std::vector<Row>,4> rows_;
-    std::array<juce::String,4> signatures_;
+    std::array<juce::TextButton,tabCount> tabs_;
+    std::array<std::vector<Row>,tabCount> rows_;
+    std::array<juce::String,tabCount> signatures_;
+    juce::Component* matrixView_=nullptr;
     juce::Viewport viewport_;
     std::unique_ptr<List> list_;
 };
@@ -317,6 +323,9 @@ public:
     std::vector<int> moduleMenuIds(bool allowSources) const;
     void showTemplatesMenu(juce::Component& anchor);
     FxCanvas& canvas() noexcept { return canvas_; }
+    ModulationMatrix& matrix() noexcept { return *matrix_; }
+    juce::Component& moduleParametersPanel() noexcept;
+    juce::Component& macrosPanel() noexcept;
     FxGraphView& graphView() noexcept { return view_; }
     FxSidebar& sidebar() noexcept { return sidebar_; }
     float graphZoom() const noexcept { return view_.zoom(); }
@@ -334,6 +343,7 @@ public:
 private:
     class SelectedPanel;
     class ParametersPanel;
+    class ModuleParametersPanel;
     class FxMacrosPanel;
     class ConfirmPanel;
     void refresh(bool force=false);
@@ -366,7 +376,9 @@ private:
     FxGraphView view_;
     std::unique_ptr<SelectedPanel> selectedPanel_;
     std::unique_ptr<ParametersPanel> parametersPanel_;
+    std::unique_ptr<ModuleParametersPanel> modulePanel_;
     std::unique_ptr<FxMacrosPanel> macrosPanel_;
+    std::unique_ptr<ModulationMatrix> matrix_; // NODES > MATRIX
     std::unique_ptr<ConfirmPanel> confirmPanel_;
     FxModalOverlay overlay_;
     bool gestureActive_=false;

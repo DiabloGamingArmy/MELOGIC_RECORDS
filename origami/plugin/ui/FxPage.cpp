@@ -1188,8 +1188,8 @@ private:
 };
 
 FxSidebar::FxSidebar():list_(std::make_unique<List>(*this)) {
-    const char* names[]{"SOURCES","MODULATORS","FILTERS","BUSES"};
-    for(int i=0;i<4;++i) {
+    const char* names[]{"SOURCES","MODULATORS","FILTERS","BUSES","MATRIX"};
+    for(int i=0;i<tabCount;++i) {
         auto& tab=tabs_[std::size_t(i)];
         tab.setButtonText(names[i]);
         tab.setClickingTogglesState(true);
@@ -1212,7 +1212,7 @@ FxSidebar::~FxSidebar() {
 
 void FxSidebar::setTab(Tab tab) {
     tab_=tab;
-    for(int i=0;i<4;++i) tabs_[std::size_t(i)].setToggleState(i==static_cast<int>(tab),juce::dontSendNotification);
+    for(int i=0;i<tabCount;++i) tabs_[std::size_t(i)].setToggleState(i==static_cast<int>(tab),juce::dontSendNotification);
     resized();
     list_->repaint();
 }
@@ -1227,6 +1227,13 @@ void FxSidebar::setRows(Tab tab,std::vector<Row> rows) {
     // change of the list, independent of which tab is showing.
     if(tab==Tab::Modulators) changed|=syncModulatorRows();
     if(changed) { layoutList(); list_->repaint(); }
+}
+
+void FxSidebar::setMatrixView(juce::Component* view) {
+    if(matrixView_!=nullptr) removeChildComponent(matrixView_);
+    matrixView_=view;
+    if(matrixView_!=nullptr) addChildComponent(matrixView_);
+    resized();
 }
 
 const ModulationSourceRow* FxSidebar::modulatorRow(ModSource source) const noexcept {
@@ -1318,14 +1325,18 @@ void FxSidebar::paintOverChildren(juce::Graphics& g) {
 void FxSidebar::resized() {
     auto area=getLocalBounds().reduced(10,10);
     auto tabs=area.removeFromTop(60);
-    // Two rows of two: generous, readable segmented tabs.
-    const int half=tabs.getWidth()/2;
+    // SOURCES / MODULATORS / FILTERS over BUSES / MATRIX: readable segmented tabs.
     auto top=tabs.removeFromTop(28),bottom=tabs.withTrimmedTop(4);
-    tabs_[0].setBounds(top.removeFromLeft(half).reduced(1,0));
-    tabs_[1].setBounds(top.reduced(1,0));
-    tabs_[2].setBounds(bottom.removeFromLeft(half).reduced(1,0));
-    tabs_[3].setBounds(bottom.reduced(1,0));
+    const int third=top.getWidth()/3;
+    tabs_[0].setBounds(top.removeFromLeft(third).reduced(1,0));
+    tabs_[1].setBounds(top.removeFromLeft(third).reduced(1,0));
+    tabs_[2].setBounds(top.reduced(1,0));
+    tabs_[3].setBounds(bottom.removeFromLeft(bottom.getWidth()/2).reduced(1,0));
+    tabs_[4].setBounds(bottom.reduced(1,0));
     area.removeFromTop(6);
+    const bool matrix=tab_==Tab::Matrix && matrixView_!=nullptr;
+    viewport_.setVisible(!matrix);
+    if(matrixView_!=nullptr) { matrixView_->setVisible(matrix); matrixView_->setBounds(area); }
     viewport_.setBounds(area);
     layoutList();
 }
@@ -1446,7 +1457,7 @@ void FxGlobalFxEditor::paint(juce::Graphics& g) {
     g.drawRect(getLocalBounds());
     auto area=getLocalBounds().reduced(18,12);
     text(g,"GLOBAL FX",area.removeFromTop(28),13.0f,Palette::text());
-    text(g,"INPUT  >  FX GRAPH  >  DRY/WET  >  WIDTH  >  OUTPUT",area.removeFromTop(26),8.5f,Palette::muted());
+    text(g,"INPUT  >  BUS GRAPHS  >  DRY/WET  >  WIDTH  >  OUTPUT",area.removeFromTop(26),8.5f,Palette::muted());
     auto knobs=area.removeFromTop(104);
     auto values=knobs.removeFromBottom(16),labels=knobs.removeFromBottom(18);
     const int width=labels.getWidth()/4;
@@ -1459,8 +1470,8 @@ void FxGlobalFxEditor::paint(juce::Graphics& g) {
     }
     area.removeFromTop(12);
     text(g,"FX ORDER",area.removeFromTop(28),10.0f,Palette::secondary());
-    text(g,s.order==FxOrder::PreMaster ? "Voices > FX graph > master gain (drive/limit before volume)."
-                                       : "Voices > master gain > FX graph.",area.removeFromTop(24),8.5f,Palette::muted());
+    text(g,s.order==FxOrder::PreMaster ? "Voices > bus graphs > master gain (drive/limit before volume)."
+                                       : "Voices > master gain > bus graphs.",area.removeFromTop(24),8.5f,Palette::muted());
     area.removeFromTop(6);
     text(g,"BYPASS MODE",area.removeFromTop(28),10.0f,Palette::secondary());
     text(g,s.bypass==FxBypassMode::Hard ? "Effect PWR switches instantly."
@@ -1470,9 +1481,21 @@ void FxGlobalFxEditor::paint(juce::Graphics& g) {
 
 // ================================================================ inspector
 
-class FxPage::SelectedPanel final : public Panel {
+// mct-origami-nodes-n01: the old SELECTED EFFECT and EFFECT PARAMETERS
+// panels are now two untitled sections of one MODULE PARAMETERS inspector
+// ("how does the selected module behave?"). Same contentBounds/paintContent
+// contract as Panel, without a panel shell of their own.
+class InspectorSection : public juce::Component {
 public:
-    explicit SelectedPanel(FxPage& page):Panel("SELECTED EFFECT"),page_(page) {
+    void paint(juce::Graphics& g) override { paintContent(g,contentBounds()); }
+    juce::Rectangle<int> contentBounds() const { return getLocalBounds(); }
+protected:
+    virtual void paintContent(juce::Graphics&,juce::Rectangle<int>) {}
+};
+
+class FxPage::SelectedPanel final : public InspectorSection {
+public:
+    explicit SelectedPanel(FxPage& page):page_(page) {
         for(auto* b:{&power_,&remove_}) addChildComponent(b);
         power_.setClickingTogglesState(true);
         power_.setName("Power FX inspector");
@@ -1570,7 +1593,7 @@ private:
         switch(node_->kind) {
         case FxNodeKind::Split: line("Copies one signal into parallel branches.",Palette::muted()); break;
         case FxNodeKind::Merge: line("Averages its live branches (1/N): parallel paths stay at unity.",Palette::muted()); break;
-        case FxNodeKind::Source: line("Named audio bus entering the FX environment.",Palette::muted()); break;
+        case FxNodeKind::Source: line("Named audio bus entering its node graph.",Palette::muted()); break;
         case FxNodeKind::Output: line("Final instrument output, after GLOBAL FX.",Palette::muted()); break;
         case FxNodeKind::Effect: case FxNodeKind::Send: case FxNodeKind::Return: break;
         }
@@ -1732,10 +1755,10 @@ private:
     juce::Slider freq_,gain_,q_;
 };
 
-class FxPage::ParametersPanel final : public Panel {
+class FxPage::ParametersPanel final : public InspectorSection {
 public:
     static constexpr int rowHeight=32;
-    explicit ParametersPanel(FxPage& page,ModulationBindings bindings):Panel("EFFECT PARAMETERS"),page_(page),bindings_(std::move(bindings)) {
+    explicit ParametersPanel(FxPage& page,ModulationBindings bindings):page_(page),bindings_(std::move(bindings)) {
         const char* names[]{"MAIN","MODULATION","ADVANCED"};
         for(int i=0;i<3;++i) {
             auto& tab=tabs_[std::size_t(i)];
@@ -1843,7 +1866,7 @@ private:
         void paint(juce::Graphics& g) override {
             auto area=getLocalBounds();
             if(!node || node->kind!=FxNodeKind::Effect) {
-                text(g,node ? "Routing and terminal nodes have no effect parameters." : "Select an effect module to edit its parameters.",
+                text(g,node ? "Routing and terminal nodes have no parameters." : "Select a module to edit its parameters.",
                      area.removeFromTop(26),9.5f,Palette::muted());
                 return;
             }
@@ -1993,6 +2016,32 @@ private:
     std::unique_ptr<FxEqEditor> eq_;
 };
 
+// MODULE PARAMETERS: identity / preview / quick controls of the selected
+// module on the left, its full tabbed parameter list on the right.
+class FxPage::ModuleParametersPanel final : public Panel {
+public:
+    ModuleParametersPanel(SelectedPanel& selected,ParametersPanel& parameters)
+        :Panel("MODULE PARAMETERS"),selected_(selected),parameters_(parameters) {
+        addAndMakeVisible(selected_);
+        addAndMakeVisible(parameters_);
+    }
+    void resized() override {
+        auto area=contentBounds();
+        selected_.setBounds(area.removeFromLeft(juce::jlimit(240,380,area.getWidth()*2/5)));
+        area.removeFromLeft(dividerGap);
+        parameters_.setBounds(area);
+    }
+private:
+    static constexpr int dividerGap=9;
+    void paintContent(juce::Graphics& g,juce::Rectangle<int>) override {
+        const int x=selected_.getRight()+dividerGap/2;
+        g.setColour(Palette::borderSoft());
+        g.drawVerticalLine(x,float(selected_.getY()+8),float(selected_.getBottom()-8));
+    }
+    SelectedPanel& selected_;
+    ParametersPanel& parameters_;
+};
+
 class FxPage::FxMacrosPanel final : public Panel {
 public:
     explicit FxMacrosPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {
@@ -2019,7 +2068,7 @@ public:
 private:
     void paintContent(juce::Graphics& g,juce::Rectangle<int> body) override {
         auto area=body.reduced(12,6).withTrimmedTop(6);
-        text(g,"SHARED WITH SYNTH MACROS  /  MODULATION SOURCES",area.removeFromTop(18),8.5f,Palette::muted());
+        text(g,"SHARED WITH SYNTH MACROS",area.removeFromTop(18),8.5f,Palette::muted());
         area.removeFromTop(2);
         const int cell=area.getWidth()/4;
         for(int i=0;i<4;++i) {
@@ -2118,17 +2167,23 @@ FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings h
     parametersPanel_=std::make_unique<ParametersPanel>(*this,bindings_);
     macrosPanel_=std::make_unique<FxMacrosPanel>(bindings_);
     confirmPanel_=std::make_unique<ConfirmPanel>(*this);
-    addAndMakeVisible(*selectedPanel_);
-    addAndMakeVisible(*parametersPanel_);
+    modulePanel_=std::make_unique<ModuleParametersPanel>(*selectedPanel_,*parametersPanel_);
+    addAndMakeVisible(*modulePanel_);
     addAndMakeVisible(*macrosPanel_);
+    // NODES > MATRIX: the canonical Matrix view in its compact layout.
+    matrix_=std::make_unique<ModulationMatrix>(bindings_,ModulationMatrix::Layout::Sidebar);
+    sidebar_.setMatrixView(matrix_.get());
     addChildComponent(overlay_);
     if(viewState_!=nullptr && viewState_->valid)
-        sidebar_.setTab(static_cast<FxSidebar::Tab>(juce::jlimit(0,3,viewState_->sidebarTab)));
+        sidebar_.setTab(static_cast<FxSidebar::Tab>(juce::jlimit(0,FxSidebar::tabCount-1,viewState_->sidebarTab)));
     refresh(true);
     refreshSidebar();
 }
 
-FxPage::~FxPage() { stopTimer(); }
+FxPage::~FxPage() { stopTimer(); sidebar_.setMatrixView(nullptr); }
+
+juce::Component& FxPage::moduleParametersPanel() noexcept { return *modulePanel_; }
+juce::Component& FxPage::macrosPanel() noexcept { return *macrosPanel_; }
 
 void FxPage::visibilityChanged() {
     if(isVisible()) startTimerHz(30); else stopTimer();
@@ -2160,14 +2215,14 @@ void FxPage::resized() {
     redo_.setBounds(toolbar.removeFromRight(70).reduced(2,0));
     undo_.setBounds(toolbar.removeFromRight(70).reduced(2,0));
 
-    auto inspector=area.removeFromBottom(inspectorHeight);
+    // The sidebar owns the full height down to the keyboard; the graph sits
+    // above MODULE PARAMETERS (+ MACROS) on the right.
     sidebar_.setBounds(area.removeFromLeft(FxSidebar::width));
+    auto inspector=area.removeFromBottom(inspectorHeight);
     const bool firstLayout=view_.getWidth()==0;
     view_.setBounds(area);
-    const int w=inspector.getWidth();
-    selectedPanel_->setBounds(inspector.removeFromLeft(juce::roundToInt(w*.30f)));
-    parametersPanel_->setBounds(inspector.removeFromLeft(juce::roundToInt(w*.45f)));
-    macrosPanel_->setBounds(inspector);
+    macrosPanel_->setBounds(inspector.removeFromRight(juce::jlimit(200,300,inspector.getWidth()/5)));
+    modulePanel_->setBounds(inspector);
     overlay_.setBounds(getLocalBounds());
     refresh(true);
     if(firstLayout && viewState_!=nullptr && viewState_->valid)
@@ -2181,7 +2236,7 @@ void FxPage::paint(juce::Graphics& g) {
     g.fillRect(toolbar);
     g.setColour(Palette::borderSoft());
     g.drawHorizontalLine(toolbar.getBottom()-1,0.0f,float(getWidth()));
-    text(g,"EFFECT ROUTING",toolbar.reduced(14,0).withWidth(128),11.5f,Palette::secondary());
+    text(g,"NODE GRAPH",toolbar.reduced(14,0).withWidth(128),11.5f,Palette::secondary());
 }
 
 bool FxPage::keyPressed(const juce::KeyPress& key) {
@@ -2295,6 +2350,7 @@ void FxPage::refreshSidebar() {
     buses.push_back({"+ ADD BUS",{},busNames_.size()>=maxRenderBuses ? "Maximum of 8 buses" : "",{},
                      busNames_.size()<maxRenderBuses && bool(host_.addBus),false,false,[safe]{if(safe!=nullptr) safe->addBus();}});
     sidebar_.setRows(FxSidebar::Tab::Buses,std::move(buses));
+    if(matrix_!=nullptr) matrix_->syncFromModel();
 }
 
 void FxPage::selectBus(BusId bus) {
@@ -2553,7 +2609,7 @@ void FxPage::setRoutingMode(FxRoutingMode mode) {
 }
 
 void FxPage::requestClear() {
-    confirmTitle_="CLEAR "+busName(bus_)+" FX?";
+    confirmTitle_="CLEAR "+busName(bus_)+" GRAPH?";
     confirmBody_="This will remove all processing and routing modules from "+busName(bus_)+". "
                  +busName(bus_)+" IN > "+busName(bus_)+" OUT remains; other buses are untouched. UNDO restores it.";
     confirmAction_="CLEAR";

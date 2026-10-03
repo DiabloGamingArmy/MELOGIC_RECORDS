@@ -1634,13 +1634,15 @@ void fxPageAudit() {
     ui::FxPage* page=nullptr;
     walk(*editor,[&](auto& c) {
         if(auto* b=dynamic_cast<juce::TextButton*>(&c)) {
-            if(b->getButtonText()=="FX") fxButton=b;
-            if(b->getButtonText()=="MATRIX") matrixButton=b;
-            if(b->getButtonText()=="SYNTH") synthButton=b;
+            // N01: the FX workspace is presented as NODES, and NODES' sidebar has
+            // its own MATRIX tab: the header (first child) owns the first match.
+            if(b->getButtonText()=="NODES" && !fxButton) fxButton=b;
+            if(b->getButtonText()=="MATRIX" && !matrixButton) matrixButton=b;
+            if(b->getButtonText()=="SYNTH" && !synthButton) synthButton=b;
         }
         if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) page=candidate;
     });
-    check(fxButton && matrixButton && synthButton && page,"FX navigation and page exist");
+    check(fxButton && matrixButton && synthButton && page,"NODES navigation and page exist");
     check(fxButton->isEnabled(),"FX header button is enabled");
     check(!page->isVisible(),"FX page hidden while SYNTH is selected");
     const auto synthState=encodeInstrumentState(p.getUiInstrumentState());
@@ -1817,7 +1819,7 @@ void fxWorkspaceP03Audit() {
     walk(*editor,[&](auto& c){
         if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) page=candidate;
         if(auto* b=dynamic_cast<juce::TextButton*>(&c)) {
-            if(b->getButtonText()=="FX") fxTab=b;
+            if(b->getButtonText()=="NODES") fxTab=b;
             if(b->getName()=="Origami utility menu") utility=b;
         }
     });
@@ -2363,6 +2365,219 @@ void modulationRowConsistencyAudit() {
     check(env1->routes().size()==1 && env1->getHeight()==ui::ModulationSourceRow::routedHeight-2,"external change expands the card on sync");
 }
 
+// mct-origami-nodes-n01
+// NODES naming/structure, Matrix route contract (defaults, unique pairs,
+// destination availability, source revalidation), route monitor semantics and
+// state compatibility.
+void nodesN01Audit() {
+    using namespace mct::origami;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    ui::FxPage* page=nullptr;
+    juce::TextButton* nodesButton=nullptr;
+    bool fxHeaderButton=false;
+    walk(*editor,[&](auto& c){
+        if(auto* f=dynamic_cast<ui::FxPage*>(&c)) page=f;
+        if(auto* b=dynamic_cast<juce::TextButton*>(&c)) {
+            if(b->getButtonText()=="NODES" && !nodesButton) nodesButton=b;
+            fxHeaderButton|=b->getButtonText()=="FX";
+        }});
+    check(page && nodesButton && !fxHeaderButton,"the workspace is presented as NODES (no FX header button)");
+    nodesButton->onClick();
+    check(page->isVisible() && editor->currentPage()==2,"NODES opens the node workspace");
+
+    // Sidebar: five categories; MATRIX hosts the canonical Matrix (compact).
+    auto& sidebar=page->sidebar();
+    const char* expected[]{"SOURCES","MODULATORS","FILTERS","BUSES","MATRIX"};
+    bool labels=true;
+    for(int t=0;t<ui::FxSidebar::tabCount;++t) labels&=sidebar.tabLabel(static_cast<ui::FxSidebar::Tab>(t))==expected[t];
+    check(ui::FxSidebar::tabCount==5 && labels,"sidebar: SOURCES / MODULATORS / FILTERS / BUSES / MATRIX");
+    sidebar.setTab(ui::FxSidebar::Tab::Matrix);
+    check(page->matrix().isVisible() && page->matrix().layout()==ui::ModulationMatrix::Layout::Sidebar
+          && page->matrix().getParentComponent()==&sidebar,"MATRIX tab shows the Matrix view inside the sidebar");
+    sidebar.setTab(ui::FxSidebar::Tab::Sources);
+    check(!page->matrix().isVisible(),"other tabs hide the Matrix view");
+
+    // Layout: full-height sidebar; MODULE PARAMETERS replaces SELECTED EFFECT + EFFECT PARAMETERS.
+    check(sidebar.getBottom()==page->getHeight() && sidebar.getBottom()==page->moduleParametersPanel().getBottom(),
+          "sidebar runs to the bottom of the workspace (top of the keyboard)");
+    check(page->moduleParametersPanel().getName()=="MODULE PARAMETERS" && page->moduleParametersPanel().getX()>=sidebar.getRight()
+          && page->macrosPanel().getX()>=page->moduleParametersPanel().getRight(),"MODULE PARAMETERS + MACROS sit beside the sidebar");
+    bool oldPanels=false;
+    walk(*page,[&](auto& c){oldPanels|=c.getName()=="SELECTED EFFECT" || c.getName()=="EFFECT PARAMETERS";});
+    check(!oldPanels,"no separate SELECTED EFFECT / EFFECT PARAMETERS panels");
+    const auto filter=page->addEffect(fx::FxEffectType::Filter);
+    page->selectNode(filter);
+    check(page->inspectorHeadline()=="FILTER" && page->parameterTabName()=="MAIN","MODULE PARAMETERS follows selection");
+
+    // New route defaults: ON / UNIPOLAR / no source / no destination / 0%.
+    const auto routeById=[&](std::uint32_t id) {
+        for(const auto& r:p.getUiInstrumentState().modulation.routes) if(r.id==id) return r;
+        return ModRoute{};
+    };
+    const auto blank=p.addUiRoute();
+    const auto created=routeById(blank);
+    check(blank!=0 && created.enabled && !created.bipolar && created.source==ModSource::None
+          && created.destination.parameter==ModDestination::None && created.amount==0.0f,"new route: ON / UNIPOLAR / none / none / 0%");
+    check(!routeComplete(created),"an unselected route is incomplete (inert)");
+    {   // An incomplete route never reaches the evaluator, even with an amount.
+        auto r=created; r.amount=0.7f; r.source=ModSource::Lfo1;
+        check(p.setUiRoute(r),"a source-only route is a valid, inert state");
+    }
+    p.removeUiRoute(blank);
+    sidebar.setTab(ui::FxSidebar::Tab::Matrix);
+    page->matrix().addButton().onClick();
+    check(page->matrix().routeCount()==1 && routeById(p.getUiInstrumentState().modulation.routes[0].id).source==ModSource::None,
+          "+ ADD ROUTE in NODES > MATRIX creates the same blank canonical route");
+    p.removeUiRoute(p.getUiInstrumentState().modulation.routes[0].id);
+
+    // Unique (source, destination) pairs, enforced by the model.
+    const auto route=[&](ModSource s,ModAddress d,float a,bool bipolar) {
+        const auto id=p.addUiRoute(); ModRoute r{}; r.id=id; r.source=s; r.destination=d; r.amount=a; r.bipolar=bipolar;
+        return p.setUiRoute(r) ? id : 0u; };
+    const ModAddress cutoff{ModDestination::Cutoff,0,0},resonance{ModDestination::Resonance,0,0};
+    const auto lfo1Cutoff=route(ModSource::Lfo1,cutoff,0.5f,false);
+    check(lfo1Cutoff!=0,"LFO 1 -> CUTOFF");
+    check(route(ModSource::Lfo1,cutoff,0.2f,false)==0,"a second LFO 1 -> CUTOFF is rejected by the model");
+    const auto lfo2Cutoff=route(ModSource::Lfo2,cutoff,-0.6f,true);
+    check(lfo2Cutoff!=0,"LFO 2 -> CUTOFF is valid (uniqueness is per pair)");
+    {
+        auto dup=p.getUiInstrumentState().modulation;
+        for(auto& r:dup.routes) if(r.id==lfo2Cutoff) r.source=ModSource::Lfo1;
+        check(!validModulation(dup,p.getUiInstrumentState().oscillators) && !p.setUiModulationState(dup),
+              "validation rejects any state holding a duplicate pair");
+    }
+    // Remove the rejected attempt's blank route so rows are predictable.
+    for(const auto& r:p.getUiInstrumentState().modulation.routes)
+        if(r.id && !routeComplete(r)) p.removeUiRoute(r.id);
+
+    // Destination menu: disabled for the selected source's existing pair.
+    const auto blankRow=p.addUiRoute();
+    { auto r=routeById(blankRow); r.source=ModSource::Lfo1; check(p.setUiRoute(r),"blank route picks LFO 1"); }
+    editor->refreshModulationViews();
+    auto& matrix=page->matrix();
+    check(matrix.routeCount()==3,"three Matrix rows");
+    check(!matrix.destinationAvailable(2,cutoff) && matrix.destinationReason(2,cutoff)=="Already routed from LFO 1",
+          "CUTOFF is disabled for LFO 1 and says why");
+    check(matrix.destinationAvailable(2,resonance),"other destinations stay available");
+    check(matrix.destinationAvailable(1,cutoff),"a row's own pair is not 'taken' by itself");
+
+    // Changing a route's source revalidates its destination.
+    ui::NativeComboBox* sourceBox=nullptr;
+    walk(*matrix.routeRow(1),[&](auto& c){if(auto* box=dynamic_cast<ui::NativeComboBox*>(&c)) if(box->getName()=="Route source") sourceBox=box;});
+    check(sourceBox!=nullptr,"row 2 source menu");
+    sourceBox->setSelectedId(int(ModSource::Lfo1),juce::sendNotificationSync);
+    const auto changed=routeById(lfo2Cutoff);
+    check(changed.source==ModSource::Lfo1 && changed.destination.parameter==ModDestination::None,
+          "choosing a source that already feeds the destination clears the destination");
+    check(routeById(lfo1Cutoff).destination==cutoff,"the existing pair is untouched");
+
+    // Monitor semantics: source -> polarity -> amount, before destination mapping.
+    ModulationState mod=p.getUiInstrumentState().modulation;
+    ModulationSourceSlots slots{};
+    slots[0]=0.6f; // LFO 1 (free-running) raw value
+    ModRoute uni{}; uni.id=1; uni.source=ModSource::Lfo1; uni.destination=cutoff; uni.amount=0.5f;
+    ModRoute bip=uni; bip.bipolar=true;
+    ModRoute zero=uni; zero.amount=0.0f;
+    ModRoute off=uni; off.enabled=false;
+    ModRoute none=uni; none.destination={ModDestination::None,0,0};
+    check(std::abs(routeContribution(uni,mod,slots)-0.5f*(0.6f*0.5f+0.5f))<1e-6f,"unipolar contribution = amount * (raw/2 + 1/2)");
+    check(std::abs(routeContribution(bip,mod,slots)-0.5f*0.3f)<1e-6f,"bipolar contribution = amount * raw/2");
+    check(routeContribution(zero,mod,slots)==0.0f && routeContribution(off,mod,slots)==0.0f && routeContribution(none,mod,slots)==0.0f,
+          "zero amount, OFF and incomplete routes contribute nothing");
+    ModRoute env{}; env.id=1; env.source=ModSource::Env1; env.destination=resonance; env.amount=-0.5f;
+    slots[13]=0.8f; // ENV 1 (newest voice) raw value
+    check(std::abs(routeContribution(env,mod,slots)+0.4f)<1e-6f,"unsigned sources pass through polarity untouched");
+    ui::ModulationRouteMonitor monitor;
+    monitor.push(0.4f,true);
+    check(monitor.active() && std::abs(monitor.latest()-0.4f)<1e-6f,"monitor shows the newest contribution");
+    monitor.push(0.9f,false);
+    check(!monitor.active() && monitor.latest()==0.0f,"an OFF route shows no active contribution");
+
+    // Live monitor from the engine's published source slots.
+    editor->refreshModulationViews();
+    {
+        juce::AudioBuffer<float> audio(2,256);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0);
+        float lfoPeak=0.0f;
+        for(int block=0;block<64;++block) {
+            audio.clear();p.processBlock(audio,midi);midi.clear();
+            matrix.sampleMonitors();
+            lfoPeak=std::max(lfoPeak,std::abs(matrix.monitor(0)->latest()));
+        }
+        check(matrix.monitor(0)->active() && lfoPeak>0.0f && lfoPeak<=0.5f+1e-5f,
+              "LFO 1 -> CUTOFF monitor shows live unipolar contribution within its amount");
+        check(!matrix.monitor(1)->active() && matrix.monitor(1)->latest()==0.0f,"incomplete route monitor stays inactive");
+    }
+    // Telemetry has no DSP side effects: two identical instances, only one of
+    // them read through the monitor's observation path every block.
+    {
+        juce::MemoryBlock state;
+        p.getStateInformation(state);
+        std::array<std::unique_ptr<OrigamiAudioProcessor>,2> twins;
+        for(auto& t:twins) {
+            t=std::make_unique<OrigamiAudioProcessor>();
+            t->prepareToPlay(48000.0,256);
+            t->setStateInformation(state.getData(),int(state.getSize()));
+        }
+        juce::AudioBuffer<float> x(2,256),y(2,256);
+        juce::MidiBuffer mx,my;
+        mx.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0);
+        my.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0);
+        bool identical=true;
+        float observed=0.0f;
+        for(int block=0;block<64;++block) {
+            x.clear();y.clear();
+            twins[0]->processBlock(x,mx);twins[1]->processBlock(y,my);
+            mx.clear();my.clear();
+            const auto visual=twins[0]->getUiRuntimeVisualizationSnapshot();
+            const auto modulation=twins[0]->getUiInstrumentState().modulation;
+            for(const auto& r:modulation.routes) observed+=std::abs(routeContribution(r,modulation,visual.routeSources));
+            for(int ch=0;ch<2;++ch) for(int i=0;i<256;++i) identical&=x.getSample(ch,i)==y.getSample(ch,i);
+        }
+        check(observed>0.0f,"the observation path sees live route contributions");
+        check(identical,"monitor observation leaves the audio bit-identical");
+    }
+
+    // Matrix routes (including an incomplete one) survive save/load.
+    const auto saved=p.getUiInstrumentState();
+    const auto bytes=encodeInstrumentState(saved);
+    InstrumentState loaded;
+    check(decodeInstrumentState(bytes.data(),bytes.size(),loaded),"state with incomplete routes decodes");
+    bool same=true;
+    for(std::size_t i=0;i<saved.modulation.routes.size();++i) {
+        const auto& x=saved.modulation.routes[i];const auto& y=loaded.modulation.routes[i];
+        same&=x.id==y.id && x.enabled==y.enabled && x.source==y.source && x.destination==y.destination && x.amount==y.amount && x.bipolar==y.bipolar;
+    }
+    check(same,"Matrix routes round-trip exactly");
+
+    // Legacy states may repeat a pair: merged deterministically on load.
+    {
+        InstrumentState legacy=saved;
+        auto& m=legacy.modulation;
+        m.routes={};
+        m.routes[0]={5,true,ModSource::Lfo3,cutoff,0.7f,false};
+        m.routes[1]={6,true,ModSource::Lfo3,resonance,0.6f,true};
+        m.nextRouteId=7;
+        auto legacyBytes=encodeInstrumentState(legacy);
+        // Patch route 6's destination (RESONANCE) to CUTOFF, as an old build could write.
+        const std::uint8_t needle[]{0,0,0,6, 0,0,0,1, 0,0,0,103, 0,0,0,2};
+        auto at=std::search(legacyBytes.begin(),legacyBytes.end(),std::begin(needle),std::end(needle));
+        check(at!=legacyBytes.end(),"locate the legacy route record");
+        if(at!=legacyBytes.end()) at[15]=1;
+        InstrumentState merged;
+        check(decodeInstrumentState(legacyBytes.data(),legacyBytes.size(),merged),"a legacy duplicate pair still loads");
+        std::size_t live=0; ModRoute kept{};
+        for(const auto& r:merged.modulation.routes) if(r.id) { ++live; kept=r; }
+        check(live==1 && kept.id==5 && kept.destination==cutoff && kept.amount==1.0f && kept.bipolar,
+              "duplicates merge into the earliest route: summed (clamped) amount, last enabled polarity");
+    }
+}
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -2371,6 +2586,7 @@ void run() {
     fxModulationAudioAudit();
     busWorkspaceP04Audit();
     modulationRowConsistencyAudit();
+    nodesN01Audit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

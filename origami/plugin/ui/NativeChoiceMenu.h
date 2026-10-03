@@ -11,6 +11,7 @@ struct NativeChoiceItem {
     bool enabled=true;
     juce::String group;
     bool checked=false;
+    juce::String tooltip; // secondary explanation (e.g. why an item is disabled)
 };
 void showNativeChoiceMenu(juce::Component&,const juce::String&,const std::vector<NativeChoiceItem>&,int,std::function<void(int)>);
 }

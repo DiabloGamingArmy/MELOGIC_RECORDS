@@ -408,6 +408,10 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     // never changed, so routes and FX graphs migrate untouched.
     if(version<27 && s.buses.buses[0].id==mainBusId && std::string(s.buses.buses[0].name.data())=="BUS 1")
         BusState::setBusName(s.buses.buses[0],"MAIN");
+    // mct-origami-nodes-n01: (source, destination) pairs are unique. States
+    // written before that rule may repeat a pair; merge them deterministically
+    // (summed amount, as the compiler always did) instead of rejecting the load.
+    mergeDuplicateRoutes(s.modulation);
     // Older states: the default BusState plus every oscillator's default
     // BUS 1 @ unity reproduce the pre-bus signal path exactly.
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;

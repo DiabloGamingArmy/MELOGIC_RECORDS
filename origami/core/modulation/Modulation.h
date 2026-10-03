@@ -23,7 +23,10 @@
 #include <cstdint>
 namespace mct::origami {
 
+// mct-origami-nodes-n01: None (0) is an unselected Matrix source/destination.
+// A route with either end None is incomplete and inert (never compiled).
 enum class ModSource : std::uint32_t {
+    None=0,
     Env1=1, Env2=2, Env3=3,
     Lfo1=101, Lfo2=102, Lfo3=103, Lfo4=104,
     Macro1=201, Macro2=202, Macro3=203, Macro4=204,
@@ -33,6 +36,7 @@ enum class ModSource : std::uint32_t {
     Chaos=601, Drift=602, Sequencer=603
 };
 enum class ModDestination : std::uint32_t {
+    None=0,
     Cutoff=1, Resonance=2, MasterGain=3, MainTuning=4, Transpose=5,
     PortaTime=6, EnvelopeScaling=7, LfoScaling=8, Swing=9,
     WtPosition=101, Octave=102, Semitone=103, Fine=104, Detune=105, Pan=106, Level=107,
@@ -126,11 +130,12 @@ inline std::uint32_t fxAddressBus(const ModAddress& a) noexcept {
 inline std::uint16_t fxAddressParameter(const ModAddress& a) noexcept {
     return static_cast<std::uint16_t>(a.itemId&0xffffu);
 }
+// New routes start ON / UNIPOLAR / no source / no destination / 0%.
 struct ModRoute {
     std::uint32_t id=0;
     bool enabled=true;
-    ModSource source=ModSource::Lfo1;
-    ModAddress destination{};
+    ModSource source=ModSource::None;
+    ModAddress destination{ModDestination::None,0,0};
     float amount=0;
     // False is the modern default. Signed generators are mapped from [-1,+1]
     // into [0,1] before depth is applied. True restores centre-crossing motion.
@@ -176,6 +181,33 @@ struct FxModulationOutput {
     std::array<std::uint16_t,maxFxModulationSlots> parameter{};
     std::array<float,maxFxModulationSlots> offset{};
 };
+
+// ---- Route identity (mct-origami-nodes-n01) --------------------------------
+// A route is complete when both ends are selected. Complete routes are unique
+// per (source, destination address): validModulation() rejects duplicates.
+inline bool routeComplete(const ModRoute& r) noexcept {
+    return r.source!=ModSource::None && r.destination.parameter!=ModDestination::None;
+}
+// True when `candidate` (complete) would repeat the pair of another live route.
+bool routeDuplicates(const ModulationState&,const ModRoute& candidate) noexcept;
+// Deterministic repair of legacy/corrupt duplicate pairs (load path only):
+// duplicates merge into the earliest route of the pair. Its amount becomes the
+// clamped sum of the enabled duplicates (the compiler always summed them), it
+// stays enabled if any was, and its polarity is that of the last enabled one
+// (the compiler's last-writer rule). Later duplicates are removed; ids are kept.
+// Returns the number of routes removed.
+std::size_t mergeDuplicateRoutes(ModulationState&) noexcept;
+
+// ---- Route monitor (mct-origami-nodes-n01) --------------------------------
+// Raw values of the modulation evaluator's source slots, as published by the
+// engine's visualization snapshot: [0, globalSourceCount) global sources, then
+// the newest voice's per-voice sources.
+inline constexpr std::size_t modulationSourceSlotCount=26;
+using ModulationSourceSlots=std::array<float,modulationSourceSlotCount>;
+// Normalized control contribution of ONE route: source -> polarity -> amount,
+// before destination mapping/clamping. Uses the evaluator's own source-slot
+// mapping and polarity transform. 0 for a disabled or incomplete route.
+float routeContribution(const ModRoute&,const ModulationState&,const ModulationSourceSlots&) noexcept;
 
 const LfoSettings& lfoSettings(const ModulationState&,std::size_t index) noexcept;
 LfoSettings& lfoSettings(ModulationState&,std::size_t index) noexcept;

@@ -51,6 +51,7 @@ inline int modulationUiSourceIndex(ModSource source) noexcept {
         case ModSource::Aftertouch:
         case ModSource::PitchBend:
         case ModSource::NoteGate:
+        case ModSource::None:
             return -1;
     }
     return -1;
@@ -87,6 +88,7 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
         case ModSource::Chaos:
         case ModSource::Drift:
         case ModSource::Sequencer:
+        case ModSource::None:
             return 0.0f;
     }
     return 0.0f;
@@ -106,6 +108,7 @@ inline bool modulationUiSourceIsBipolar(ModSource source) noexcept {
         case ModSource::PitchBend:
             return true;
 
+        case ModSource::None:
         case ModSource::Env1:
         case ModSource::Env2:
         case ModSource::Env3:

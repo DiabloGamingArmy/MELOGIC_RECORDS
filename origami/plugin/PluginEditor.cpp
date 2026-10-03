@@ -56,7 +56,7 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner,std::function
                     for(std::size_t i=0;i<d->parameterCount;++i) {
                         if(d->parameters[i].curve==mct::origami::fx::FxParameterCurve::Choice) continue;
                         out.push_back({mct::origami::fxParameterAddress(bus,node.id,d->parameters[i].id),
-                                       "FX / "+busLabel+" / "+node.name+" "+std::to_string(node.id),d->parameters[i].label});
+                                       "NODES / "+busLabel+" / "+node.name+" "+std::to_string(node.id),d->parameters[i].label});
                     }
                 }
             }

@@ -173,6 +173,34 @@ the block master gain after the graph). BYPASS MODE: CROSSFADE (10 ms),
 HARD (instant) or TAIL PRESERVE (input gated, `out = fx(x*g) + (1-g)*x`, so
 tails ring out before DSP stops). Graph codec v3 stores both; v2 decodes.
 
+## NODES workspace and Matrix contract (N01)
+
+The FX workspace is presented as NODES. `docs/NODES_ARCHITECTURE.md` is the
+binding direction for the graph environment: locked vs open decisions,
+domains, compilation and migration. Internals keep their `Fx*` names. The
+sidebar is SOURCES / MODULATORS / FILTERS / BUSES / MATRIX and runs full
+height. One MODULE PARAMETERS inspector replaces SELECTED EFFECT + EFFECT
+PARAMETERS.
+
+Matrix, drag-and-drop and NODES knobs all edit `ModulationState::routes`. The
+NODES > MATRIX tab is the same `ModulationMatrix` in a compact layout.
+
+Route rules:
+- New routes are ON / UNIPOLAR / `ModSource::None` / `ModDestination::None`
+  / 0 %. Incomplete routes are valid, saved and never compiled.
+- Complete *(source, destination)* pairs are unique. `validModulation`
+  rejects duplicates; Matrix menus disable taken destinations; changing a
+  source that would duplicate clears the destination.
+- Legacy duplicates are merged on load by `mergeDuplicateRoutes`: earliest
+  route kept, summed and clamped amount, last enabled polarity.
+
+Each Matrix row's MONITOR plots `routeContribution()`: source → polarity →
+amount, before destination mapping. It reads the raw evaluator source slots
+the engine copies into `RuntimeVisualizationSnapshot::routeSources` at the
+existing observation cadence, through the existing lock-free visualization
+mailbox. A 30 Hz UI timer samples only while the Matrix is showing, into a
+fixed 96-entry ring.
+
 ## Build and verify
 
 From the repository root, with CMake 3.20+ and a C++17 compiler:

@@ -47,6 +47,10 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String& title,cons
         NSMenuItem* item=[[NSMenuItem alloc]initWithTitle:itemTitle action:@selector(choose:) keyEquivalent:@""];
         [item setTarget:target];[item setTag:choice.id];[item setEnabled:choice.enabled?YES:NO];
         [item setState:(choice.checked || choice.id==current)?NSControlStateValueOn:NSControlStateValueOff];
+        if(choice.tooltip.isNotEmpty()) {
+            NSString* tip=[NSString stringWithUTF8String:choice.tooltip.toRawUTF8()];
+            if(tip!=nil) [item setToolTip:tip];
+        }
         [activeMenu addItem:item];
 #if !__has_feature(objc_arc)
         [item release];

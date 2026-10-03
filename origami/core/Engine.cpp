@@ -501,6 +501,8 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                 (static_cast<double>(globalSequencer_.currentStep())+globalSequencer_.phase()) /
                 static_cast<double>(std::max<std::uint32_t>(1,audioModulation_.sequencer.activeSteps)));
             runtimeVisualization_.chaosY=std::clamp(globalChaos_.yNormalized()*0.5f+0.5f,0.0f,1.0f);
+            for(std::size_t i=0;i<CompiledModulation::globalSourceCount;++i)
+                runtimeVisualization_.routeSources[i]=sources[i];
         } else if(runtimeVisualizationCountdown_>0) {
             --runtimeVisualizationCountdown_;
         }
@@ -533,6 +535,9 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                 if(voices_[v].active()) newestOrder=std::max(newestOrder,voices_[v].order());
             }
             runtimeVisualization_.active=newestOrder!=0;
+            if(newestOrder==0)
+                std::fill(runtimeVisualization_.routeSources.begin()+CompiledModulation::globalSourceCount,
+                          runtimeVisualization_.routeSources.end(),0.0f);
         }
 
         VoiceInfo observedInfo;
@@ -548,6 +553,8 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                                                 modWheel_[channel],aftertouch_[channel],oscillatorPlan_,sharedProcesses,observe);
             if(observe) {
                 const auto& visual=voices_[v].visualizationSnapshot();
+                for(std::size_t i=0;i<CompiledModulation::voiceSourceCount;++i)
+                    runtimeVisualization_.routeSources[CompiledModulation::globalSourceCount+i]=visual.sources[i];
                 runtimeVisualization_.performanceSources={{visual.sources[8],visual.sources[10],
                                                             visual.sources[11],visual.sources[12]}};
                 for(std::size_t i=0;i<3;++i) {
