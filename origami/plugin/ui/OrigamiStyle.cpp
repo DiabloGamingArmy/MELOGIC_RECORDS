@@ -216,7 +216,7 @@ void OrigamiLookAndFeel::drawRotarySlider(juce::Graphics& g,int x,int y,int widt
     const float diameter=juce::jmin(bounds.getWidth(),bounds.getHeight())*visualScale;
     auto circle=juce::Rectangle<float>(diameter,diameter).withCentre(bounds.getCentre());
 
-    if(slider.getName()=="OSC PROCESS BIPOLAR") {
+    if(slider.getName()=="OSC PROCESS BIPOLAR" || slider.getProperties().contains("mct.origami.bipolar")) {
         // Bipolar process amounts use the physical top of the knob as 0.
         // The magnitude arc grows away from that neutral point in either direction.
         const auto c=circle.getCentre();

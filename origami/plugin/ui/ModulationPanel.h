@@ -51,6 +51,8 @@ public:
     // Editor grid quantisation of an LFO point (identity while SNAP is off).
     float snapLfoX(float) const noexcept;
     float snapLfoY(float) const noexcept;
+    // The processed-result overlay points currently drawn (empty when neutral).
+    const std::vector<juce::Point<float>>& lfoProcessedOverlay() { updateLfoProcessedOverlay(); return lfoProcessed_; }
 
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
@@ -170,6 +172,12 @@ private:
     // mode row; the strip is a view, every sound edit goes through commitLfo.
     LfoControlStrip lfoStrip_;
     bool commitLfo(const std::function<void(LfoSettings&)>&);
+    // Processed-result overlay (FUNC / PING-PONG), cached on the settings.
+    void updateLfoProcessedOverlay();
+    std::vector<juce::Point<float>> lfoProcessed_;
+    LfoSettings lfoProcessedKey_{};
+    std::size_t lfoProcessedIndex_=99;
+    juce::Rectangle<float> lfoProcessedCanvas_{};
 
     struct MsegPoint { float x=0.0f,y=0.0f,curve=0.0f; };
     struct MsegShape {

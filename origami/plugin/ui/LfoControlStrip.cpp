@@ -193,19 +193,31 @@ std::optional<float> LfoControlStrip::parseRate(const juce::String& raw,RateUnit
 }
 
 const std::array<LfoControlStrip::FuncInfo,LfoControlStrip::funcCount>& LfoControlStrip::funcInfo() noexcept {
-    // None of these exist in LfoSettings / Lfo DSP today. The bank is laid out
-    // and addressable so each can be bound when its processing is implemented.
+    // Each implemented knob edits one canonical LfoSettings field. STEREO has
+    // no field: LFO values are one number per voice, so there is no left /
+    // right modulation for a destination to receive yet.
+    constexpr double maxT=LfoSettings::maxTimeSeconds;
     static const std::array<FuncInfo,funcCount> table{{
-        {"SMOOTH","Smooth - not available yet: LFOs have no output smoothing (RANDOM has its own SMOOTH)",false},
-        {"ATTACK","Attack - not available yet: LFOs have no fade-in",false},
-        {"DELAY","Delay - not available yet: LFOs have no start delay (RANDOM has its own DELAY)",false},
-        {"PHASE","Phase - not available yet: LFOs have no start-phase offset",false},
-        {"STEREO","Stereo - not available yet: LFOs have no stereo phase spread",false},
-        {"SKEW","Skew - not available yet: LFOs have no phase skew",false},
-        {"QUANTIZE","Quantize - not available yet: LFOs have no output stepping (use SNAP to place points on the grid)",false},
-        {"ENTROPY","Entropy - not available yet: LFOs have no randomisation",false},
-        {"FRACTURE","Fracture - not available yet",false}}};
+        {"SMOOTH","Smooth: slews the LFO output, rounding steps and sharp corners",true,&LfoSettings::smooth,0,1,0,.25},
+        {"ATTACK","Attack: fades the modulation depth in after the delay",true,&LfoSettings::attackSeconds,0,maxT,0,1},
+        {"DELAY","Delay: holds the LFO at zero before it starts (per note; FREE: after the engine starts)",true,&LfoSettings::delaySeconds,0,maxT,0,1},
+        {"PHASE","Phase: offsets where the LFO reads its curve",true,&LfoSettings::phase,0,1,0,.5},
+        {"STEREO","Stereo: not available yet. Origami's modulation carries one value per voice, so a left/right phase offset has nowhere to go",false,nullptr,0,1,0,.5},
+        {"SKEW","Skew: warps time inside each cycle (slow rise / fast fall, or the reverse) without changing the levels",true,&LfoSettings::skew,-1,1,0,0},
+        {"QUANTIZE","Quantize: steps the LFO output into a fixed number of levels",true,&LfoSettings::quantize,0,1,0,.5},
+        {"ENTROPY","Entropy: slow, organic drift in timing and depth, different on every cycle",true,&LfoSettings::entropy,0,1,0,.5},
+        {"FRACTURE","Fracture: breaks each cycle into repeated, mirrored and folded fragments",true,&LfoSettings::fracture,0,1,0,.5}}};
     return table;
+}
+
+juce::String LfoControlStrip::funcValueText(std::size_t index,double v) {
+    const auto& info=funcInfo()[index];
+    if(info.field==&LfoSettings::attackSeconds || info.field==&LfoSettings::delaySeconds)
+        return v<=0.0 ? juce::String("OFF") : v<1.0 ? juce::String(juce::roundToInt(v*1000.0))+" ms" : juce::String(v,2)+" s";
+    if(info.field==&LfoSettings::phase) return juce::String(juce::roundToInt(v*360.0))+juce::String(juce::CharPointer_UTF8("\xc2\xb0"));
+    if(info.field==&LfoSettings::skew) { const int pct=juce::roundToInt(v*100.0); return (pct>0 ? "+" : "")+juce::String(pct)+"%"; }
+    if(info.field==&LfoSettings::quantize) { const int levels=Lfo::quantizeLevels(static_cast<float>(v)); return levels==0 ? juce::String("OFF") : juce::String(levels)+" LEVELS"; }
+    return juce::String(juce::roundToInt(v*100.0))+"%";
 }
 
 int LfoControlStrip::minimumToolsWidth() noexcept {
@@ -262,8 +274,8 @@ LfoControlStrip::LfoControlStrip() {
     retrigger_.setTooltip("Retrigger LFO: restarts on every note, then loops (per voice)");
     envelope_.setTooltip("Envelope / One-Shot LFO: restarts on every note, plays the path once and holds the end (per voice)");
     free_.setTooltip("Free-Running LFO: one shared LFO that never restarts");
-    pingPong_.setTooltip("Ping-Pong: not available yet. LFO playback has no ping-pong traversal");
-    pingPong_.setEnabled(false);
+    pingPong_.setTooltip("Ping-Pong: each cycle reads the curve forward then back (0 -> 1 -> 0)");
+    pingPong_.onClick=[this]{ if(callbacks_.pingPong) callbacks_.pingPong(!lfo_.pingPong); };
     customPath_.setTooltip("Custom Path: the LFO plays the editable point path above. Click for path tools");
     customPath_.onClick=[this]{ if(callbacks_.pathTools) callbacks_.pathTools(customPath_); };
     // "Has a custom path" is a status, not a selection: neutral white, not red.
@@ -297,9 +309,21 @@ LfoControlStrip::LfoControlStrip() {
     for(std::size_t i=0;i<funcCount;++i) {
         const auto& info=funcInfo()[i];
         styleKnob(func_[i],juce::String("LFO FUNC ")+info.name);
-        func_[i].setRange(0.0,1.0,0.0);
-        func_[i].setValue(0.0,juce::dontSendNotification);
+        juce::NormalisableRange<double> range(info.minimum,info.maximum);
+        if(info.centre>info.minimum && info.centre<info.maximum && info.field!=&LfoSettings::skew) range.setSkewForCentre(info.centre);
+        func_[i].setNormalisableRange(range);
+        func_[i].setValue(info.neutral,juce::dontSendNotification);
+        func_[i].setDoubleClickReturnValue(true,info.neutral);
+        func_[i].textFromValueFunction=[i](double v){ return funcValueText(i,v); };
+        func_[i].setPopupDisplayEnabled(true,false,nullptr);
         func_[i].setTooltip(info.tooltip);
+        if(info.field==&LfoSettings::skew) func_[i].getProperties().set("mct.origami.bipolar",true);
+        func_[i].onValueChange=[this,i]{
+            const auto& f=funcInfo()[i];
+            if(f.field==nullptr || !callbacks_.func) return;
+            const float v=static_cast<float>(func_[i].getValue());
+            if(lfo_.*(f.field)!=v) callbacks_.func(f.field,v);
+        };
         styleCaption(funcLabels_[i],info.name);
         funcBank_.addAndMakeVisible(func_[i]);
         funcBank_.addAndMakeVisible(funcLabels_[i]);
@@ -328,6 +352,13 @@ void LfoControlStrip::setLfo(std::size_t index,const LfoSettings& lfo) {
     for(auto m:{LfoMode::Loop,LfoMode::Envelope,LfoMode::Free})
         modeButton(m).setToggleState(lfo.mode==m,juce::dontSendNotification);
     customPath_.setToggleState(lfo.pointCount>=2,juce::dontSendNotification);
+    pingPong_.setToggleState(lfo.pingPong,juce::dontSendNotification);
+    for(std::size_t i=0;i<funcCount;++i) {
+        const auto& f=funcInfo()[i];
+        if(f.field==nullptr) continue;
+        if(!func_[i].isMouseButtonDown()) func_[i].setValue(lfo.*(f.field),juce::dontSendNotification);
+        func_[i].setTooltip(juce::String(f.name)+" "+funcValueText(i,lfo.*(f.field))+"  -  "+juce::String(f.tooltip).fromFirstOccurrenceOf(": ",false,false));
+    }
     if(rateUnit()==RateUnit::Beats && std::abs(currentBpm()-beatBpm_)>1.0e-6) configureRateKnob();
     if(!rate_.isMouseButtonDown()) {
         if(rateUnit()==RateUnit::Beats) {

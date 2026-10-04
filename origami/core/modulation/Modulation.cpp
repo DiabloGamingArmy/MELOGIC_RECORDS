@@ -36,6 +36,11 @@ bool validLfo(const LfoSettings& s) {
        !range(s.rateHz,.01f,40.f) ||
        s.pointCount>s.points.size() || s.pointCount==1)
         return false;
+    // FUNC processing ranges (defaults are the neutral values).
+    if(!range(s.smooth,0.f,1.f) || !range(s.attackSeconds,0.f,LfoSettings::maxTimeSeconds) ||
+       !range(s.delaySeconds,0.f,LfoSettings::maxTimeSeconds) || !range(s.phase,0.f,1.f) ||
+       !range(s.skew,-1.f,1.f) || !range(s.quantize,0.f,1.f) || !range(s.entropy,0.f,1.f) || !range(s.fracture,0.f,1.f))
+        return false;
     float previousX=-1.0f;
     for(std::size_t i=0;i<s.pointCount;++i) {
         const auto& p=s.points[i];
@@ -309,23 +314,267 @@ float Lfo::mseg(const LfoSettings& s,double phase) noexcept {
 }
 
 float Lfo::next(const LfoSettings& s,double sampleRate) noexcept {
+    return lfoFunctionsNeutral(s) ? legacyNext(s,sampleRate) : processedNext(s,sampleRate);
+}
+
+float Lfo::legacyNext(const LfoSettings& s,double sampleRate) noexcept {
+    // The accepted pre-FUNC LFO, unchanged (bit-identical output). The extra
+    // bookkeeping (lifecycle samples, unwrapped cycles, read position) never
+    // feeds this path's output; it lets FUNC take over mid-note seamlessly.
+    ++samples_;
     // Envelope mode is a one-shot MSEG: after reaching the right endpoint it
     // remains there until reset by the next note. Loop and Free wrap normally.
     if(s.mode==LfoMode::Envelope && phase_>=1.0) {
+        read_=1.0;
         if(s.pointCount>=2 && s.pointCount<=s.points.size())
             return s.points[s.pointCount-1].y;
         return shape(s.shape,0.999999);
     }
 
+    read_=phase_;
     const float out=mseg(s,phase_);
     if(std::isfinite(sampleRate) && sampleRate>0 && std::isfinite(s.rateHz)) {
-        phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
-        if(s.mode==LfoMode::Envelope)
+        const double increment=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
+        phase_+=increment;
+        if(s.mode==LfoMode::Envelope) {
             phase_=std::min(1.0,phase_);
-        else
+            cycles_=phase_;
+        } else {
             phase_-=std::floor(phase_);
+            cycles_+=increment;
+        }
     }
     return out;
+}
+
+namespace {
+// Integer avalanche hash (lowbias32 family; same style as the NODES seeds).
+std::uint32_t mix32(std::uint32_t x) noexcept {
+    x^=x>>16; x*=0x7feb352du; x^=x>>15; x*=0x846ca68bu; x^=x>>16;
+    return x;
+}
+// Deterministic bipolar value at an integer knot of a seeded stream.
+float knot(std::uint32_t seed,std::int64_t k) noexcept {
+    const auto u=static_cast<std::uint64_t>(k);
+    const std::uint32_t h=mix32(seed^mix32(static_cast<std::uint32_t>(u)^(static_cast<std::uint32_t>(u>>32)*0x9e3779b9u)));
+    return static_cast<float>(h>>8)*(2.0f/16777215.0f)-1.0f;
+}
+// C1-smooth value noise: smoothstep between seeded knots one unit apart.
+float valueNoise(double x,std::uint32_t seed) noexcept {
+    const double i=std::floor(x);
+    double f=x-i; f=f*f*(3.0-2.0*f);
+    const auto k=static_cast<std::int64_t>(i);
+    const float a=knot(seed,k),b=knot(seed,k+1);
+    return a+(b-a)*static_cast<float>(f);
+}
+float lfoEndValue(const LfoSettings& s) noexcept {
+    if(s.pointCount>=2 && s.pointCount<=s.points.size()) return s.points[s.pointCount-1].y;
+    return Lfo::shape(s.shape,0.999999);
+}
+}
+
+double Lfo::skewPhase(double c,float skew) noexcept {
+    // Monotonic rational (Moebius) warp of the cycle's time axis:
+    //   f(c) = c / (c + k (1 - c)),  k = m / (1 - m),  m = 0.5 + 0.45 skew
+    // f(0)=0, f(1)=1, f(m)=0.5 (the half-cycle point moves to m), smooth,
+    // strictly increasing, denominator >= min(1,k) > 0: no singularity.
+    // skew > 0: slow first half / fast second half; skew < 0: the mirror.
+    if(skew==0.0f || !std::isfinite(c)) return c;
+    const double m=0.5+0.45*std::clamp(double(skew),-1.0,1.0);
+    const double k=m/(1.0-m);
+    c=std::clamp(c,0.0,1.0);
+    return c/(c+k*(1.0-c));
+}
+
+// FRACTURE segment table: 2+4+8+16 = 30 segments; segment k of level L is
+// entry (2^L - 2) + k. Thresholds / operations depend only on the seed.
+struct FractureTable { std::array<float,30> threshold{}; std::array<std::uint8_t,30> op{}; std::uint32_t seed=0; };
+namespace {
+FractureTable buildFractureTable(std::uint32_t seed) noexcept {
+    FractureTable t; t.seed=seed;
+    for(std::uint32_t level=1;level<=4;++level)
+        for(std::uint32_t k=0;k<(1u<<level);++k) {
+            const std::uint32_t h=mix32(seed^mix32(level*0x9e3779b9u^(k+1)*0x85ebca6bu));
+            const auto e=((1u<<level)-2u)+k;
+            t.threshold[e]=0.12f*static_cast<float>(level-1)+0.6f*static_cast<float>(h>>8)/16777216.0f;
+            t.op[e]=static_cast<std::uint8_t>((h>>3)%3u);
+        }
+    return t;
+}
+// Built during static initialisation (never on the audio thread).
+const std::array<FractureTable,4> fractureTables{{buildFractureTable(Lfo::fractureSeed(0)),buildFractureTable(Lfo::fractureSeed(1)),
+                                                  buildFractureTable(Lfo::fractureSeed(2)),buildFractureTable(Lfo::fractureSeed(3))}};
+double fractureWith(double r,float amount,const FractureTable& t) noexcept {
+    if(amount<=0.0f || !std::isfinite(r) || r>=1.0) return r;
+    r=std::max(0.0,r);
+    for(std::uint32_t level=1;level<=4;++level) {
+        const std::uint32_t n=1u<<level;
+        auto k=std::min<std::uint32_t>(static_cast<std::uint32_t>(r*n),n-1);
+        const auto e=(n-2u)+k;
+        if(amount<=t.threshold[e]) continue;
+        double u=r*n-k;
+        switch(t.op[e]) {
+            case 0: k=(k+n-1)%n; break;               // repeat the previous fragment
+            case 1: u=1.0-u; break;                   // mirror the fragment
+            default: u=2.0*u; u-=std::floor(u); break; // fold: the fragment twice
+        }
+        r=std::min((static_cast<double>(k)+u)/n,0.9999999999);
+    }
+    return r;
+}
+}
+
+double Lfo::fracturePhase(double r,float amount,std::uint32_t seed) noexcept {
+    // Hierarchical segment fracture (2, 4, 8, 16 segments). Every segment of
+    // every level has a fixed seeded threshold; once FRACTURE passes it the
+    // segment is rewritten by one fixed operation (repeat the previous
+    // segment, mirror, or fold to double speed). Coarse levels break first,
+    // finer levels join as the amount rises: progressively more structure,
+    // identical every cycle, read position always inside [0, 1).
+    if(amount<=0.0f) return r;
+    for(const auto& t:fractureTables) if(t.seed==seed) return fractureWith(r,amount,t);
+    return fractureWith(r,amount,buildFractureTable(seed));
+}
+
+void Lfo::setStreams(std::uint32_t entropy,std::uint32_t structure) noexcept {
+    stream_=entropy; structure_=structure;
+    knots_={};
+    anchorFast_=knot(entropy,0); anchorSlow_=knot(mix32(entropy^0x5bd1e995u),0);
+    fractureTable_=nullptr;
+    for(const auto& t:fractureTables) if(t.seed==structure) fractureTable_=&t;
+}
+
+float Lfo::noise(std::size_t layer,double x,std::uint32_t seed) noexcept {
+    // valueNoise() with the two knots cached until x crosses an integer.
+    const double i=std::floor(x);
+    const auto k=static_cast<std::int64_t>(i);
+    auto& c=knots_[layer];
+    if(c.index!=k) { c.index=k; c.a=knot(seed,k); c.b=knot(seed,k+1); }
+    double f=x-i; f=f*f*(3.0-2.0*f);
+    return c.a+(c.b-c.a)*static_cast<float>(f);
+}
+
+double Lfo::entropyOffset(double cycles,float amount,std::uint32_t seed) noexcept {
+    // Organic timing drift: two layers of smooth value noise clocked by the
+    // LFO's own cycles (one knot per cycle and one per four cycles), anchored
+    // to zero at the lifecycle start. Low amounts nudge timing by a few
+    // degrees; high amounts make each cycle arrive noticeably early or late.
+    if(amount<=0.0f) return 0.0;
+    const double a=double(amount)*std::sqrt(double(amount));
+    const std::uint32_t slow=mix32(seed^0x5bd1e995u);
+    const double fast=valueNoise(cycles,seed)-valueNoise(0.0,seed);
+    const double drift=valueNoise(cycles*0.25,slow)-valueNoise(0.0,slow);
+    return a*(0.16*fast+0.10*drift);
+}
+
+float Lfo::entropyDepth(double cycles,float amount,std::uint32_t seed) noexcept {
+    // Small trajectory component: the depth breathes between 65% and 100%.
+    if(amount<=0.0f) return 1.0f;
+    const float a=amount*std::sqrt(amount);
+    return 1.0f-0.35f*a*(0.5f+0.5f*valueNoise(cycles*0.5,mix32(seed^0x27d4eb2fu)));
+}
+
+int Lfo::quantizeLevels(float amount) noexcept {
+    // 0 = continuous; then 64 levels falling geometrically to 2 at 100%.
+    if(!(amount>0.0f)) return 0;
+    return std::max(2,static_cast<int>(std::lround(std::exp2(6.0-5.0*std::min(1.0,double(amount))))));
+}
+
+float Lfo::quantizeValue(float y,float amount) noexcept {
+    const int levels=quantizeLevels(amount);
+    if(levels<2) return y;
+    const float steps=static_cast<float>(levels-1);
+    const float t=std::round((std::clamp(y,-1.0f,1.0f)+1.0f)*0.5f*steps);
+    return -1.0f+2.0f*t/steps;
+}
+
+float Lfo::attackGain(double t,float attackSeconds) noexcept {
+    if(!(attackSeconds>0.0f)) return 1.0f;
+    const double x=t/double(attackSeconds);
+    if(x>=1.0) return 1.0f;
+    if(x<=0.0) return 0.0f;
+    return static_cast<float>(x*x*(3.0-2.0*x)); // smoothstep: soft start and landing
+}
+
+std::uint32_t Lfo::fractureSeed(std::size_t i) noexcept { return mix32(0x0f4ac7u+static_cast<std::uint32_t>(i)*0x27d4eb2fu); }
+std::uint32_t Lfo::globalStream(std::size_t i) noexcept { return mix32(0x51ed27u+static_cast<std::uint32_t>(i)*0x9e3779b9u)|1u; }
+std::uint32_t Lfo::voiceStream(std::uint32_t voiceSeed,std::size_t i) noexcept {
+    return mix32(voiceSeed^(static_cast<std::uint32_t>(i)+1u)*0x85ebca6bu)|1u;
+}
+
+float Lfo::processedNext(const LfoSettings& s,double sampleRate) noexcept {
+    // FUNC pipeline (one sample):
+    //  1 DELAY      lifecycle gate: neutral 0 output, accumulator frozen
+    //  2 BASE       accumulator progress (ENVELOPE: one cycle, then hold)
+    //  3 PHASE      + read offset;  ENTROPY timing drift (organic, evolving)
+    //  4 SKEW       monotonic warp of the cycle's time axis
+    //  5 PING-PONG  reflect: 0 -> 1 -> 0 within the cycle
+    //  6 FRACTURE   structural fragmentation of the read position
+    //  7 CURVE      base curve (points / built-in shape); ENTROPY depth breath
+    //  8 QUANTIZE   amplitude levels
+    //  9 SMOOTH     one-pole slew of everything above
+    // 10 ATTACK     depth fade-in from neutral (0), after DELAY
+    const bool valid=std::isfinite(sampleRate) && sampleRate>0.0;
+    const bool envelope=s.mode==LfoMode::Envelope;
+    const std::uint64_t onset=valid && s.delaySeconds>0.0f
+        ? static_cast<std::uint64_t>(std::llround(double(s.delaySeconds)*sampleRate)) : 0u;
+    if(samples_<onset) {
+        ++samples_;
+        smoothReady_=false;
+        read_=double(s.phase)-std::floor(double(s.phase));
+        return 0.0f;
+    }
+
+    const double progress=envelope ? std::min(1.0,cycles_) : cycles_;
+    double c=progress+double(s.phase);
+    if(s.entropy>0.0f) {
+        // = entropyOffset(progress, ...), with cached knots.
+        const double a=double(s.entropy)*std::sqrt(double(s.entropy));
+        const double fast=noise(0,progress,stream_)-anchorFast_;
+        const double drift=noise(1,progress*0.25,mix32(stream_^0x5bd1e995u))-anchorSlow_;
+        c+=a*(0.16*fast+0.10*drift);
+    }
+    double pos=c-std::floor(c);
+    // A finished one-shot reads the END of the cycle that began at PHASE
+    // (never wraps back into a loop).
+    if(envelope && cycles_>=1.0 && pos<1.0e-12) pos=1.0;
+    if(s.skew!=0.0f) pos=skewPhase(pos,s.skew);
+    if(s.pingPong) pos=pingPongPhase(pos);
+    if(s.fracture>0.0f) pos=fractureTable_ ? fractureWith(pos,s.fracture,*fractureTable_) : fracturePhase(pos,s.fracture,structure_);
+    read_=pos;
+
+    float y=pos>=1.0 ? lfoEndValue(s) : mseg(s,pos);
+    if(s.entropy>0.0f) {
+        const float a=s.entropy*std::sqrt(s.entropy);
+        y*=1.0f-0.35f*a*(0.5f+0.5f*noise(2,progress*0.5,mix32(stream_^0x27d4eb2fu)));
+    }
+    if(s.quantize>0.0f) {
+        if(s.quantize!=quantizeKey_) { quantizeKey_=s.quantize; quantizeLevels_=quantizeLevels(s.quantize); }
+        const float steps=static_cast<float>(quantizeLevels_-1);
+        y=-1.0f+2.0f*std::round((std::clamp(y,-1.0f,1.0f)+1.0f)*0.5f*steps)/steps;
+    }
+    if(s.smooth>0.0f && valid) {
+        const float rate=std::isfinite(s.rateHz) ? std::clamp(s.rateHz,.01f,40.0f) : 1.0f;
+        if(s.smooth!=smoothKey_ || rate!=smoothRate_ || static_cast<float>(sampleRate)!=smoothSampleRate_) {
+            // Period-relative time constant (up to 1/4 cycle, at most 2 s);
+            // squared so the knob's travel is spread musically.
+            const double tau=std::min(2.0,double(s.smooth)*double(s.smooth)*0.25/double(rate));
+            smoothAlpha_=static_cast<float>(1.0-std::exp(-1.0/(tau*sampleRate)));
+            smoothKey_=s.smooth; smoothRate_=rate; smoothSampleRate_=static_cast<float>(sampleRate);
+        }
+        if(!smoothReady_) { smoothed_=y; smoothReady_=true; }
+        else smoothed_+=smoothAlpha_*(y-smoothed_);
+        y=smoothed_;
+    } else smoothReady_=false;
+    if(s.attackSeconds>0.0f && valid) y*=attackGain(double(samples_-onset)/sampleRate,s.attackSeconds);
+
+    if(valid && std::isfinite(s.rateHz)) {
+        const double increment=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
+        if(envelope) { cycles_=std::min(1.0,cycles_+increment); phase_=cycles_; }
+        else { cycles_+=increment; phase_=cycles_-std::floor(cycles_); }
+    }
+    ++samples_;
+    return std::isfinite(y) ? std::clamp(y,-1.0f,1.0f) : 0.0f;
 }
 float RandomGenerator::randomValue() noexcept {
     std::uint32_t x=state_;

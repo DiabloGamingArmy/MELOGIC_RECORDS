@@ -19,6 +19,7 @@
 #include <array>
 #include <atomic>
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -68,13 +69,31 @@ enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
 enum class LfoMode : std::uint32_t { Free=1, Loop=2, Envelope=3 };
 
 struct LfoPoint { float x=0.0f,y=0.0f,curve=0.0f; };
+// mct-origami-lfo-function-processing: FUNC processing is part of the one
+// canonical LFO. Every field's default is its neutral value; with all of
+// them neutral the LFO is the accepted pre-FUNC LFO, bit for bit.
 struct LfoSettings {
     LfoShape shape=LfoShape::Sine;
     LfoMode mode=LfoMode::Free;
     float rateHz=1.0f;
     std::array<LfoPoint,16> points{};
     std::uint32_t pointCount=0;
+    bool pingPong=false;        // read position reflects at the ends (0->1->0 per cycle)
+    float smooth=0.0f;          // 0..1  output slew (one-pole, period-relative)
+    float attackSeconds=0.0f;   // 0..10 modulation-depth fade-in after DELAY
+    float delaySeconds=0.0f;    // 0..10 neutral hold before the LFO starts
+    float phase=0.0f;           // 0..1  read-phase offset in cycles (1 = 360 deg)
+    float skew=0.0f;            // -1..1 monotonic time-axis warp (0 = identity)
+    float quantize=0.0f;        // 0..1  amplitude levels: 0 = continuous, 1 = 2 levels
+    float entropy=0.0f;         // 0..1  organic, evolving timing/trajectory drift
+    float fracture=0.0f;        // 0..1  deterministic structural fragmentation
+    static constexpr float maxTimeSeconds=10.0f;
 };
+// True when every FUNC processor and PING-PONG is neutral (legacy path).
+inline bool lfoFunctionsNeutral(const LfoSettings& s) noexcept {
+    return !s.pingPong && s.smooth==0.0f && s.attackSeconds==0.0f && s.delaySeconds==0.0f && s.phase==0.0f &&
+           s.skew==0.0f && s.quantize==0.0f && s.entropy==0.0f && s.fracture==0.0f;
+}
 struct RandomSettings {
     float rateHz=2.0f;
     // 0 = classic hard sample-and-hold, 1 = fully continuous glide to the
@@ -446,15 +465,59 @@ inline std::vector<ModSource> activeMacroSources(const ModulationState& m) {
 float modulationToNormalized(ModDestination,float) noexcept;
 float modulationFromNormalized(ModDestination,float) noexcept;
 
+// The canonical LFO runtime: one per execution context (the four global
+// FREE LFOs in the engine, four per voice for RETRIGGER / ENVELOPE). All of
+// its state is fixed-size; next() never allocates, locks or branches on UI.
 class Lfo {
 public:
-    void reset() noexcept {phase_=0;}
+    // Restart the lifecycle (note on / retrigger / engine reset). The entropy
+    // stream is kept: callers set it per lifecycle with setStream().
+    void reset() noexcept { phase_=0; cycles_=0; samples_=0; smoothed_=0; smoothReady_=false; read_=0; }
+    // Deterministic ENTROPY stream (global: per LFO index; voice: per voice
+    // lifecycle, the same seed family NODES uses for per-voice randomness).
+    // FRACTURE structure: per LFO index, identical for every voice.
+    void setStreams(std::uint32_t entropy,std::uint32_t structure) noexcept;
+    std::uint32_t stream() const noexcept { return stream_; }
     float next(const LfoSettings&,double sampleRate) noexcept;
     static float shape(LfoShape,double phase) noexcept;
     static float mseg(const LfoSettings&,double phase) noexcept;
     double phase() const noexcept { return phase_; }
-private: double phase_=0;
+    // Where on the base curve the LFO is reading (after PHASE, ENTROPY, SKEW,
+    // PING-PONG, FRACTURE): what the editor's tracer follows.
+    double readPosition() const noexcept { return read_; }
+
+    // Pure FUNC transforms (shared with the editor's processed overlay).
+    static double skewPhase(double c,float skew) noexcept;
+    static double pingPongPhase(double c) noexcept { return 1.0-std::abs(1.0-2.0*c); }
+    static double fracturePhase(double r,float amount,std::uint32_t seed) noexcept;
+    static double entropyOffset(double cycles,float amount,std::uint32_t seed) noexcept;
+    static float entropyDepth(double cycles,float amount,std::uint32_t seed) noexcept;
+    static int quantizeLevels(float amount) noexcept;
+    static float quantizeValue(float y,float amount) noexcept;
+    static float attackGain(double secondsSinceOnset,float attackSeconds) noexcept;
+    static std::uint32_t fractureSeed(std::size_t lfoIndex) noexcept;
+    static std::uint32_t globalStream(std::size_t lfoIndex) noexcept;
+    static std::uint32_t voiceStream(std::uint32_t voiceSeed,std::size_t lfoIndex) noexcept;
+private:
+    float legacyNext(const LfoSettings&,double sampleRate) noexcept;
+    float processedNext(const LfoSettings&,double sampleRate) noexcept;
+    double phase_=0;          // accumulator, [0,1) (ENVELOPE clamps at 1)
+    double cycles_=0;         // unwrapped accumulator: the ENTROPY clock
+    std::uint64_t samples_=0; // samples since the lifecycle start (DELAY / ATTACK)
+    double read_=0;
+    float smoothed_=0;
+    float smoothAlpha_=1,smoothKey_=-1,smoothRate_=-1,smoothSampleRate_=-1;
+    std::uint32_t stream_=0,structure_=0;
+    // Hot-path caches (pure functions of the inputs; never change output).
+    struct NoiseKnots { std::int64_t index=INT64_MIN; float a=0,b=0; };
+    std::array<NoiseKnots,3> knots_{};       // ENTROPY layers: timing, drift, depth
+    float anchorFast_=0,anchorSlow_=0;       // layer values at cycle 0
+    float quantizeKey_=-1; int quantizeLevels_=0;
+    const struct FractureTable* fractureTable_=nullptr; // shared, built at static init
+    float noise(std::size_t layer,double x,std::uint32_t seed) noexcept;
+    bool smoothReady_=false;
 };
+static_assert(sizeof(Lfo)<=160,"Lfo runtime grew: 4 per voice x every voice");
 
 class RandomGenerator {
 public:
