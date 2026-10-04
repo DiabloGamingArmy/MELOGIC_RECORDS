@@ -20,7 +20,8 @@ namespace {
 // Signed generator slots (LFOs, random, function, chaos, drift, sequencer):
 // raw -1..1, so routes apply a polarity transform.
 inline bool signedGeneratorSlot(std::size_t slot) noexcept {
-    return slot<=3u || (slot>=8u && slot<=12u) || (slot>=16u && slot<=19u);
+    constexpr std::size_t voice=CompiledModulation::globalSourceCount; // voice LFOs are voice sources 3..6
+    return slot<=3u || (slot>=8u && slot<=12u) || (slot>=voice+3u && slot<=voice+6u);
 }
 bool range(float x,float a,float b) {return std::isfinite(x) && x>=a && x<=b;}
 bool validEnvelope(const dsp::EnvelopeSettings& e) {
@@ -45,6 +46,7 @@ bool validLfo(const LfoSettings& s) {
     return true;
 }
 bool known(ModSource s) {
+    if(isMacroSource(s)) return true; // existence is checked against macroMask
     switch(s) {
         case ModSource::Env1:case ModSource::Env2:case ModSource::Env3:
         case ModSource::Lfo1:case ModSource::Lfo2:case ModSource::Lfo3:case ModSource::Lfo4:
@@ -53,9 +55,8 @@ bool known(ModSource s) {
         case ModSource::PitchBend:case ModSource::NoteGate:
         case ModSource::Random:case ModSource::Function:
         case ModSource::Chaos:case ModSource::Drift:case ModSource::Sequencer:return true;
-        case ModSource::None:return false;
+        default:return false;
     }
-    return false;
 }
 struct Range {float lo,hi;};
 Range limits(ModDestination d) {
@@ -87,20 +88,20 @@ std::size_t slotFor(ModSource source,const ModulationState& state) {
         return CompiledModulation::sourceSlotCount+operatorOutputIndex(std::min(controlOperatorSlot(state,operatorIdOf(source)),
                                                                                 ModulationState::maxControlOperators-1),
                                                                        std::min<std::size_t>(operatorPortOf(source),maxControlOutputs-1));
+    if(const auto id=macroIdOf(source)) return CompiledModulation::macroSlot(id);
+    constexpr std::size_t v=CompiledModulation::globalSourceCount; // first voice slot
     switch(source) {
-        case ModSource::Lfo1:return state.lfo1.mode==LfoMode::Free?0u:16u;
-        case ModSource::Lfo2:return state.lfo2.mode==LfoMode::Free?1u:17u;
-        case ModSource::Lfo3:return state.lfo3.mode==LfoMode::Free?2u:18u;
-        case ModSource::Lfo4:return state.lfo4.mode==LfoMode::Free?3u:19u;
-        case ModSource::Macro1:return 4u;case ModSource::Macro2:return 5u;
-        case ModSource::Macro3:return 6u;case ModSource::Macro4:return 7u;
+        case ModSource::Lfo1:return state.lfo1.mode==LfoMode::Free?0u:v+3u;
+        case ModSource::Lfo2:return state.lfo2.mode==LfoMode::Free?1u:v+4u;
+        case ModSource::Lfo3:return state.lfo3.mode==LfoMode::Free?2u:v+5u;
+        case ModSource::Lfo4:return state.lfo4.mode==LfoMode::Free?3u:v+6u;
         case ModSource::Random:return 8u;case ModSource::Function:return 9u;
         case ModSource::Chaos:return 10u;case ModSource::Drift:return 11u;case ModSource::Sequencer:return 12u;
-        case ModSource::Env1:return 13u;case ModSource::Env2:return 14u;case ModSource::Env3:return 15u;
-        case ModSource::Velocity:return 20u;case ModSource::ModWheel:return 21u;
-        case ModSource::Keytrack:return 22u;case ModSource::Aftertouch:return 23u;
-        case ModSource::PitchBend:return 24u;case ModSource::NoteGate:return 25u;
-        case ModSource::None:break; // incomplete routes are never compiled
+        case ModSource::Env1:return v+0u;case ModSource::Env2:return v+1u;case ModSource::Env3:return v+2u;
+        case ModSource::Velocity:return v+7u;case ModSource::ModWheel:return v+8u;
+        case ModSource::Keytrack:return v+9u;case ModSource::Aftertouch:return v+10u;
+        case ModSource::PitchBend:return v+11u;case ModSource::NoteGate:return v+12u;
+        default:break; // None: incomplete routes are never compiled
     }
     return 0u;
 }
@@ -203,6 +204,7 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
             else if(in.kind==ControlInput::Kind::Source) {
                 // Canonical sources are CONTROL: never into a GATE / EVENT input.
                 if(!known(in.source) || in.op!=0 || in.port!=0 || info->inputSignals[k]!=ControlSignal::Control) return false;
+                if(isMacroSource(in.source) && !macroActive(s,macroIdOf(in.source))) return false; // a removed macro
             } else if(in.kind==ControlInput::Kind::Operator) {
                 const auto* upstream=findControlOperator(s,in.op);
                 if(in.source!=ModSource::None || in.op==op.id || upstream==nullptr) return false;
@@ -228,6 +230,7 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
             if(info==nullptr || port>=info->outputCount || controlOutputSignalOf(*info,port)!=ControlSignal::Control) return false;
         }
         else if(r.source!=ModSource::None && !known(r.source)) return false;
+        else if(isMacroSource(r.source) && !macroActive(s,macroIdOf(r.source))) return false; // never a dangling macro
         previous=r.id;
         // Complete routes are unique per (source, destination).
         if(routeComplete(r) && routeDuplicates(s,r)) return false;

@@ -31,6 +31,7 @@ NodeExecutionDomain sourceDomain(ModSource s,const ModulationState& m) noexcept 
     // A processed source (an operator output) runs where its chain runs.
     if(isOperatorSource(s)) return sourceIsVoice(s,m) ? NodeExecutionDomain::Voice : NodeExecutionDomain::Global;
     if(lfoSource(s)) return lfoSettings(m,lfoIndex(s)).mode==LfoMode::Free ? NodeExecutionDomain::Global : NodeExecutionDomain::Voice;
+    if(isMacroSource(s)) return NodeExecutionDomain::Global;
     switch(s) {
     case ModSource::Macro1: case ModSource::Macro2: case ModSource::Macro3: case ModSource::Macro4:
     case ModSource::Random: case ModSource::Function: case ModSource::Chaos: case ModSource::Drift: case ModSource::Sequencer:
@@ -51,6 +52,7 @@ bool domainCrossingSupported(NodeExecutionDomain source,NodeExecutionDomain dest
 }
 
 bool controlSourceExposed(ModSource s) noexcept {
+    if(isMacroSource(s)) return true; // every macro id (existence: controlSourceActive)
     switch(s) {
     case ModSource::Env1: case ModSource::Env2: case ModSource::Env3:
     case ModSource::Lfo1: case ModSource::Lfo2: case ModSource::Lfo3: case ModSource::Lfo4:
@@ -69,6 +71,7 @@ bool controlSourceExposed(ModSource s) noexcept {
 bool controlSourceActive(ModSource s,const ModulationState& m) noexcept {
     if(s>=ModSource::Env1 && s<=ModSource::Env3) return (m.envActiveMask&(1u<<(static_cast<unsigned>(s)-1u)))!=0;
     if(lfoSource(s)) return (m.lfoActiveMask&(1u<<lfoIndex(s)))!=0;
+    if(const auto id=macroIdOf(s)) return macroActive(m,id);
     switch(s) {
     case ModSource::Function: return (m.generatorActiveMask&0x01u)!=0;
     case ModSource::Random: return (m.generatorActiveMask&0x02u)!=0;
@@ -680,7 +683,7 @@ void scanControlGraph(const ModulationState& m,OnOperator&& onOperator,OnInput&&
             }
             if(k>=info->inputs) { onInput(i,k,ControlIssueKind::UnusedInput); continue; }
             if(in.kind==ControlInput::Kind::Source) {
-                if(!knownModSource(in.source) || in.op!=0) onInput(i,k,ControlIssueKind::InvalidSource);
+                if(!knownModSource(in.source) || in.op!=0 || (isMacroSource(in.source) && !macroActive(m,macroIdOf(in.source)))) onInput(i,k,ControlIssueKind::InvalidSource);
                 else if(in.port!=0) onInput(i,k,ControlIssueKind::InvalidPort);
                 else if(info->inputSignals[k]!=ControlSignal::Control) onInput(i,k,ControlIssueKind::TypeMismatch);
                 continue;
@@ -700,7 +703,8 @@ void scanControlGraph(const ModulationState& m,OnOperator&& onOperator,OnInput&&
         const auto& route=m.routes[r];
         if(!route.id) continue;
         if(!isOperatorSource(route.source)) {
-            if(route.source!=ModSource::None && !knownModSource(route.source)) onRoute(r,ControlIssueKind::RouteInvalidSource);
+            if(route.source!=ModSource::None && (!knownModSource(route.source) || (isMacroSource(route.source) && !macroActive(m,macroIdOf(route.source)))))
+                onRoute(r,ControlIssueKind::RouteInvalidSource);
             continue;
         }
         const auto* op=findControlOperator(m,operatorIdOf(route.source));

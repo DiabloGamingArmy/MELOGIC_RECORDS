@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <new>
 #include <array>
+#include <bitset>
 #include <cmath>
 using namespace mct::origami;
 namespace {
@@ -2491,7 +2492,7 @@ void nodesN01Audit() {
     check(routeContribution(zero,mod,slots)==0.0f && routeContribution(off,mod,slots)==0.0f && routeContribution(none,mod,slots)==0.0f,
           "zero amount, OFF and incomplete routes contribute nothing");
     ModRoute env{}; env.id=1; env.source=ModSource::Env1; env.destination=resonance; env.amount=-0.5f;
-    slots[13]=0.8f; // ENV 1 (newest voice) raw value
+    slots[modulationSourceSlot(ModSource::Env1,mod)]=0.8f; // ENV 1 (newest voice) raw value
     check(std::abs(routeContribution(env,mod,slots)+0.4f)<1e-6f,"unsigned sources pass through polarity untouched");
     ui::ModulationRouteMonitor monitor;
     monitor.push(0.4f,true);
@@ -3785,6 +3786,243 @@ void nodesMenuHierarchyAudit() {
     check(disabled && reason.contains("one sequencer"),"a second SEQUENCER stays disabled in the tree, with its reason");
 }
 
+// mct-origami-synth-dynamic-macros
+void synthDynamicMacrosAudit() {
+    using namespace mct::origami;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::MacroPanel* panel=nullptr; ui::OscillatorRack* rack=nullptr; ui::ModulationMatrix* matrix=nullptr; ui::FxPage* page=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* x=dynamic_cast<ui::MacroPanel*>(&c)) panel=x;
+        if(auto* x=dynamic_cast<ui::OscillatorRack*>(&c)) rack=x;
+        if(auto* x=dynamic_cast<ui::FxPage*>(&c)) page=x;
+        if(auto* x=dynamic_cast<ui::ModulationMatrix*>(&c)) if(x->layout()==ui::ModulationMatrix::Layout::Page) matrix=x; });
+    check(panel && rack && matrix && page,"macro audit: panels");
+    const auto mod=[&]{ return p.getUiInstrumentState().modulation; };
+    const auto sync=[&]{ editor->refreshModulationViews(); panel->syncFromModel(); };
+
+    // ---- state ------------------------------------------------------------------
+    check(mod().macroMask==defaultMacroMask && panel->cardCount()==4,"Init has MACRO 1..4 (four cards)");
+    check(macroSource(1)==ModSource::Macro1 && macroSource(4)==ModSource::Macro4 && macroIdOf(ModSource::Macro3)==3,
+          "MACRO 1..4 keep their original ModSource identity (201..204)");
+    check(encodeInstrumentState(p.getUiInstrumentState())[7]<31,"Init still saves in the pre-macro format (no new version)");
+    check(p.getParameters().isEmpty(),"no host parameters are registered (unchanged: macros were never host-automatable)");
+    const auto a5=panel->addMacro();
+    check(a5==5 && macroActive(mod(),5) && panel->cardCount()==5,"add MACRO 5");
+    std::vector<std::size_t> added; for(int i=0;i<3;++i) added.push_back(panel->addMacro());
+    check(added==std::vector<std::size_t>{6,7,8} && panel->cardCount()==8,"add several (6, 7, 8)");
+    // Assign MACRO 5 (two routes + a NODES input) and MACRO 7 (one route).
+    auto m=mod();
+    m.routes[0]={m.nextRouteId++,true,macroSource(5),{ModDestination::Cutoff,0,0},0.4f,false};
+    m.routes[1]={m.nextRouteId++,true,macroSource(5),{ModDestination::Level,1,0},0.3f,false};
+    m.routes[2]={m.nextRouteId++,true,macroSource(7),{ModDestination::Resonance,0,0},0.2f,false};
+    m.operators[0]=makeControlOperator(ControlOpType::ScaleOffset,m.nextOperatorId++);
+    m.operators[0].inputs[0]={ControlInput::Kind::Source,macroSource(5),0};
+    check(p.setUiModulationState(m),"routes from MACRO 5 / 7 and a NODES input from MACRO 5");
+    const auto macro7Route=m.routes[2].id;
+    sync();
+    // Remove an unassigned macro: nothing else changes.
+    const auto before=mod().routes;
+    check(panel->removeMacro(6) && !macroActive(mod(),6),"remove an unassigned macro");
+    bool routesSame=true; for(std::size_t i=0;i<before.size();++i) routesSame&=before[i].id==mod().routes[i].id && before[i].source==mod().routes[i].source;
+    check(routesSame,"removing it changes no route");
+    // Remove an assigned macro: exactly its routes and inputs go; MACRO 7 is untouched.
+    panel->requestRemoveMacro(5);
+    check(macroActive(mod(),5),"a routed macro asks first (in-card confirmation; nothing removed yet)");
+    juce::TextButton* confirmButton=nullptr;
+    walk(*panel,[&](auto& c){ if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getName()=="Confirm remove macro 5" && b->isVisible()) confirmButton=b; });
+    if(confirmButton) confirmButton->onClick(); // the card retires safely inside its own callback
+    check(confirmButton && !macroActive(mod(),5),"confirming removes MACRO 5");
+    int from5=0,from7=0; for(const auto& r:mod().routes) { from5+=r.id && r.source==macroSource(5); from7+=r.id && r.source==macroSource(7) && r.id==macro7Route; }
+    check(from5==0 && from7==1 && mod().operators[0].inputs[0].kind==ControlInput::Kind::None,"deletion removes only MACRO 5's routes and NODES input");
+    check(panel->cardId(4)==7 && panel->cardId(3)==4,"stable ids: MACRO 7 is still MACRO 7 after earlier removals (no renumbering)");
+    check(validModulation(mod(),p.getUiInstrumentState().oscillators) && nodes::validateControlGraph(mod()).empty(),"no dangling macro reference remains");
+    check(panel->undo() && macroActive(mod(),5),"undo restores MACRO 5");
+    from5=0; for(const auto& r:mod().routes) from5+=r.id && r.source==macroSource(5);
+    check(from5==2 && mod().operators[0].inputs[0].source==macroSource(5),"undo restores its routes and its NODES input");
+    check(panel->redo() && !macroActive(mod(),5),"redo removes it again");
+    panel->undo();
+    // Routes never jump: a route's source is always the same macro id.
+    bool sameSources=true; for(const auto& r:mod().routes) if(r.id==macro7Route) sameSources&=r.source==macroSource(7);
+    check(sameSources,"routes never move to another macro");
+    // ---- limit ----------------------------------------------------------------
+    while(panel->addMacro()!=0) {}
+    check(panel->cardCount()==maxMacros && !panel->addButton().isEnabled() && panel->addButton().getTooltip().contains("16"),
+          "maximum 16 macros: + ADD MACRO disables and says why");
+    for(std::size_t id=9;id<=maxMacros;++id) if(id!=7) panel->removeMacro(id);
+    // ---- SYNTH / Matrix / NODES: one object ----------------------------------
+    panel->knob(5)->setValue(0.65,juce::sendNotificationSync);
+    check(std::abs(mod().macros[4]-0.65f)<1e-6f,"the SYNTH knob writes the canonical macro value");
+    editor->refreshModulationViews();
+    juce::Component* row=nullptr; std::uint32_t cutoffRoute=0;
+    for(const auto& r:mod().routes) if(r.id && r.source==macroSource(5) && r.destination.parameter==ModDestination::Cutoff) cutoffRoute=r.id;
+    for(std::size_t i=0;i<matrix->routeCount();++i) if(matrix->routeRow(i)->getName()=="Modulation route "+juce::String(cutoffRoute)) row=matrix->routeRow(i);
+    ui::NativeComboBox* source=nullptr;
+    if(row) walk(*row,[&](auto& c){ if(auto* b=dynamic_cast<ui::NativeComboBox*>(&c)) if(b->getName()=="Route source") source=b; });
+    check(source && source->getText()=="MACRO 5","the Matrix shows the MACRO 5 route by its canonical source");
+    page->syncFromModel();
+    bool nodesLink=false; for(const auto& l:page->controlGraph().links) nodesLink|=l.isRoute() && page->controlGraph().nodes[l.source].key==nodes::sourceKey(macroSource(5));
+    check(nodesLink && nodes::controlSourceActive(macroSource(5),mod()) && !nodes::controlSourceActive(macroSource(12),mod()),"NODES derives the same MACRO 5 source (removed macros are inactive)");
+    const auto* assign=panel->assignment(5);
+    check(assign && assign->routes().size()==2,"the MACRO 5 card's assignment area shows its two routes (red rings)");
+    // Drag from the assignment area onto a SYNTH knob creates a canonical route.
+    std::vector<juce::Slider*> knobs;
+    walk(*editor,[&](auto& c){
+        auto* slider=dynamic_cast<juce::Slider*>(&c);
+        if(slider==nullptr || !slider->isRotary() || !slider->getProperties().contains("mct.mod.destination")) return;
+        if(int(slider->getProperties()["mct.mod.destination"])==int(ModDestination::FxParameter)) return;
+        auto* hit=editor->getComponentAt(editor->getLocalArea(slider,slider->getLocalBounds()).getCentre());
+        while(hit!=nullptr && hit!=slider) hit=hit->getParentComponent();
+        if(hit==slider) knobs.push_back(slider); });
+    const auto routeCount=[&]{ int n=0; for(const auto& r:mod().routes) n+=r.id!=0; return n; };
+    const int routesBefore=routeCount();
+    // A knob MACRO 7 does not already drive (a duplicate pair is never created).
+    juce::Slider* target=nullptr;
+    for(auto* k:knobs) if(int(k->getProperties()["mct.mod.destination"])!=int(ModDestination::Resonance) && target==nullptr) target=k;
+    if(target!=nullptr) {
+        juce::DragAndDropTarget::SourceDetails details("MCT_MOD_SOURCE:"+juce::String(int(macroSource(7))),
+            const_cast<ui::ModulationSourceRow*>(panel->assignment(7)),editor->getLocalArea(target,target->getLocalBounds()).getCentre());
+        editor->itemDropped(details);
+    }
+    bool dropped=false; for(const auto& r:mod().routes) dropped|=r.id && r.source==macroSource(7) && r.id!=macro7Route;
+    check(target!=nullptr && dropped && routeCount()==routesBefore+1,"dragging MACRO 7's assignment grip onto a knob creates one canonical route");
+    // ---- save / reload / legacy ---------------------------------------------
+    {
+        juce::MemoryBlock saved; p.getStateInformation(saved);
+        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256); copy->setStateInformation(saved.getData(),int(saved.getSize()));
+        const auto r=copy->getUiInstrumentState().modulation;
+        bool same=r.macroMask==mod().macroMask && r.macros==mod().macros;
+        for(std::size_t i=0;i<r.routes.size();++i) same&=r.routes[i].id==mod().routes[i].id && r.routes[i].source==mod().routes[i].source;
+        check(same && encodeInstrumentState(p.getUiInstrumentState())[7]==31,"dynamic macros (set, ids, values, routes) survive save / reload (v31)");
+        auto legacy=std::make_unique<OrigamiAudioProcessor>(); legacy->prepareToPlay(48000.0,256);
+        auto ls=legacy->getUiInstrumentState(); ls.modulation.macros[2]=0.7f;
+        ls.modulation.routes[0]={1,true,ModSource::Macro3,{ModDestination::Cutoff,0,0},0.5f,false}; ls.modulation.nextRouteId=2;
+        const auto bytes=encodeInstrumentState(ls);
+        InstrumentState decoded;
+        check(bytes[7]<31 && decodeInstrumentState(bytes.data(),bytes.size(),decoded) && decoded.modulation.macroMask==defaultMacroMask
+              && decoded.modulation.macros[2]==0.7f && decoded.modulation.routes[0].source==ModSource::Macro3,"a legacy MACRO 1..4 save loads unchanged (mask 1..4, values, routes)");
+    }
+    // ---- determinism: a dynamic macro modulates the engine like MACRO 1..4 ---
+    {
+        const auto renderWith=[&](std::size_t id,float value) {
+            auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000.0,512,2);
+            auto s=e->instrumentState().modulation;
+            s.macroMask=std::uint16_t(s.macroMask|(1u<<(id-1))); s.macros[id-1]=value;
+            s.routes[0]={1,true,macroSource(id),{ModDestination::Cutoff,0,0},0.8f,false}; s.nextRouteId=2;
+            e->setModulationState(s); e->noteOn(60,0.9f);
+            std::vector<float> l(512),r(512),out; float* o[2]{l.data(),r.data()};
+            for(int b=0;b<8;++b) { e->process(o,2,512); out.insert(out.end(),l.begin(),l.end()); }
+            return out;
+        };
+        check(renderWith(9,0.6f)==renderWith(9,0.6f),"dynamic macro renders are deterministic");
+        check(renderWith(9,0.6f)==renderWith(2,0.6f),"MACRO 9 modulates exactly like MACRO 2 (same source semantics)");
+        check(renderWith(9,0.6f)!=renderWith(9,0.0f),"the macro value reaches the engine");
+    }
+    // ---- UI layout ------------------------------------------------------------
+    {
+        while(panel->cardCount()>4) panel->removeMacro(panel->cardId(panel->cardCount()-1));
+        sync();
+        const auto ids=[&]{ std::vector<std::size_t> v; for(std::size_t i=0;i<panel->cardCount();++i) v.push_back(panel->cardId(i)); return v; };
+        const auto rowOf=[&](std::size_t i){ return panel->card(i)->getY()/(ui::MacroPanel::cardHeight); };
+        const auto colOf=[&](std::size_t i){ return panel->card(i)->getX()>0 ? 1 : 0; };
+        bool grid=panel->cardCount()==4;
+        for(std::size_t i=0;i<panel->cardCount();++i) grid&=rowOf(i)==int(i/2) && colOf(i)==int(i%2);
+        check(grid,"4 macros = 2 x 2");
+        panel->addMacro(); sync();
+        check(panel->cardCount()==5 && rowOf(4)==2 && colOf(4)==0,"5 macros: the third row starts");
+        panel->addMacro(); sync();
+        check(rowOf(5)==2 && colOf(5)==1,"6 macros: three complete rows");
+        bool overlap=false,inside=true;
+        const auto noOverlap=[&] {
+            overlap=false; inside=true;
+            auto& vp=panel->viewport();
+            for(std::size_t i=0;i<panel->cardCount();++i) {
+                for(std::size_t j=i+1;j<panel->cardCount();++j) overlap|=panel->card(i)->getBounds().intersects(panel->card(j)->getBounds());
+                inside&=panel->card(i)->getRight()<=vp.getViewedComponent()->getWidth();
+            }
+            const bool scrolls=vp.getViewedComponent()->getHeight()>vp.getHeight();
+            const int gutter=vp.getWidth()-vp.getViewedComponent()->getWidth();
+            return !overlap && inside && (!scrolls || gutter>=vp.getScrollBarThickness()) && !vp.isHorizontalScrollBarShown();
+        };
+        check(noOverlap(),"6 macros: no overlap; no horizontal scrolling");
+        for(int i=0;i<4;++i) panel->addMacro();
+        sync();
+        auto& vp=panel->viewport();
+        check(vp.getViewedComponent()->getHeight()>vp.getHeight() && noOverlap(),"10 macros scroll vertically; the scrollbar has its own gutter (never over a card)");
+        vp.setViewPosition(0,vp.getViewedComponent()->getHeight());
+        const auto last=panel->card(panel->cardCount()-1)->getBounds();
+        check(last.getBottom()<=vp.getViewPositionY()+vp.getHeight(),"the last macro can be scrolled fully into view");
+        // Scale: cards are never miniaturised to fit (fixed design height, knob >= 44 px).
+        check(panel->card(0)->getHeight()==ui::MacroPanel::cardHeight && panel->knob(1)->getWidth()>=44,"card and knob keep their size at any count");
+        // Revision-gated: timer syncs do not rebuild cards when nothing changed.
+        const auto rebuilds=panel->rebuildCount();
+        for(int i=0;i<30;++i) panel->syncFromModel();
+        check(panel->rebuildCount()==rebuilds,"30 unchanged timer syncs rebuild no card");
+        // Minimum / large editor sizes: the canvas scales uniformly (fixed ratio).
+        for(const auto size:{std::pair<int,int>{960,600},{2240,1400}}) {
+            editor->setSize(size.first,size.second);
+            sync();
+            check(noOverlap(),(std::string("macro layout at ")+std::to_string(size.first)+"x"+std::to_string(size.second)+": no overlap, gutter respected").c_str());
+        }
+        editor->setSize(1500,920);
+    }
+    // ---- cross-view: Init -> add 5 -> assign -> Matrix -> NODES -> amount -> remove -> undo -> save -> reload
+    {
+        auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256);
+        auto ed=std::unique_ptr<juce::AudioProcessorEditor>(q->createEditor()); ed->setVisible(true);
+        auto* qe=dynamic_cast<OrigamiAudioProcessorEditor*>(ed.get());
+        ui::MacroPanel* mp=nullptr; ui::ModulationMatrix* mx=nullptr; ui::FxPage* fp=nullptr;
+        walk(*ed,[&](auto& c){ if(auto* x=dynamic_cast<ui::MacroPanel*>(&c)) mp=x; if(auto* x=dynamic_cast<ui::FxPage*>(&c)) fp=x;
+            if(auto* x=dynamic_cast<ui::ModulationMatrix*>(&c)) if(x->layout()==ui::ModulationMatrix::Layout::Page) mx=x; });
+        const auto qm=[&]{ return q->getUiInstrumentState().modulation; };
+        const auto one=[&](const char* what) {
+            const auto s2=qm(); bool ok=validModulation(s2,q->getUiInstrumentState().oscillators);
+            for(const auto& r:s2.routes) ok&=!routeDuplicates(s2,r);
+            qe->refreshModulationViews(); fp->syncFromModel(); mp->syncFromModel();
+            int routes=0; for(const auto& r:s2.routes) routes+=r.id!=0;
+            ok&=mx->routeCount()==std::size_t(routes) && mp->cardCount()==std::size_t(std::bitset<16>(s2.macroMask).count());
+            check(ok,(std::string("macro cross-view: ")+what).c_str());
+        };
+        const auto id=mp->addMacro(); one("add MACRO 5");
+        auto s2=qm(); s2.routes[0]={s2.nextRouteId++,true,macroSource(id),{ModDestination::Cutoff,0,0},0.5f,false}; q->setUiModulationState(s2); one("assign MACRO 5 in SYNTH");
+        const auto rid=qm().routes[0].id;
+        bool nodes5=false; fp->syncFromModel(); for(const auto& l:fp->controlGraph().links) nodes5|=l.routeId==rid; check(nodes5,"macro cross-view: NODES shows the MACRO 5 route");
+        auto edit=qm(); edit.routes[0].amount=0.9f; q->setUiModulationState(edit); one("Matrix amount edit");
+        check(mp->assignment(id) && mp->assignment(id)->routes().size()==1 && std::abs(mp->assignment(id)->routes()[0].amount-0.9f)<1e-6f,"macro cross-view: the SYNTH card shows the Matrix amount");
+        mp->removeMacro(id); one("remove MACRO 5");
+        mp->undo(); one("undo");
+        check(qm().routes[0].id==rid && qm().routes[0].amount==0.9f,"macro cross-view: undo restores the same route (id, amount)");
+        juce::MemoryBlock saved; q->getStateInformation(saved); q->setStateInformation(saved.getData(),int(saved.getSize())); one("save / reload");
+        check(macroActive(qm(),id) && qm().routes[0].source==macroSource(id),"macro cross-view: MACRO 5 and its route survive reload");
+    }
+    // ---- oscillator rack: dedicated horizontal scrollbar gutter --------------
+    {
+        const auto& vp=rack->viewport();
+        const auto checkRack=[&](const char* label) {
+            const auto* content=vp.getViewedComponent();
+            const bool scrolls=content->getWidth()>vp.getWidth();
+            bool fits=true; int cards=0;
+            for(auto* child:content->getChildren()) if(child->getWidth()>=400) { ++cards; fits&=child->getBottom()+(scrolls ? vp.getScrollBarThickness() : 0)<=vp.getHeight(); }
+            const bool noGap=scrolls || content->getHeight()==vp.getHeight(); // the gutter collapses when nothing scrolls
+            check(fits && noGap && cards==rack->count(),label);
+        };
+        while(rack->count()>1) { auto st=p.getUiInstrumentState(); for(auto it=st.oscillators.rbegin();it!=st.oscillators.rend();++it) if(it->id>1) { rack->removeOscillator(it->id); break; } }
+        rack->syncFromModel();
+        checkRack("1 oscillator: cards fill the height (no gutter needed)");
+        for(int n=2;n<=6;++n) { rack->addOscillator(); rack->syncFromModel(); checkRack((std::to_string(n)+" oscillators: the scrollbar never covers a card").c_str()); }
+        auto& mvp=const_cast<juce::Viewport&>(vp);
+        mvp.setViewPosition(mvp.getViewedComponent()->getWidth(),0);
+        check(mvp.getViewPositionX()+mvp.getWidth()>=mvp.getViewedComponent()->getWidth()-2,"the last oscillator can be reached");
+        mvp.setViewPosition(0,0);
+        check(mvp.getViewPositionX()==0,"the first oscillator can be reached");
+        for(const auto size:{std::pair<int,int>{960,600},{2240,1400}}) { editor->setSize(size.first,size.second); rack->syncFromModel(); checkRack("oscillator gutter at minimum / large editor sizes"); }
+        editor->setSize(1500,920);
+    }
+}
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -3801,6 +4039,7 @@ void run() {
     nodesN06Audit();
     nodesN07Audit();
     nodesMenuHierarchyAudit();
+    synthDynamicMacrosAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

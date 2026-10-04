@@ -71,14 +71,15 @@ juce::String valueText(const FxNode& n,const FxParameterDescriptor& p) {
 
 juce::String sourceName(ModSource s) {
     using S=ModSource;
+    if(const auto id=macroIdOf(s)) return "MACRO "+juce::String(int(id));
     switch(s) {
     case S::Env1:return "ENV 1"; case S::Env2:return "ENV 2"; case S::Env3:return "ENV 3";
     case S::Lfo1:return "LFO 1"; case S::Lfo2:return "LFO 2"; case S::Lfo3:return "LFO 3"; case S::Lfo4:return "LFO 4";
-    case S::Macro1:return "MACRO 1"; case S::Macro2:return "MACRO 2"; case S::Macro3:return "MACRO 3"; case S::Macro4:return "MACRO 4";
     case S::Random:return "RANDOM"; case S::Function:return "FUNCTION";
     case S::Chaos:return "CHAOS"; case S::Drift:return "DRIFT"; case S::Sequencer:return "SEQUENCER";
     case S::ModWheel:return "MOD WHEEL"; case S::Velocity:return "VELOCITY"; case S::Keytrack:return "KEYTRACK";
     case S::Aftertouch:return "AFTERTOUCH"; case S::PitchBend:return "PITCH BEND"; case S::NoteGate:return "NOTE GATE";
+    default:break;
     }
     // N07: a processed route's source is a NODES output, never an anonymous "MODULATOR".
     return isOperatorSource(s) ? "NODES" : "UNKNOWN SOURCE";
@@ -105,7 +106,7 @@ std::vector<SourceEntry> availableSources(const ModulationState& m) {
     for(int i=0;i<3;++i) if(m.envActiveMask&(1u<<i)) out.push_back({envs[i],"ENVELOPES"});
     const ModSource lfos[]{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4};
     for(int i=0;i<4;++i) if(m.lfoActiveMask&(1u<<i)) out.push_back({lfos[i],"LFOS"});
-    for(auto s:{ModSource::Macro1,ModSource::Macro2,ModSource::Macro3,ModSource::Macro4}) out.push_back({s,"MACROS"});
+    for(auto s:activeMacroSources(m)) out.push_back({s,"MACROS"});
     if(m.generatorActiveMask&0x02u) out.push_back({ModSource::Random,"GENERATORS"});
     if(m.generatorActiveMask&0x01u) out.push_back({ModSource::Function,"GENERATORS"});
     if(m.generatorActiveMask&0x04u) out.push_back({ModSource::Chaos,"GENERATORS"});
@@ -3236,14 +3237,21 @@ public:
             configureKnob(s);
             s.setRange(0.0,1.0,0.001);
             s.setName("FX Macro "+juce::String(int(i)+1));
-            // The same four canonical macros the synth page uses: no second engine.
-            s.onValueChange=[this,i]{if(bindings_.macro) bindings_.macro(unsigned(i),float(sliders_[i].getValue()));};
+            // The first four EXISTING canonical macros (by stable id): no second engine.
+            s.onValueChange=[this,i]{if(bindings_.macro && ids_[i]!=0) bindings_.macro(unsigned(ids_[i]-1),float(sliders_[i].getValue()));};
             addAndMakeVisible(s);
         }
     }
     void sync(const InstrumentState& state) {
-        for(std::size_t i=0;i<sliders_.size();++i)
-            if(!sliders_[i].isMouseButtonDown()) sliders_[i].setValue(state.modulation.macros[i],juce::dontSendNotification);
+        const auto macros=activeMacroSources(state.modulation);
+        bool changed=false;
+        for(std::size_t i=0;i<sliders_.size();++i) {
+            const auto id=i<macros.size() ? macroIdOf(macros[i]) : std::size_t(0);
+            changed|=ids_[i]!=id; ids_[i]=id;
+            sliders_[i].setVisible(id!=0);
+            if(id!=0 && !sliders_[i].isMouseButtonDown()) sliders_[i].setValue(state.modulation.macros[id-1],juce::dontSendNotification);
+        }
+        if(changed) repaint();
     }
     void resized() override {
         auto area=contentBounds().reduced(12,6).withTrimmedTop(26);
@@ -3258,12 +3266,14 @@ private:
         area.removeFromTop(2);
         const int cell=area.getWidth()/4;
         for(int i=0;i<4;++i) {
+            if(ids_[std::size_t(i)]==0) continue;
             auto r=juce::Rectangle<int>(area.getX()+i*cell,area.getY(),cell,area.getHeight()).withTrimmedBottom(16);
-            text(g,"MACRO "+juce::String(i+1),r.removeFromBottom(16),9.0f,Palette::muted(),juce::Justification::centred);
+            text(g,"MACRO "+juce::String(int(ids_[std::size_t(i)])),r.removeFromBottom(16),9.0f,Palette::muted(),juce::Justification::centred);
         }
     }
     ModulationBindings bindings_;
     std::array<juce::Slider,4> sliders_;
+    std::array<std::size_t,4> ids_{{1,2,3,4}};
 };
 
 // Origami-native destructive confirmation (never an OS alert).
@@ -4037,9 +4047,10 @@ std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
         (void)state;
         items.push_back(catalogItem(FxModuleMenu::externalId,"External Input (pending)",false,{"SOURCES"},"External input is not available yet"));
         // CONTROL: views of the instrument's own sources, and PARAMETER.
-        for(const auto s:{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,
-                          ModSource::Env1,ModSource::Env2,ModSource::Env3,
-                          ModSource::Macro1,ModSource::Macro2,ModSource::Macro3,ModSource::Macro4,ModSource::Random})
+        std::vector<ModSource> primary{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,ModSource::Env1,ModSource::Env2,ModSource::Env3};
+        for(const auto s:activeMacroSources(state.modulation)) primary.push_back(s);
+        primary.push_back(ModSource::Random);
+        for(const auto s:primary)
             if(nodes::controlSourceActive(s,state.modulation))
                 items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","SOURCES"},"Already on the canvas"));
         for(const auto s:{ModSource::Function,ModSource::Chaos,ModSource::Drift,ModSource::Sequencer,
@@ -4632,11 +4643,14 @@ std::vector<NativeChoiceItem> FxPage::controlCreateItems(const nodes::ControlEnd
     });
     // CONTROL only: a PARAMETER terminates the cable; a canonical source feeds it.
     if(signal==ControlSignal::Control && fromOutput) items.push_back({FxModuleMenu::parameterPickerId,"Parameter...",true,"CONTROL"});
-    if(signal==ControlSignal::Control && !fromOutput)
-        for(const auto s:{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,ModSource::Env1,ModSource::Env2,ModSource::Env3,
-                          ModSource::Macro1,ModSource::Macro2,ModSource::Macro3,ModSource::Macro4,ModSource::Random,ModSource::Sequencer})
+    if(signal==ControlSignal::Control && !fromOutput) {
+        std::vector<ModSource> feeds{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,ModSource::Env1,ModSource::Env2,ModSource::Env3};
+        for(const auto macro:activeMacroSources(m)) feeds.push_back(macro);
+        feeds.push_back(ModSource::Random); feeds.push_back(ModSource::Sequencer);
+        for(const auto s:feeds)
             if(nodes::controlSourceExposed(s) && nodes::controlSourceActive(s,m))
                 { NativeChoiceItem item{FxModuleMenu::controlSourceBase+int(s),sourceName(s),true,"CONTROL / SOURCES"}; item.path={"CONTROL","SOURCES"}; items.push_back(item); }
+    }
     return items;
 }
 

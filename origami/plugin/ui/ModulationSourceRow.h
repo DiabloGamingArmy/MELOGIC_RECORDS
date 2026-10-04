@@ -41,6 +41,7 @@ public:
     int preferredHeight() const noexcept { return heightFor(routes_.size()); }
 
     juce::Rectangle<float> ringBounds(std::size_t index) const noexcept;
+    std::size_t visibleRings() const noexcept;
     std::uint32_t routeAt(juce::Point<float>) const noexcept;
     std::uint32_t hoveredRoute() const noexcept { return hoverRoute_; }
     juce::Point<float> hoverPoint() const noexcept { return hoverPoint_; }

@@ -82,10 +82,9 @@ public:
         if(state.modulation.lfoActiveMask&0x4u) sourceItem("LFOs","LFO 3",ModSource::Lfo3);
         if(state.modulation.lfoActiveMask&0x8u) sourceItem("LFOs","LFO 4",ModSource::Lfo4);
 
-        sourceItem("Macros","MACRO 1",ModSource::Macro1);
-        sourceItem("Macros","MACRO 2",ModSource::Macro2);
-        sourceItem("Macros","MACRO 3",ModSource::Macro3);
-        sourceItem("Macros","MACRO 4",ModSource::Macro4);
+        // The instrument's macros by stable id (dynamic set; MACRO 1..4 by default).
+        for(const auto macro:activeMacroSources(state.modulation))
+            sourceItem("Macros","MACRO "+juce::String(int(macroIdOf(macro))),macro);
 
         sourceItem("Performance","VELOCITY",ModSource::Velocity);
         sourceItem("Performance","MOD WHEEL",ModSource::ModWheel);
@@ -319,6 +318,7 @@ void ModulationMatrix::syncFromModel() {
                  envMask_!=state.modulation.envActiveMask ||
                  lfoMask_!=state.modulation.lfoActiveMask ||
                  generatorMask_!=state.modulation.generatorActiveMask ||
+                 macroMask_!=state.modulation.macroMask ||
                  filterEnabled_!=state.modulation.filterEnabled;
     for(std::size_t i=0;!rebuild && i<ids.size();++i) rebuild=rows_[i]->id()!=ids[i];
     if(rebuild) {
@@ -327,6 +327,7 @@ void ModulationMatrix::syncFromModel() {
         envMask_=state.modulation.envActiveMask;
         lfoMask_=state.modulation.lfoActiveMask;
         generatorMask_=state.modulation.generatorActiveMask;
+        macroMask_=state.modulation.macroMask;
         filterEnabled_=state.modulation.filterEnabled;
         rows_.clear();
         for(const auto& route:state.modulation.routes) if(route.id) {

@@ -100,15 +100,24 @@ bool ModulationSourceRow::setRoutes(std::vector<ModulationSourceRoute> routes) {
     return heightChanged;
 }
 
+// Route gauges need enough visual area to read as controls, not status LEDs.
+namespace { constexpr float ringDiameter=16.0f,ringGap=5.0f; }
+
+// As many rings as fit the row (at most maxRings); the rest read as "+N".
+std::size_t ModulationSourceRow::visibleRings() const noexcept {
+    const float width=float(getWidth())-10.0f-18.0f; // margins + the "+N" overflow label
+    const auto fit=width<=ringDiameter ? std::size_t(1) : std::size_t((width+ringGap)/(ringDiameter+ringGap));
+    return std::min({routes_.size(),maxRings,std::max<std::size_t>(1,fit)});
+}
+
 juce::Rectangle<float> ModulationSourceRow::ringBounds(std::size_t index) const noexcept {
     const auto count=routes_.size();
-    if(count==0 || index>=std::min(count,maxRings)) return {};
+    if(count==0 || index>=visibleRings()) return {};
     auto b=getLocalBounds().toFloat().reduced(5.0f,1.5f);
     auto ringArea=b.withTrimmedTop(17.5f);
-    // Route gauges need enough visual area to read as controls, not status LEDs.
-    constexpr float diameter=16.0f;
-    constexpr float gap=5.0f;
-    const auto shown=std::min(count,maxRings);
+    constexpr float diameter=ringDiameter;
+    constexpr float gap=ringGap;
+    const auto shown=visibleRings();
     const float total=float(shown)*diameter+float(shown-1)*gap;
     const float x0=ringArea.getCentreX()-total*0.5f;
     return {x0+float(index)*(diameter+gap),ringArea.getCentreY()-diameter*0.5f,diameter,diameter};
@@ -133,7 +142,7 @@ void ModulationSourceRow::paintButton(juce::Graphics& g,bool over,bool down) {
     g.setColour(Palette::borderStrong().withAlpha(0.58f));
     g.drawLine(inner.getX()+4.0f,dividerY,inner.getRight()-4.0f,dividerY,0.75f);
 
-    const auto shown=std::min(routes_.size(),maxRings);
+    const auto shown=visibleRings();
     for(std::size_t i=0;i<shown;++i) paintModulationMagnitudeRing(g,ringBounds(i),routes_[i].amount);
     if(routes_.size()>shown) {
         g.setColour(Palette::muted());
