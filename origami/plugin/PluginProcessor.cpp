@@ -39,6 +39,7 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
     for(int i=0;i<3;++i) engine_.addOscillatorModule();
     // Pre-audio-thread: establish the canonical host/UI model exactly once.
     uiInstrumentState_=engine_.instrumentState();
+    bumpUiModelRevision();
     uiPerformanceState_=uiInstrumentState_.performance;
     uiArpState_=arpState_;
     // Every committed FX graph change recompiles (topology) or republishes
@@ -74,6 +75,7 @@ mct::origami::BusId OrigamiAudioProcessor::addUiBus() noexcept {
         id=mct::origami::addBus(buses);
         if(id==0 || !engine_.setBusState(buses)) return 0;
         uiInstrumentState_.buses=buses;
+        bumpUiModelRevision();
         uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     }
     fxWorkspace_.document(id); // creates "<BUS> IN -> <BUS> OUT" and resyncs
@@ -93,6 +95,7 @@ bool OrigamiAudioProcessor::removeUiBus(mct::origami::BusId id) noexcept {
         for(auto& module:uiInstrumentState_.oscillators)
             if(module.id) module=engine_.oscillatorModuleState(module.id);
         uiInstrumentState_.buses=next.buses;
+        bumpUiModelRevision();
         uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     }
     fxWorkspace_.removeBus(id);
@@ -119,7 +122,7 @@ void OrigamiAudioProcessor::pruneFxModulationRoutes() {
     }
     if(!changed) return;
     while(out<mod.routes.size()) mod.routes[out++]={};
-    if(engine_.setModulationState(mod)) uiInstrumentState_.modulation=mod;
+    if(engine_.setModulationState(mod)) { uiInstrumentState_.modulation=mod; bumpUiModelRevision(); }
 }
 void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     sampleRate_=sampleRate>1.0?sampleRate:44100.0;
@@ -841,6 +844,7 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     {
     const juce::ScopedLock lock(stateLock_);
     uiInstrumentState_=state;
+    bumpUiModelRevision();
     uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     uiPerformanceState_=state.performance;
     restoreMailbox_.publish(uiInstrumentState_);
@@ -881,6 +885,7 @@ bool OrigamiAudioProcessor::setUiMacro(unsigned index,float value) noexcept {
     auto mod=uiInstrumentState_.modulation;mod.macros[index]=value;
     if(!engine_.setModulationState(mod)) return false;
     uiInstrumentState_.modulation=mod;
+    bumpUiModelRevision();
     return true;
 }
 bool OrigamiAudioProcessor::setUiLfo(const mct::origami::LfoSettings& settings) noexcept {
@@ -888,12 +893,14 @@ bool OrigamiAudioProcessor::setUiLfo(const mct::origami::LfoSettings& settings) 
     auto mod=uiInstrumentState_.modulation;mod.lfo1=settings;
     if(!engine_.setModulationState(mod)) return false;
     uiInstrumentState_.modulation=mod;
+    bumpUiModelRevision();
     return true;
 }
 bool OrigamiAudioProcessor::setUiModulationState(const mct::origami::ModulationState& state) noexcept {
     const juce::ScopedLock lock(stateLock_);
     if(!engine_.setModulationState(state)) return false;
     uiInstrumentState_.modulation=state;
+    bumpUiModelRevision();
     return true;
 }
 unsigned OrigamiAudioProcessor::addUiRoute() noexcept {
@@ -907,6 +914,7 @@ unsigned OrigamiAudioProcessor::addUiRoute() noexcept {
         route.id=mod.nextRouteId++;
         if(!engine_.setModulationState(mod)) return 0;
         uiInstrumentState_.modulation=mod;
+        bumpUiModelRevision();
         return route.id;
     }
     return 0;
@@ -919,6 +927,7 @@ bool OrigamiAudioProcessor::setUiRoute(const mct::origami::ModRoute& edited) noe
         route=edited;
         if(!engine_.setModulationState(mod)) return false;
         uiInstrumentState_.modulation=mod;
+        bumpUiModelRevision();
         return true;
     }
     return false;
@@ -933,6 +942,7 @@ bool OrigamiAudioProcessor::removeUiRoute(unsigned id) noexcept {
     while(out<mod.routes.size()) mod.routes[out++]={};
     if(!engine_.setModulationState(mod)) return false;
     uiInstrumentState_.modulation=mod;
+    bumpUiModelRevision();
     return true;
 }
 mct::origami::InstrumentState OrigamiAudioProcessor::getUiInstrumentState() const noexcept {
@@ -944,6 +954,7 @@ bool OrigamiAudioProcessor::setUiParameter(mct::origami::ParameterId id,float va
     const juce::ScopedLock lock(stateLock_);
     if(!engine_.setParameter(id,value)) return false;
     uiInstrumentState_.parameters=engine_.parameterState();
+    bumpUiModelRevision();
     mct::origami::applyLegacyOscillatorParameters(
         uiInstrumentState_.oscillators[0],uiInstrumentState_.parameters);
     uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
@@ -963,6 +974,7 @@ mct::origami::OscillatorModuleId OrigamiAudioProcessor::addUiOscillator() noexce
         break;
     }
     uiInstrumentState_.nextId=std::max(uiInstrumentState_.nextId,id+1u);
+    bumpUiModelRevision();
     uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     return id;
 }
@@ -979,6 +991,7 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
         if(current.id!=0) compact[out++]=current;
     }
     uiInstrumentState_.oscillators=compact;
+    bumpUiModelRevision();
 
     auto mod=uiInstrumentState_.modulation;
     std::size_t routeOut=0;
@@ -990,6 +1003,7 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
     // view: a deleted child must stop receiving modulation immediately.
     if(!engine_.setModulationState(mod)) return false;
     uiInstrumentState_.modulation=mod;
+    bumpUiModelRevision();
     uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     return true;
 }
@@ -1055,6 +1069,7 @@ bool OrigamiAudioProcessor::setUiOscillatorState(mct::origami::OscillatorModuleI
         if(module.id!=id) continue;
         module=canonical;
         uiInstrumentState_.modulation=prunedMod;
+        bumpUiModelRevision();
         uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
         return true;
     }
@@ -1103,7 +1118,9 @@ bool OrigamiAudioProcessor::setUiPitchBendRanges(float upSemitones,float downSem
     const juce::ScopedLock lock(stateLock_);
     if(!engine_.setPitchBendRanges(upSemitones,downSemitones)) return false;
     uiInstrumentState_.performance.pitchBendRangeSemitones=upSemitones;
+    bumpUiModelRevision();
     uiInstrumentState_.performance.pitchBendDownSemitones=downSemitones;
+    bumpUiModelRevision();
     uiPerformanceState_.pitchBendRangeSemitones=upSemitones;
     uiPerformanceState_.pitchBendDownSemitones=downSemitones;
     return true;
@@ -1120,6 +1137,7 @@ bool OrigamiAudioProcessor::setUiPerformanceState(const mct::origami::Performanc
     const juce::ScopedLock lock(stateLock_);
     uiPerformanceState_=state;
     uiInstrumentState_.performance=state;
+    bumpUiModelRevision();
     performanceMailbox_.publish(uiPerformanceState_);
     return true;
 }

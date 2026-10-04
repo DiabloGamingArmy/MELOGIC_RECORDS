@@ -131,6 +131,11 @@ if(ORIGAMI_BUILD_TESTS)
     target_compile_definitions(origami_fx_tests PRIVATE ORIGAMI_SANITIZED=1)
   endif()
   add_test(NAME origami_fx_graph COMMAND origami_fx_tests)
+
+  # mct-origami-nodes-n07-consolidation: deterministic NODES benchmark.
+  add_executable(origami_nodes_bench tools/nodes_bench.cpp)
+  target_link_libraries(origami_nodes_bench PRIVATE origami_core)
+  target_include_directories(origami_nodes_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 # mct-origami-vst3-host-proof-v1
 option(ORIGAMI_BUILD_VST3 "Build the MCT Origami JUCE VST3 host proof" OFF)

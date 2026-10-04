@@ -61,7 +61,9 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner,std::function
                 }
             }
             return out;
-        }};
+        },
+        [&owner]{return owner.getUiModelRevision();},
+        [&owner]{return owner.getUiNodesDiagnostics();}};
 }
 }
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)
@@ -309,7 +311,7 @@ void OrigamiAudioProcessorEditor::refreshModulationViews() {
     lastModulationView_=processor_.getUiInstrumentState().modulation;
     modulation_.syncFromModel();
     matrix_.syncFromModel();
-    fxPage_.syncFromModel();
+    fxPage_.modelChanged(); // no visual work while NODES is hidden
 }
 
 void OrigamiAudioProcessorEditor::paintOverChildren(juce::Graphics& g) {

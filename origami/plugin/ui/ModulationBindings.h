@@ -32,5 +32,9 @@ struct ModulationBindings {
     std::function<RuntimeVisualizationSnapshot()> visualization;
     std::function<std::uint32_t()> visualizationMask;
     std::function<std::vector<FxModulationDestination>()> fxDestinations;
+    // N07: the UI model revision (changes whenever the canonical state does).
+    std::function<std::uint64_t()> modelRevision;
+    // N07: the engine's NODES diagnostics counters (compiles, updates, skips...).
+    std::function<OrigamiEngine::NodesDiagnostics()> nodesDiagnostics;
 };
 }

@@ -306,6 +306,42 @@ See `docs/NODES_ARCHITECTURE.md` §15.
 
 See `docs/NODES_ARCHITECTURE.md` §16.
 
+## NODES consolidation (N07)
+
+- **Plan lifecycle:** `compile()` classifies each new state:
+  - nothing the plan reads changed → skipped;
+  - only operator parameters changed → updated in place;
+  - topology changed → full compile.
+
+  Macro drags, LFO rates, sequence steps and layout never rebuild the plan.
+  Counters are in `OrigamiEngine::nodesDiagnostics()`.
+- **Runtime:**
+  - compile-time kernels for stateless operators;
+  - per-domain execution orders;
+  - per-voice operators read global outputs in place;
+  - voices copy only the oscillator modules their routes write;
+  - CUTOFF log spans prepared at compile;
+  - per-note curve values cached.
+
+  Result: render cost is down 17–52% across the benchmark scenarios
+  (`tools/nodes_bench.cpp`).
+- **Per-voice RNG:** generative nodes mix the voice slot and note lifecycle into
+  their seeds. Voices differ, renders repeat, and stolen voices start new
+  streams.
+- **Recovery:** `nodes::validateControlGraph` / `repairControlGraph`; decoding
+  repairs malformed graphs instead of executing them.
+- **UI:**
+  - revision-gated sync; a hidden NODES page does no graph work;
+  - layered default placement and AUTO LAYOUT;
+  - semantic zoom (30% floor);
+  - multi-selection with marquee, align and distribute;
+  - a searchable palette (A / Tab);
+  - copy / paste;
+  - connection feedback;
+  - a developer inspector (Cmd/Ctrl+Shift+D).
+
+See `docs/NODES_ARCHITECTURE.md` §0 (authoritative).
+
 ## Build and verify
 
 From the repository root, with CMake 3.20+ and a C++17 compiler:

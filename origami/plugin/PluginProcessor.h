@@ -74,6 +74,11 @@ public:
     bool removeUiRoute(unsigned) noexcept;
     mct::origami::InstrumentState getUiInstrumentState() const noexcept;
     std::uint64_t getUiOscillatorRevision() const noexcept { return uiOscillatorRevision_.load(std::memory_order_acquire); }
+    // N07: bumped on EVERY change of the UI instrument state (modulation,
+    // oscillators, buses, parameters, performance, restore). Views compare it
+    // instead of snapshotting the instrument on every timer tick.
+    std::uint64_t getUiModelRevision() const noexcept { return uiModelRevision_.load(std::memory_order_acquire); }
+    mct::origami::OrigamiEngine::NodesDiagnostics getUiNodesDiagnostics() const noexcept { return engine_.nodesDiagnostics(); }
 
     // Deep Audit P02: UI notes enter the audio domain through a fixed SPSC
     // queue. MidiKeyboardState is no longer an audio-thread bridge.
@@ -210,6 +215,8 @@ private:
     // suspending live DSP. Full restores cross to audio only at a block boundary.
     mct::origami::InstrumentState uiInstrumentState_{};
     std::atomic<std::uint64_t> uiOscillatorRevision_{1};
+    std::atomic<std::uint64_t> uiModelRevision_{1};
+    void bumpUiModelRevision() noexcept { uiModelRevision_.fetch_add(1,std::memory_order_release); }
     mct::origami::LatestStateMailbox<mct::origami::InstrumentState> restoreMailbox_;
 
     // Patch 14/19: non-blocking UI -> audio state transfer.

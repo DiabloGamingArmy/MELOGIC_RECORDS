@@ -21,6 +21,8 @@
 #include "plugin/ui/ModulationUiTelemetry.h"
 #include "plugin/ui/FxPage.h"
 #include "core/preset/StateCodec.h"
+#include "tests/NodesScenarios.h"
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <atomic>
@@ -3282,6 +3284,381 @@ void nodesN06Audit() {
 }
 
 
+// mct-origami-nodes-n07-consolidation
+void nodesN07Audit() {
+    using namespace mct::origami;
+    using T=ControlOpType;
+    using E=nodes::ControlEndpoint;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::FxPage* page=nullptr; ui::ModulationMatrix* matrix=nullptr; juce::TextButton* nodesButton=nullptr; juce::TextButton* synthButton=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* f=dynamic_cast<ui::FxPage*>(&c)) page=f;
+        if(auto* x=dynamic_cast<ui::ModulationMatrix*>(&c)) if(x->layout()==ui::ModulationMatrix::Layout::Page) matrix=x;
+        if(auto* b=dynamic_cast<juce::TextButton*>(&c)) { if(b->getButtonText()=="NODES" && !nodesButton) nodesButton=b; if(b->getButtonText()=="SYNTH" && !synthButton) synthButton=b; }});
+    check(page && matrix && nodesButton && synthButton,"N07: NODES, MATRIX, SYNTH");
+    nodesButton->onClick();
+    const auto mod=[&]{ return p.getUiInstrumentState().modulation; };
+    const auto render=[&](int blocks){ juce::AudioBuffer<float> a(2,256); juce::MidiBuffer midi; midi.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0);
+        for(int b=0;b<blocks;++b) { a.clear(); p.processBlock(a,midi); midi.clear(); } };
+    const auto diag=[&]{ render(1); return p.getUiNodesDiagnostics(); };
+    const auto opCount=[&]{ int n=0; for(const auto& o:mod().operators) n+=o.id!=0; return n; };
+
+    // A small graph: LFO 1 -> SCALE -> SMOOTH -> CUTOFF, CLOCK -> PROBABILITY -> RANDOM.
+    const auto scale=page->addControlOperator(T::ScaleOffset);
+    const auto smooth=page->addControlOperator(T::Smooth);
+    const auto clock=page->addControlOperator(T::Clock);
+    const auto prob=page->addControlOperator(T::Probability);
+    const auto rnd=page->addControlOperator(T::RandomTrigger);
+    check(scale && smooth && clock && prob && rnd,"graph nodes");
+    page->connectControlEdge(E::fromSource(ModSource::Lfo1),E::toInput(*scale,0));
+    page->connectControlEdge(E::fromOperator(*scale),E::toInput(*smooth,0));
+    page->connectControlEdge(E::fromOperator(*smooth),E::toParameter({ModDestination::Cutoff,0,0}));
+    page->connectControlEdge(E::fromOperator(*clock),E::toInput(*prob,0));
+    page->connectControlEdge(E::fromOperator(*prob),E::toInput(*rnd,0));
+    page->connectControlEdge(E::fromOperator(*rnd),E::toParameter({ModDestination::Resonance,0,0}));
+
+    // ---- layout, view and selection never compile -------------------------
+    {
+        const auto before=diag();
+        for(int i=0;i<100;++i) page->moveControlNode(nodes::operatorKey(*scale),{float(400+i),float(700+(i%7))},i%10==9);
+        page->zoomIn(); page->zoomOut(); page->graphView().panBy({120.0f,40.0f}); page->zoomToFit();
+        page->selectControlNode(nodes::operatorKey(*smooth)); page->setControlNodeSelection({nodes::operatorKey(*scale),nodes::operatorKey(*clock)});
+        page->autoLayoutControl();
+        page->undo(); // a layout-only undo
+        const auto after=diag();
+        check(after.compiles==before.compiles && after.parameterUpdates==before.parameterUpdates && after.stateRevision==before.stateRevision,
+              "100 node moves, pan, zoom, selection, auto layout and a layout undo: no compile, no model change");
+    }
+    // ---- parameter vs topology ------------------------------------------------
+    {
+        const auto d0=diag();
+        page->setOperatorParameter(*scale,0,0.5f);                     // SCALE amount
+        page->setOperatorParameter(*prob,0,0.25f);                     // PROBABILITY chance
+        const auto d1=diag();
+        check(d1.compiles==d0.compiles && d1.parameterUpdates>=d0.parameterUpdates+1,"SCALE / PROBABILITY edits update parameters in place (no compile)");
+        const auto euclid=page->addControlOperator(T::Euclidean);
+        const auto d2=diag();
+        check(d2.compiles>d1.compiles,"adding a node compiles");
+        page->setOperatorParameter(*euclid,2,3.0f);                    // EUCLIDEAN rotation
+        const auto pattern=page->addControlOperator(T::Pattern);
+        const auto d3=diag();
+        page->togglePatternStep(*pattern,2);                           // PATTERN step
+        const auto d4=diag();
+        check(d4.compiles==d3.compiles && d4.parameterUpdates>d3.parameterUpdates,"EUCLIDEAN rotation and PATTERN steps: parameter updates");
+        page->connectControlEdge(E::fromOperator(*clock),E::toInput(*euclid,0));
+        check(diag().compiles>d4.compiles,"a new connection compiles");
+        // A macro drag (SYNTH / MACROS) never compiles.
+        const auto d5=diag(); p.setUiMacro(0,0.6f); p.setUiMacro(0,0.7f);
+        const auto d6=diag();
+        check(d6.compiles==d5.compiles && d6.compileSkips>d5.compileSkips,"macro drags are classified and skipped by the compiler");
+    }
+    // ---- UI revision model and hidden-page cost --------------------------------
+    {
+        page->syncFromModel();
+        const auto u0=page->uiDiagnostics();
+        for(int i=0;i<30;++i) page->syncFromModel(); // the editor timer, nothing changed
+        const auto u1=page->uiDiagnostics();
+        check(u1.skippedSyncs>=u0.skippedSyncs+30 && u1.controlRebuilds==u0.controlRebuilds && u1.modelSyncs==u0.modelSyncs,
+              "unchanged model: 30 timer syncs rebuild nothing (revision check only)");
+        synthButton->onClick();
+        check(!page->isVisible(),"NODES hidden");
+        const auto paints=page->canvasPaintCount();
+        const auto u2=page->uiDiagnostics();
+        auto edited=mod(); edited.routes[0].amount=0.33f; p.setUiModulationState(edited); editor->refreshModulationViews();
+        p.setUiMacro(1,0.4f); editor->refreshModulationViews();
+        const auto u3=page->uiDiagnostics();
+        check(u3.controlRebuilds==u2.controlRebuilds && u3.hiddenSyncs>=u2.hiddenSyncs+2 && page->canvasPaintCount()==paints,
+              "hidden NODES: model changes rebuild no CONTROL graph and paint nothing");
+        // Rendering is identical with NODES visible or hidden.
+        auto state=p.getUiInstrumentState();
+        const auto renderFresh=[&](bool visible) {
+            auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256); disableExtraOscillators(*q);
+            q->setUiModulationState(state.modulation);
+            auto ed=std::unique_ptr<juce::AudioProcessorEditor>(q->createEditor()); ed->setVisible(true);
+            juce::TextButton* nb=nullptr; walk(*ed,[&](auto& c){ if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="NODES" && !nb) nb=b; });
+            if(visible && nb) nb->onClick();
+            juce::AudioBuffer<float> a(2,256); juce::MidiBuffer midi; midi.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0);
+            std::vector<float> out;
+            for(int b=0;b<40;++b) { a.clear(); q->processBlock(a,midi); midi.clear(); for(int i=0;i<256;++i) out.push_back(a.getSample(0,i)); }
+            return out;
+        };
+        check(renderFresh(true)==renderFresh(false),"audio is identical with NODES visible or hidden");
+        nodesButton->onClick();
+        const auto u4=page->uiDiagnostics();
+        check(u4.controlRebuilds>u3.controlRebuilds,"showing NODES catches up once (stale flag)");
+    }
+    // ---- auto layout ------------------------------------------------------------
+    {
+        const auto ops=mod().operators;
+        page->autoLayoutControl();
+        bool overlap=false,leftToRight=true;
+        const auto nodesNow=page->canvas().controlNodes();
+        for(std::size_t i=0;i<nodesNow.size();++i) for(std::size_t j=i+1;j<nodesNow.size();++j)
+            overlap|=nodesNow[i]->getBounds().intersects(nodesNow[j]->getBounds());
+        for(const auto& l:page->controlGraph().links) {
+            const auto* a=page->canvas().controlNode(page->controlGraph().nodes[l.source].key);
+            const auto* b=page->canvas().controlNode(page->controlGraph().nodes[l.parameter].key);
+            if(a && b) leftToRight&=a->getX()<b->getX();
+        }
+        std::vector<juce::Point<int>> first; for(auto* n:nodesNow) first.push_back(n->getPosition());
+        page->autoLayoutControl();
+        std::vector<juce::Point<int>> second; for(auto* n:page->canvas().controlNodes()) second.push_back(n->getPosition());
+        check(!overlap && leftToRight,"AUTO LAYOUT: no overlaps, every cable flows left to right");
+        check(first==second,"AUTO LAYOUT is stable (same result twice)");
+        check(mod().operators==ops,"AUTO LAYOUT never changes DSP state");
+    }
+    // ---- multi-selection, marquee, group move, delete ---------------------------
+    {
+        page->setControlNodeSelection({});
+        auto* a=page->canvas().controlNode(nodes::operatorKey(*clock));
+        auto* b=page->canvas().controlNode(nodes::operatorKey(*prob));
+        check(a && b,"selection targets");
+        const auto rect=a->getBounds().getUnion(b->getBounds()).toFloat().expanded(4.0f);
+        page->canvas().beginMarquee(rect.getTopLeft(),false); page->canvas().dragMarquee(rect.getBottomRight()); page->canvas().endMarquee();
+        const auto selected=page->selectedControlNodes();
+        check(page->controlNodeSelected(nodes::operatorKey(*clock)) && page->controlNodeSelected(nodes::operatorKey(*prob)),"marquee selects the nodes it touches");
+        page->toggleControlNodeSelection(nodes::operatorKey(*rnd));
+        check(page->selectedControlNodes().size()==selected.size()+1,"Shift-click adds to the selection");
+        const auto origin=a->getPosition(),originB=b->getPosition();
+        page->moveControlNodes(page->selectedControlNodes(),{50.0f,30.0f});
+        check(page->canvas().controlNode(nodes::operatorKey(*clock))->getPosition()==origin+juce::Point<int>(50,30)
+              && page->canvas().controlNode(nodes::operatorKey(*prob))->getPosition()==originB+juce::Point<int>(50,30),"a group moves together");
+        page->undo();
+        check(page->canvas().controlNode(nodes::operatorKey(*clock))->getPosition()==origin,"a group move is one undo step");
+        check(page->alignControlNodes(ui::FxPage::Align::Left),"ALIGN LEFT");
+        const int x0=page->canvas().controlNode(nodes::operatorKey(*clock))->getX();
+        check(page->canvas().controlNode(nodes::operatorKey(*prob))->getX()==x0 && page->canvas().controlNode(nodes::operatorKey(*rnd))->getX()==x0,"aligned left");
+        page->undo();
+        // Delete: user nodes go (one step), a linked canonical source stays.
+        const int before=opCount();
+        page->setControlNodeSelection({nodes::operatorKey(*clock),nodes::operatorKey(*prob),nodes::sourceKey(ModSource::Lfo1)});
+        check(page->deleteSelectedControlNodes() && opCount()==before-2,"deleting a selection removes the user-created nodes");
+        check(page->controlNodeShown(nodes::sourceKey(ModSource::Lfo1)),"a linked canonical SOURCE is never deleted by a selection delete");
+        page->undo();
+        check(opCount()==before && findControlOperator(mod(),*prob)!=nullptr && findControlOperator(mod(),*prob)->inputs[0].op==*clock,"one undo restores the nodes and their connection");
+    }
+    // ---- palette: search, quick add, cable drop ---------------------------------
+    {
+        page->showNodePalette(fx::FxPoint{700.0f,900.0f});
+        auto& palette=page->nodePalette();
+        check(palette.isOpen(),"the palette opens");
+        const auto firstLabel=[&](const char* q){ palette.setQuery(q); const auto r=palette.results(); return r.empty() ? juce::String() : r.front().label; };
+        check(firstLabel("prob")=="PROBABILITY","\"prob\" -> PROBABILITY");
+        check(firstLabel("s&h")=="SAMPLE & HOLD","\"s&h\" -> SAMPLE & HOLD");
+        check(firstLabel("seq").startsWith("SEQUENCER") || firstLabel("seq")=="Sequencer","\"seq\" -> SEQUENCER");
+        check(firstLabel("walk")=="RANDOM WALK" && firstLabel("eucl")=="EUCLIDEAN","aliases and prefixes rank first");
+        palette.setQuery("prob");
+        const int before=opCount();
+        check(palette.chooseSelected() && opCount()==before+1 && !palette.isOpen(),"Return adds the best match and closes the palette");
+        page->undo();
+        // Quick add (A) opens it at the cursor; Escape dismisses.
+        page->keyPressed(juce::KeyPress('a'));
+        check(palette.isOpen(),"A opens the quick-add palette");
+        page->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey));
+        check(!palette.isOpen(),"Escape dismisses it");
+        // A dangling EVENT cable: only nodes with an EVENT input, auto-connected.
+        page->showNodePalette(fx::FxPoint{900.0f,700.0f},E::fromOperator(*clock));
+        bool events=!palette.results().empty();
+        for(const auto& e:palette.results()) if(e.id>=ui::FxModuleMenu::controlOperatorBase) {
+            const auto* info=controlOpInfo(static_cast<T>(e.id-ui::FxModuleMenu::controlOperatorBase));
+            bool takes=false; for(std::uint8_t k=0;k<info->inputs;++k) takes|=info->inputSignals[k]==ControlSignal::Event;
+            events&=takes;
+        }
+        palette.setQuery("counter");
+        check(events && palette.chooseSelected(),"a dropped EVENT cable offers only EVENT consumers");
+        bool connected=false;
+        for(const auto& o:mod().operators) if(o.id && o.type==T::Counter && o.inputs[0].op==*clock) connected=true;
+        check(connected,"the chosen node is connected to the cable");
+        page->undo();
+    }
+    // ---- copy / paste ---------------------------------------------------------
+    {
+        page->setControlNodeSelection({nodes::operatorKey(*clock),nodes::operatorKey(*prob)});
+        check(page->copySelectedControlNodes()==2,"copy two nodes");
+        const int before=opCount();
+        const auto pasted=page->pasteControlNodes(fx::FxPoint{1200.0f,1200.0f});
+        check(pasted.size()==2 && opCount()==before+2,"paste creates two new nodes");
+        const auto* newClock=findControlOperator(mod(),pasted[0]); const auto* newProb=findControlOperator(mod(),pasted[1]);
+        check(newClock && newProb && pasted[0]!=*clock && pasted[1]!=*prob,"pasted nodes get new stable ids");
+        check(newProb && newProb->inputs[0].kind==ControlInput::Kind::Operator && newProb->inputs[0].op==pasted[0],"the internal CLOCK -> PROBABILITY edge is copied");
+        bool external=false; for(const auto& r:mod().routes) external|=r.id && isOperatorSource(r.source) && (operatorIdOf(r.source)==pasted[0] || operatorIdOf(r.source)==pasted[1]);
+        check(!external,"external connections are not copied");
+        page->undo();
+        check(opCount()==before,"paste is one undo step");
+        page->redo();
+        check(opCount()==before+2,"and redoes");
+        juce::MemoryBlock saved; p.getStateInformation(saved);
+        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256); copy->setStateInformation(saved.getData(),int(saved.getSize()));
+        check(copy->getUiInstrumentState().modulation.operators==mod().operators,"pasted graphs survive save/load");
+        page->undo();
+        // Duplicate: below the original, selected, parameters copied, no connections.
+        page->selectControlNode(nodes::operatorKey(*scale));
+        page->keyPressed(juce::KeyPress('d',juce::ModifierKeys::commandModifier,0));
+        const auto dup=page->selectedControlNodes();
+        const auto* d=dup.size()==1 ? findControlOperator(mod(),dup[0].op) : nullptr;
+        auto* original=page->canvas().controlNode(nodes::operatorKey(*scale));
+        auto* copyNode=dup.size()==1 ? page->canvas().controlNode(dup[0]) : nullptr;
+        check(d && d->type==T::ScaleOffset && d->params==findControlOperator(mod(),*scale)->params && d->inputs[0].kind==ControlInput::Kind::None
+              && original && copyNode && !copyNode->getBounds().intersects(original->getBounds()),"Cmd+D duplicates near the original without overlap, selected, unconnected");
+        page->undo();
+    }
+    // ---- feedback, debug inspector, validator -------------------------------
+    {
+        const auto rejected=page->uiDiagnostics().rejectedConnections;
+        const auto toggle=page->addControlOperator(T::Toggle);
+        page->connectControlEdge(E::fromSource(ModSource::Lfo2),E::toInput(*toggle,0));
+        check(page->graphFeedback().contains("CONTROL output cannot feed an EVENT input") && page->uiDiagnostics().rejectedConnections==rejected+1,
+              "a refused connection explains itself (Origami-native feedback)");
+        page->connectControlEdge(E::fromOperator(*rnd),E::toInput(*prob,0));
+        check(page->graphFeedback().isNotEmpty(),"every refusal has a reason");
+        page->undo();
+        page->setDebugInspectorVisible(true);
+        page->selectControlNode(nodes::operatorKey(*scale));
+        const auto lines=page->debugInspectorLines().joinIntoString("\n");
+        check(page->debugInspectorVisible() && lines.contains("id "+juce::String(*scale)) && lines.contains("slot ") && lines.contains("plan  compiles")
+              && lines.contains("validator  graph valid") && lines.contains("monitor "),"the debug inspector shows ids, slots, ports, plan counters and the validator");
+        page->selectControlLink(mod().routes[0].id);
+        check(page->debugInspectorLines().joinIntoString("\n").contains("#ROUTE"),"the debug inspector inspects routes");
+        page->setDebugInspectorVisible(false);
+        check(page->validateControlGraphReport().isEmpty(),"the graph validator is clean");
+    }
+    // ---- PATTERN: 32 steps keep usable cells ------------------------------------
+    {
+        page->graphView().setView(1.0f,page->graphView().pan()); // cells are drawn (and clickable) at full detail
+        const auto pattern=page->addControlOperator(T::Pattern);
+        page->setOperatorParameter(*pattern,0,32.0f);
+        auto* node=page->canvas().controlNode(nodes::operatorKey(*pattern));
+        check(node!=nullptr,"pattern node");
+        if(node) {
+            const auto area=node->previewBounds();
+            const float cellWidth=area.getWidth()/16.0f,cellHeight=area.getHeight()/2.0f;
+            check(cellWidth>=15.0f && cellHeight>=20.0f,"32-step PATTERN: two rows of >= 15 x 20 px cells (never squeezed)");
+            const auto cell31=node->previewCellAt({area.getRight()-2.0f,area.getBottom()-2.0f});
+            check(cell31 && *cell31==31,"step 32 is hit-testable");
+            check(page->togglePatternStep(*pattern,31) && (std::lround(findControlOperator(mod(),*pattern)->params[2])&(1<<15))!=0,"step 32 toggles its bit");
+        }
+        page->undo(); page->undo(); page->undo();
+    }
+    // ---- semantic zoom -------------------------------------------------------
+    {
+        auto* node=page->canvas().controlNode(nodes::operatorKey(*scale));
+        page->graphView().setView(1.0f,page->graphView().pan());
+        check(node && node->detail()==ui::ControlNodeComponent::Detail::Full,"100%: full node");
+        page->graphView().setView(0.5f,page->graphView().pan());
+        check(node->detail()==ui::ControlNodeComponent::Detail::Reduced,"50%: secondary detail hidden");
+        page->graphView().setView(0.3f,page->graphView().pan());
+        const auto ports=node->portAt(node->portCentre(nodes::PortDirection::Output,0));
+        check(node->detail()==ui::ControlNodeComponent::Detail::Minimal && ports.has_value(),"30% (fit floor): identity + ports; ports stay hit-testable");
+        page->graphView().setView(1.0f,page->graphView().pan());
+    }
+    // ---- undo / redo stress ---------------------------------------------------
+    {
+        std::vector<ModulationState> history{mod()};
+        std::uint32_t rng=0xBEEFu; const auto next=[&]{ rng^=rng<<13; rng^=rng>>17; rng^=rng<<5; return rng; };
+        int edits=0;
+        for(int step=0;step<60;++step) {
+            const auto ops=[&]{ std::vector<std::uint32_t> ids; for(const auto& o:mod().operators) if(o.id) ids.push_back(o.id); return ids; }();
+            const auto pick=ops.empty() ? 0u : ops[next()%ops.size()];
+            const int before=edits;
+            switch(next()%6) {
+            case 0: if(page->addControlOperator(next()%2 ? T::ScaleOffset : T::Probability)) ++edits; break;
+            case 1: if(pick && page->deleteControlOperator(pick)) ++edits; break;
+            case 2: if(pick && page->duplicateControlOperator(pick)) ++edits; break;
+            case 3: if(pick) { const auto* o=findControlOperator(mod(),pick); if(o && controlOpInfo(o->type)->parameterCount>0 && page->setOperatorParameter(pick,0,controlOpInfo(o->type)->parameters[0].minimum)) ++edits; } break;
+            case 4: if(pick && page->connectControlEdge(E::fromSource(ModSource::Lfo3),E::toInput(pick,0)).creatable()) ++edits; break;
+            case 5: if(pick && page->insertControlOperatorOnInput(pick,0,T::Smooth)) ++edits; break;
+            }
+            if(edits!=before) history.push_back(mod());
+        }
+        bool consistent=true;
+        for(int i=int(history.size())-1;i>0;--i) { page->undo(); consistent&=mod().operators==history[std::size_t(i-1)].operators; }
+        for(std::size_t i=1;i<history.size();++i) { page->redo(); consistent&=mod().operators==history[i].operators; }
+        render(2);
+        const auto engineState=p.getUiInstrumentState().modulation; // the processor publishes exactly what the engine compiled
+        check(consistent && edits>10,"60 random edits: every undo / redo returns the exact canonical graph");
+        check(validModulation(engineState,p.getUiInstrumentState().oscillators) && page->validateControlGraphReport().isEmpty(),"UI and engine state never diverge (valid, validator clean)");
+    }
+    // ---- cross-view stress: SYNTH / Matrix / NODES on one truth ---------------
+    {
+        const auto invariant=[&](const char* what) {
+            const auto m=mod();
+            bool ok=validModulation(m,p.getUiInstrumentState().oscillators);
+            for(const auto& r:m.routes) ok&=!routeDuplicates(m,r);
+            editor->refreshModulationViews();
+            page->syncFromModel();
+            int routes=0; for(const auto& r:m.routes) routes+=r.id!=0 && routeComplete(r);
+            int links=0; for(const auto& l:page->controlGraph().links) links+=l.isRoute();
+            ok&=matrix->routeCount()>=std::size_t(routes) && links<=routes;
+            check(ok,(std::string("cross-view: ")+what).c_str());
+        };
+        // SYNTH creates a direct route.
+        auto m=mod(); std::size_t free=0; while(free<m.routes.size() && m.routes[free].id) ++free;
+        m.routes[free]={m.nextRouteId++,true,ModSource::Lfo4,{ModDestination::Level,1,0},0.3f,false};
+        const auto direct=m.routes[free].id;
+        p.setUiModulationState(m); invariant("SYNTH creates a route");
+        const auto inserted=page->insertControlOperatorOnRoute(direct,T::ScaleOffset); invariant("NODES inserts a processor");
+        auto edited=mod(); for(auto& r:edited.routes) if(r.id==direct) r.amount=0.8f; p.setUiModulationState(edited); invariant("Matrix edits the amount");
+        const auto clock2=page->addControlOperator(T::Clock); page->connectControlEdge(E::fromOperator(*clock2),E::toInput(*rnd,1)); invariant("NODES adds event topology");
+        auto lfo=mod().lfo4; lfo.mode=LfoMode::Envelope; auto lm=mod(); lm.lfo4=lfo; p.setUiModulationState(lm); invariant("SYNTH changes the modulator mode");
+        if(inserted) page->deleteControlOperator(*inserted); invariant("NODES collapses the chain");
+        bool collapsed=false; for(const auto& r:mod().routes) collapsed|=r.id==direct && r.source==ModSource::Lfo4;
+        check(collapsed,"the collapsed chain is the original direct route again (same id)");
+        page->undo(); invariant("undo"); page->redo(); invariant("redo");
+        juce::MemoryBlock saved; p.getStateInformation(saved);
+        p.setStateInformation(saved.getData(),int(saved.getSize())); invariant("save / reload");
+    }
+    // ---- sequencer cross-view ------------------------------------------------
+    {
+        const auto seq=page->addControlOperator(T::Sequencer);
+        page->selectControlNode(nodes::operatorKey(*seq));
+        auto m=mod(); m.sequencer.steps[1]=-0.4f; p.setUiModulationState(m); editor->refreshModulationViews(); page->selectControlNode(nodes::operatorKey(*seq));
+        check(page->controlSequenceControl(1) && std::abs(page->controlSequenceControl(1)->getValue()+0.4)<1e-4,"a SYNTH sequence edit shows in the NODES inspector (no copy)");
+        const float priorStep=mod().sequencer.steps[5];
+        page->controlSequenceControl(5)->setValue(0.6,juce::sendNotificationSync);
+        check(std::abs(mod().sequencer.steps[5]-0.6f)<1e-4f && std::abs(mod().sequencer.steps[1]+0.4f)<1e-4f,"a NODES edit lands in the canonical sequence beside the SYNTH edit");
+        const auto extClock=page->addControlOperator(T::Clock);
+        page->connectControlEdge(E::fromOperator(*extClock),E::toInput(*seq,0));
+        check(findControlOperator(mod(),*seq)->params[0]==1.0f,"external clock selected");
+        page->undo(); page->undo(); page->undo();
+        check(mod().sequencer.steps[5]==priorStep && std::abs(mod().sequencer.steps[1]+0.4f)<1e-4f,"undo restores the NODES sequence edit and keeps the SYNTH one");
+        page->redo(); page->redo(); page->redo();
+        check(std::abs(mod().sequencer.steps[5]-0.6f)<1e-4f && findControlOperator(mod(),*seq)->params[0]==1.0f,"redo replays the edit and the clock ownership");
+        juce::MemoryBlock saved; p.getStateInformation(saved);
+        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256); copy->setStateInformation(saved.getData(),int(saved.getSize()));
+        check(copy->getUiInstrumentState().modulation.sequencer.steps==mod().sequencer.steps,"the sequence round-trips through save/load");
+    }
+    // ---- UI cost measurements (printed; dense 32-node graph) -------------------
+    {
+        auto dense=mct::origami::scenarios::maximal();
+        auto m=mod(); m.operators=dense.operators; m.nextOperatorId=dense.nextOperatorId; m.routes=dense.routes; m.nextRouteId=dense.nextRouteId;
+        check(p.setUiModulationState(m),"dense graph for UI measurements");
+        editor->refreshModulationViews(); page->syncFromModel(); page->autoLayoutControl();
+        using clock_t=std::chrono::steady_clock;
+        const auto us=[](clock_t::time_point a,clock_t::time_point b,int n){ return std::chrono::duration<double,std::micro>(b-a).count()/double(n); };
+        auto t0=clock_t::now(); for(int i=0;i<200;++i) page->syncFromModel(); auto t1=clock_t::now();
+        const double unchanged=us(t0,t1,200);
+        t0=clock_t::now(); for(int i=0;i<30;++i) { p.setUiMacro(2,float(i%2)); page->syncFromModel(); } t1=clock_t::now();
+        const double rebuild=us(t0,t1,30);
+        synthButton->onClick();
+        t0=clock_t::now(); for(int i=0;i<30;++i) { p.setUiMacro(2,float(i%2)); page->modelChanged(); } t1=clock_t::now();
+        const double hidden=us(t0,t1,30);
+        nodesButton->onClick();
+        auto& view=page->graphView();
+        const auto paint=[&](float zoom){ view.setView(zoom,view.pan()); auto a=clock_t::now(); for(int i=0;i<10;++i) { auto img=view.createComponentSnapshot(view.getLocalBounds(),true,1.0f); } return us(a,clock_t::now(),10); };
+        const double p100=paint(1.0f),p50=paint(0.5f),p40=paint(0.4f);
+        std::cout<<"[N07 ui] timer sync unchanged "<<unchanged<<" us | model change + rebuild "<<rebuild<<" us | hidden model change "<<hidden
+                 <<" us | graph paint 100% "<<p100<<" us, 50% "<<p50<<" us, 40% "<<p40<<" us\n";
+        check(unchanged*5.0<rebuild,"an unchanged timer sync costs a small fraction of a rebuild");
+        view.setView(1.0f,view.pan());
+    }
+}
+
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -3296,6 +3673,7 @@ void run() {
     nodesN04Audit();
     nodesN05Audit();
     nodesN06Audit();
+    nodesN07Audit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();
