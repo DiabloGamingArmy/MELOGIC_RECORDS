@@ -30,6 +30,7 @@
 // mct-origami-v34.2.1-performance-reinforcement
 // mct-origami-v34.3.0-lfo-interaction-mod-properties
 #include "ModulationPanel.h"
+#include <cstring>
 #include "SourceEntity.h"
 #include "ModulationUiTelemetry.h"
 #include "NativeChoiceMenu.h"
@@ -425,7 +426,9 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         [this](juce::Component& anchor){ showLfoToolsMenu(anchor); },
         [this](bool on){ snap_.setToggleState(on,juce::dontSendNotification); },
         [this]{ repaint(); },
-        [this]{ return bindings_.hostBpm ? bindings_.hostBpm() : 120.0; }});
+        [this]{ return bindings_.hostBpm ? bindings_.hostBpm() : 120.0; },
+        [this](float LfoSettings::* field,float v){ commitLfo([field,v](LfoSettings& l){ l.*field=v; }); repaint(); },
+        [this](bool on){ commitLfo([on](LfoSettings& l){ l.pingPong=on; }); repaint(); }});
     addAndMakeVisible(performanceTools_);
     addAndMakeVisible(performanceSnap_);
     addAndMakeVisible(performanceInputLabel_);
@@ -1517,6 +1520,31 @@ void ModulationPanel::resized() {
     updateVisibleControls();
 }
 
+void ModulationPanel::updateLfoProcessedOverlay() {
+    // UI-thread only: runs the canonical Lfo over two cycles (one to settle
+    // SMOOTH, one drawn) at 512 samples per cycle. Cached on the settings.
+    if(selected_<3 || selected_>6 || envCanvas_.isEmpty()) { lfoProcessed_.clear(); return; }
+    const auto index=static_cast<std::size_t>(selected_-3);
+    auto s=lfoSettings(cached_,index);
+    s.delaySeconds=0.0f; s.attackSeconds=0.0f;
+    if(s.mode==LfoMode::Envelope) s.mode=LfoMode::Loop; // one cycle == the one-shot's cycle
+    if(lfoFunctionsNeutral(s)) { lfoProcessed_.clear(); lfoProcessedKey_={}; return; }
+    // Draw the editor's live base curve (also mid-drag).
+    const auto& editor=lfoMseg_[index];
+    s.pointCount=static_cast<std::uint32_t>(std::min(editor.count,s.points.size()));
+    for(std::size_t i=0;i<s.pointCount;++i) s.points[i]={editor.points[i].x,editor.points[i].y,editor.points[i].curve};
+    if(!lfoProcessed_.empty() && lfoProcessedIndex_==index && lfoProcessedCanvas_==envCanvas_ &&
+       std::memcmp(&lfoProcessedKey_,&s,sizeof(LfoSettings))==0) return;
+    lfoProcessedKey_=s; lfoProcessedIndex_=index; lfoProcessedCanvas_=envCanvas_;
+    constexpr int perCycle=512;
+    Lfo lfo; lfo.reset(); lfo.setStreams(Lfo::globalStream(index),Lfo::fractureSeed(index));
+    const double sampleRate=double(juce::jlimit(.01f,40.0f,s.rateHz))*perCycle;
+    for(int i=0;i<perCycle;++i) lfo.next(s,sampleRate);
+    lfoProcessed_.clear();
+    for(int i=0;i<=perCycle;++i)
+        lfoProcessed_.push_back(msegPixel({float(i)/float(perCycle),lfo.next(s,sampleRate),0.0f}));
+}
+
 bool ModulationPanel::selectSource(ModSource source) {
     for(std::size_t i=0;i<tabs_.size();++i)
         if(sourceForTab(i)==source) {
@@ -1993,6 +2021,18 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
                 g.setColour(Palette::background());g.fillEllipse(h);
                 g.setColour(Palette::secondary());g.drawEllipse(h,1.1f);
             }
+        }
+
+        // Processed result (FUNC / PING-PONG) as a subtle secondary trace over
+        // the editable base curve. DELAY / ATTACK are lifecycle, not shape, so
+        // the static cycle leaves them out.
+        updateLfoProcessedOverlay();
+        if(lfoProcessed_.size()>1) {
+            juce::Path processed;
+            processed.startNewSubPath(lfoProcessed_.front());
+            for(std::size_t i=1;i<lfoProcessed_.size();++i) processed.lineTo(lfoProcessed_[i]);
+            g.setColour(juce::Colours::white.withAlpha(.08f)); g.strokePath(processed,juce::PathStrokeType(3.0f));
+            g.setColour(Palette::secondary().withAlpha(.48f)); g.strokePath(processed,juce::PathStrokeType(1.0f));
         }
 
         // LFO playback tracer: same visual language as ENV, rendered only for

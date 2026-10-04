@@ -76,6 +76,8 @@ public:
         std::function<void(bool)> snap;              // editor: shared editor snap
         std::function<void()> gridChanged;           // editor: repaint the grid
         std::function<double()> bpm;                 // BEATS display only
+        std::function<void(float LfoSettings::*,float)> func; // sound: one FUNC value
+        std::function<void(bool)> pingPong;          // sound: LfoSettings::pingPong
     };
 
     LfoControlStrip();
@@ -104,8 +106,14 @@ public:
 
     // FUNC bank: the nine processing knobs and whether each is implemented.
     static constexpr std::size_t funcCount=9;
-    struct FuncInfo { const char* name; const char* tooltip; bool implemented; };
+    // field == nullptr: no canonical parameter (the knob stays disabled).
+    struct FuncInfo {
+        const char* name; const char* tooltip; bool implemented;
+        float LfoSettings::* field; double minimum,maximum,neutral,centre;
+    };
     static const std::array<FuncInfo,funcCount>& funcInfo() noexcept;
+    // User-facing value text (%, ms / s, degrees, levels).
+    static juce::String funcValueText(std::size_t index,double value);
 
     // Inspection (tests, layout audits).
     IconButton& modeButton(LfoMode) noexcept;

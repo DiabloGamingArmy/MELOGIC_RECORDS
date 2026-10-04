@@ -4195,7 +4195,14 @@ void lfoEditorControlsAudit() {
     check(modulationSourceSlot(ModSource::Lfo2,mod())>=CompiledModulation::globalSourceCount,"RETRIGGER LFO 2 is a per-voice source");
     { auto m=mod(); m.lfo2.mode=LfoMode::Envelope; p.setUiModulationState(m); sync(); }
     check(strip.modeButton(LfoMode::Envelope).getToggleState() && !strip.modeButton(LfoMode::Loop).getToggleState(),"external mode edits (Matrix/preset) are reflected: no separate LFO copy");
-    check(!strip.pingPongButton().isEnabled() && !strip.reverseButton().isEnabled(),"PING-PONG and REVERSE are disabled: no canonical traversal/direction state exists");
+    check(strip.pingPongButton().isEnabled() && !strip.reverseButton().isEnabled(),"PING-PONG is live; REVERSE stays disabled (no direction state)");
+    {
+        const bool was=lfo2().pingPong;
+        strip.pingPongButton().onClick();
+        check(lfo2().pingPong!=was && strip.pingPongButton().getToggleState()==lfo2().pingPong,"PING-PONG toggles the canonical LfoSettings::pingPong");
+        strip.pingPongButton().onClick();
+        check(lfo2().pingPong==was,"PING-PONG toggles back");
+    }
     check(strip.forwardButton().getToggleState() && strip.forwardButton().isEnabled(),"FORWARD shows the (only) canonical traversal");
     {
         const auto dirBefore=bytes();
@@ -4215,7 +4222,7 @@ void lfoEditorControlsAudit() {
     // Rendered tint: the active mode icon contains red, the disabled ping-pong none.
     {
         auto& active=strip.modeButton(LfoMode::Envelope);
-        const auto a=redPixels(active), d=redPixels(strip.pingPongButton()), n=redPixels(strip.modeButton(LfoMode::Free));
+        const auto a=redPixels(active), d=redPixels(strip.reverseButton()), n=redPixels(strip.modeButton(LfoMode::Free));
         check(a.first>40,"active icon renders red");
         check(d.first==0 && n.first==0 && n.second>40,"normal icon renders grey (visible), disabled renders without red");
         check(d.second<n.second,"disabled icon is darker than normal");
@@ -4274,8 +4281,56 @@ void lfoEditorControlsAudit() {
     // ---- FUNC bank ---------------------------------------------------------
     for(std::size_t i=0;i<ui::LfoControlStrip::funcCount;++i) {
         const auto& info=ui::LfoControlStrip::funcInfo()[i];
-        check(strip.funcKnob(i).isEnabled()==info.implemented && !strip.funcKnob(i).getTooltip().isEmpty() && strip.funcLabel(i).getText()==info.name,
-              (std::string("FUNC ")+info.name+": disabled (no canonical LFO parameter), labelled, explained").c_str());
+        check(strip.funcKnob(i).isEnabled()==info.implemented && (info.field!=nullptr)==info.implemented && !strip.funcKnob(i).getTooltip().isEmpty() && strip.funcLabel(i).getText()==info.name,
+              (std::string("FUNC ")+info.name+": enabled exactly when it has a canonical field, labelled, explained").c_str());
+        if(info.field==nullptr) continue;
+        // Binding: the knob writes exactly its own canonical field.
+        const auto before=lfo2();
+        const double v=info.minimum+(info.maximum-info.minimum)*.37;
+        strip.funcKnob(i).setValue(v,juce::sendNotificationSync);
+        auto expect=before; expect.*(info.field)=static_cast<float>(v);
+        const auto after=lfo2();
+        check(after.*(info.field)==static_cast<float>(v) && std::memcmp(&after.points,&before.points,sizeof(before.points))==0 && after.rateHz==before.rateHz && after.mode==before.mode,
+              (std::string("FUNC ")+info.name+" writes its canonical LFO field only").c_str());
+        { auto m=mod(); m.lfo2.*(info.field)=static_cast<float>(info.neutral); p.setUiModulationState(m); sync(); }
+        check(strip.funcKnob(i).getValue()==info.neutral,(std::string("FUNC ")+info.name+" follows external edits").c_str());
+    }
+    check(!ui::LfoControlStrip::funcInfo()[4].implemented && juce::String(ui::LfoControlStrip::funcInfo()[4].tooltip).contains("one value per voice"),
+          "STEREO stays disabled and says why (scalar modulation)");
+    check(ui::LfoControlStrip::funcValueText(0,.35)=="35%" && ui::LfoControlStrip::funcValueText(1,.25)=="250 ms" && ui::LfoControlStrip::funcValueText(2,2.5)=="2.50 s" &&
+          ui::LfoControlStrip::funcValueText(1,0)=="OFF" && ui::LfoControlStrip::funcValueText(3,.25).startsWith("90") && ui::LfoControlStrip::funcValueText(5,-.4)=="-40%" &&
+          ui::LfoControlStrip::funcValueText(5,.4)=="+40%" && ui::LfoControlStrip::funcValueText(6,0)=="OFF" && ui::LfoControlStrip::funcValueText(6,1)=="2 LEVELS" &&
+          ui::LfoControlStrip::funcValueText(7,.5)=="50%","FUNC value text: %, ms / s, degrees, bipolar %, levels");
+    {   // Processed overlay: absent when neutral, present for FUNC, base points untouched.
+        auto m=mod(); for(const auto& f:ui::LfoControlStrip::funcInfo()) if(f.field) m.lfo2.*(f.field)=static_cast<float>(f.neutral);
+        m.lfo2.pingPong=false; p.setUiModulationState(m); sync();
+        check(synth->lfoProcessedOverlay().empty(),"no processed overlay while every FUNC value is neutral");
+        m.lfo2.skew=.6f; m.lfo2.quantize=.7f; p.setUiModulationState(m); sync();
+        const auto& overlay=synth->lfoProcessedOverlay();
+        check(overlay.size()==513 && lfo2().points[1].x==m.lfo2.points[1].x,"SKEW + QUANTIZE draw a processed overlay; the editable points do not move");
+        m.lfo2.skew=0; m.lfo2.quantize=0; m.lfo2.delaySeconds=1.0f; m.lfo2.attackSeconds=1.0f; p.setUiModulationState(m); sync();
+        check(synth->lfoProcessedOverlay().empty(),"DELAY / ATTACK alone draw no static-cycle overlay");
+        m.lfo2.delaySeconds=0; m.lfo2.attackSeconds=0; p.setUiModulationState(m); sync();
+    }
+    {   // Realtime: FUNC-active LFOs on every voice allocate nothing in the callback.
+        const auto restore=mod();
+        auto m=mod();
+        for(std::size_t i=0;i<4;++i) { auto& l=lfoSettings(m,i); l.mode=i==0 ? LfoMode::Free : LfoMode::Loop; l.pingPong=true; l.smooth=.3f; l.attackSeconds=.2f; l.delaySeconds=.01f;
+            l.phase=.2f; l.skew=.3f; l.quantize=.4f; l.entropy=.5f; l.fracture=.5f; }
+        { std::size_t slot=0; for(std::size_t i=0;i<4;++i) { while(m.routes[slot].id!=0) ++slot;
+            const ModRoute r{m.nextRouteId,true,static_cast<ModSource>(101+i),{ModDestination::Fine,1,0},.05f,false};
+            if(!routeDuplicates(m,r)) { m.routes[slot]=r; ++m.nextRouteId; } } }
+        check(p.setUiModulationState(m),"all four LFOs with FUNC routed");
+        juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi; midi.ensureSize(4096);
+        for(int n=0;n<8;++n) midi.addEvent(juce::MidiMessage::noteOn(1,48+n,.7f),n);
+        p.processBlock(audio,midi); midi.clear();
+        pluginAllocations.store(0); pluginGuardAllocations.store(true);
+        for(int b=0;b<64;++b) { audio.clear(); p.processBlock(audio,midi); }
+        pluginGuardAllocations.store(false);
+        check(pluginAllocations.load()==0,"FUNC LFO processing allocates nothing on the audio thread (8 voices, 64 blocks)");
+        juce::MidiBuffer off; for(int n=0;n<8;++n) off.addEvent(juce::MidiMessage::noteOff(1,48+n),0);
+        audio.clear(); p.processBlock(audio,off);
+        check(p.setUiModulationState(restore),"restore the pre-allocation-check state"); sync();
     }
     const std::array<const char*,9> funcOrder{"SMOOTH","ATTACK","DELAY","PHASE","STEREO","SKEW","QUANTIZE","ENTROPY","FRACTURE"};
     bool order=true; for(std::size_t i=0;i<9;++i) order&=std::string(ui::LfoControlStrip::funcInfo()[i].name)==funcOrder[i];
@@ -4428,6 +4483,11 @@ void lfoEditorControlsAudit() {
             const auto img=strip.createComponentSnapshot(strip.getLocalBounds(),true,scale);
             juce::File f(juce::String(dir)+"/"+name+".png"); f.deleteFile(); juce::FileOutputStream out(f); juce::PNGImageFormat{}.writeImageToStream(img,out);
         };
+        {   auto m=mod(); m.lfo2.skew=.55f; m.lfo2.quantize=.62f; m.lfo2.smooth=.18f; m.lfo2.pingPong=true; m.lfo2.entropy=.25f; m.lfo2.phase=.1f;
+            p.setUiModulationState(m); sync(); synth->repaint();
+            shot("N_processed_overlay",2.0f); strip.setPage(ui::LfoControlStrip::Page::Func); stripShot("O_func_live_3x",3.0f); shot("P_func_live_page",1.0f); strip.setPage(ui::LfoControlStrip::Page::Tools);
+            m.lfo2.skew=0; m.lfo2.quantize=0; m.lfo2.smooth=0; m.lfo2.entropy=0; m.lfo2.phase=0; m.lfo2.fracture=.7f; m.lfo2.pingPong=false; p.setUiModulationState(m); sync(); shot("Q_fracture_overlay",2.0f);
+            m.lfo2.fracture=0; p.setUiModulationState(m); sync(); }
         stripShot("S_strip_tools_3x",3.0f); strip.setPage(ui::LfoControlStrip::Page::Func); stripShot("S_strip_func_3x",3.0f); strip.setPage(ui::LfoControlStrip::Page::Tools);
     }
 }
