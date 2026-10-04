@@ -476,7 +476,7 @@ public:
     // Deterministic ENTROPY stream (global: per LFO index; voice: per voice
     // lifecycle, the same seed family NODES uses for per-voice randomness).
     // FRACTURE structure: per LFO index, identical for every voice.
-    void setStreams(std::uint32_t entropy,std::uint32_t structure) noexcept { stream_=entropy; structure_=structure; }
+    void setStreams(std::uint32_t entropy,std::uint32_t structure) noexcept;
     std::uint32_t stream() const noexcept { return stream_; }
     float next(const LfoSettings&,double sampleRate) noexcept;
     static float shape(LfoShape,double phase) noexcept;
@@ -508,9 +508,16 @@ private:
     float smoothed_=0;
     float smoothAlpha_=1,smoothKey_=-1,smoothRate_=-1,smoothSampleRate_=-1;
     std::uint32_t stream_=0,structure_=0;
+    // Hot-path caches (pure functions of the inputs; never change output).
+    struct NoiseKnots { std::int64_t index=INT64_MIN; float a=0,b=0; };
+    std::array<NoiseKnots,3> knots_{};       // ENTROPY layers: timing, drift, depth
+    float anchorFast_=0,anchorSlow_=0;       // layer values at cycle 0
+    float quantizeKey_=-1; int quantizeLevels_=0;
+    const struct FractureTable* fractureTable_=nullptr; // shared, built at static init
+    float noise(std::size_t layer,double x,std::uint32_t seed) noexcept;
     bool smoothReady_=false;
 };
-static_assert(sizeof(Lfo)<=64,"Lfo runtime grew: 4 per voice x every voice");
+static_assert(sizeof(Lfo)<=160,"Lfo runtime grew: 4 per voice x every voice");
 
 class RandomGenerator {
 public:

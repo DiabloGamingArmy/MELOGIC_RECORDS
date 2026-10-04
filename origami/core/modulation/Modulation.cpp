@@ -386,23 +386,34 @@ double Lfo::skewPhase(double c,float skew) noexcept {
     return c/(c+k*(1.0-c));
 }
 
-double Lfo::fracturePhase(double r,float amount,std::uint32_t seed) noexcept {
-    // Hierarchical segment fracture (2, 4, 8, 16 segments). Every segment of
-    // every level has a fixed seeded threshold; once FRACTURE passes it the
-    // segment is rewritten by one fixed operation (repeat the previous
-    // segment, mirror, or fold to double speed). Coarse levels break first,
-    // finer levels join as the amount rises: progressively more structure,
-    // identical every cycle, read position always inside [0, 1).
+// FRACTURE segment table: 2+4+8+16 = 30 segments; segment k of level L is
+// entry (2^L - 2) + k. Thresholds / operations depend only on the seed.
+struct FractureTable { std::array<float,30> threshold{}; std::array<std::uint8_t,30> op{}; std::uint32_t seed=0; };
+namespace {
+FractureTable buildFractureTable(std::uint32_t seed) noexcept {
+    FractureTable t; t.seed=seed;
+    for(std::uint32_t level=1;level<=4;++level)
+        for(std::uint32_t k=0;k<(1u<<level);++k) {
+            const std::uint32_t h=mix32(seed^mix32(level*0x9e3779b9u^(k+1)*0x85ebca6bu));
+            const auto e=((1u<<level)-2u)+k;
+            t.threshold[e]=0.12f*static_cast<float>(level-1)+0.6f*static_cast<float>(h>>8)/16777216.0f;
+            t.op[e]=static_cast<std::uint8_t>((h>>3)%3u);
+        }
+    return t;
+}
+// Built during static initialisation (never on the audio thread).
+const std::array<FractureTable,4> fractureTables{{buildFractureTable(Lfo::fractureSeed(0)),buildFractureTable(Lfo::fractureSeed(1)),
+                                                  buildFractureTable(Lfo::fractureSeed(2)),buildFractureTable(Lfo::fractureSeed(3))}};
+double fractureWith(double r,float amount,const FractureTable& t) noexcept {
     if(amount<=0.0f || !std::isfinite(r) || r>=1.0) return r;
     r=std::max(0.0,r);
     for(std::uint32_t level=1;level<=4;++level) {
         const std::uint32_t n=1u<<level;
         auto k=std::min<std::uint32_t>(static_cast<std::uint32_t>(r*n),n-1);
+        const auto e=(n-2u)+k;
+        if(amount<=t.threshold[e]) continue;
         double u=r*n-k;
-        const std::uint32_t h=mix32(seed^mix32(level*0x9e3779b9u^(k+1)*0x85ebca6bu));
-        const float threshold=0.12f*static_cast<float>(level-1)+0.6f*static_cast<float>(h>>8)/16777216.0f;
-        if(amount<=threshold) continue;
-        switch((h>>3)%3u) {
+        switch(t.op[e]) {
             case 0: k=(k+n-1)%n; break;               // repeat the previous fragment
             case 1: u=1.0-u; break;                   // mirror the fragment
             default: u=2.0*u; u-=std::floor(u); break; // fold: the fragment twice
@@ -410,6 +421,37 @@ double Lfo::fracturePhase(double r,float amount,std::uint32_t seed) noexcept {
         r=std::min((static_cast<double>(k)+u)/n,0.9999999999);
     }
     return r;
+}
+}
+
+double Lfo::fracturePhase(double r,float amount,std::uint32_t seed) noexcept {
+    // Hierarchical segment fracture (2, 4, 8, 16 segments). Every segment of
+    // every level has a fixed seeded threshold; once FRACTURE passes it the
+    // segment is rewritten by one fixed operation (repeat the previous
+    // segment, mirror, or fold to double speed). Coarse levels break first,
+    // finer levels join as the amount rises: progressively more structure,
+    // identical every cycle, read position always inside [0, 1).
+    if(amount<=0.0f) return r;
+    for(const auto& t:fractureTables) if(t.seed==seed) return fractureWith(r,amount,t);
+    return fractureWith(r,amount,buildFractureTable(seed));
+}
+
+void Lfo::setStreams(std::uint32_t entropy,std::uint32_t structure) noexcept {
+    stream_=entropy; structure_=structure;
+    knots_={};
+    anchorFast_=knot(entropy,0); anchorSlow_=knot(mix32(entropy^0x5bd1e995u),0);
+    fractureTable_=nullptr;
+    for(const auto& t:fractureTables) if(t.seed==structure) fractureTable_=&t;
+}
+
+float Lfo::noise(std::size_t layer,double x,std::uint32_t seed) noexcept {
+    // valueNoise() with the two knots cached until x crosses an integer.
+    const double i=std::floor(x);
+    const auto k=static_cast<std::int64_t>(i);
+    auto& c=knots_[layer];
+    if(c.index!=k) { c.index=k; c.a=knot(seed,k); c.b=knot(seed,k+1); }
+    double f=x-i; f=f*f*(3.0-2.0*f);
+    return c.a+(c.b-c.a)*static_cast<float>(f);
 }
 
 double Lfo::entropyOffset(double cycles,float amount,std::uint32_t seed) noexcept {
@@ -485,19 +527,32 @@ float Lfo::processedNext(const LfoSettings& s,double sampleRate) noexcept {
 
     const double progress=envelope ? std::min(1.0,cycles_) : cycles_;
     double c=progress+double(s.phase);
-    if(s.entropy>0.0f) c+=entropyOffset(progress,s.entropy,stream_);
+    if(s.entropy>0.0f) {
+        // = entropyOffset(progress, ...), with cached knots.
+        const double a=double(s.entropy)*std::sqrt(double(s.entropy));
+        const double fast=noise(0,progress,stream_)-anchorFast_;
+        const double drift=noise(1,progress*0.25,mix32(stream_^0x5bd1e995u))-anchorSlow_;
+        c+=a*(0.16*fast+0.10*drift);
+    }
     double pos=c-std::floor(c);
     // A finished one-shot reads the END of the cycle that began at PHASE
     // (never wraps back into a loop).
     if(envelope && cycles_>=1.0 && pos<1.0e-12) pos=1.0;
     if(s.skew!=0.0f) pos=skewPhase(pos,s.skew);
     if(s.pingPong) pos=pingPongPhase(pos);
-    if(s.fracture>0.0f) pos=fracturePhase(pos,s.fracture,structure_);
+    if(s.fracture>0.0f) pos=fractureTable_ ? fractureWith(pos,s.fracture,*fractureTable_) : fracturePhase(pos,s.fracture,structure_);
     read_=pos;
 
     float y=pos>=1.0 ? lfoEndValue(s) : mseg(s,pos);
-    if(s.entropy>0.0f) y*=entropyDepth(progress,s.entropy,stream_);
-    if(s.quantize>0.0f) y=quantizeValue(y,s.quantize);
+    if(s.entropy>0.0f) {
+        const float a=s.entropy*std::sqrt(s.entropy);
+        y*=1.0f-0.35f*a*(0.5f+0.5f*noise(2,progress*0.5,mix32(stream_^0x27d4eb2fu)));
+    }
+    if(s.quantize>0.0f) {
+        if(s.quantize!=quantizeKey_) { quantizeKey_=s.quantize; quantizeLevels_=quantizeLevels(s.quantize); }
+        const float steps=static_cast<float>(quantizeLevels_-1);
+        y=-1.0f+2.0f*std::round((std::clamp(y,-1.0f,1.0f)+1.0f)*0.5f*steps)/steps;
+    }
     if(s.smooth>0.0f && valid) {
         const float rate=std::isfinite(s.rateHz) ? std::clamp(s.rateHz,.01f,40.0f) : 1.0f;
         if(s.smooth!=smoothKey_ || rate!=smoothRate_ || static_cast<float>(sampleRate)!=smoothSampleRate_) {

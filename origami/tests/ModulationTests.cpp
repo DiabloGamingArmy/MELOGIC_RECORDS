@@ -581,7 +581,7 @@ void lfoFunctionBenchmark() {
     volatile float sink=0;
     for(const auto& c:cases) {
         auto s=custom; s.rateHz=3.0f; c.edit(s);
-        Lfo l; l.reset(); l.setStreams(1,2);
+        Lfo l; l.reset(); l.setStreams(Lfo::globalStream(0),Lfo::fractureSeed(0));
         const auto t0=clock_t::now(); float acc=0; for(int i=0;i<2000000;++i) acc+=l.next(s,48000.0); sink=sink+acc;
         std::cout<<"[lfo bench]   "<<c.name<<" "<<std::chrono::duration<double,std::nano>(clock_t::now()-t0).count()/2e6<<"\n";
     }
