@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 namespace mct::origami {
 
 // mct-origami-nodes-n01: None (0) is an unselected Matrix source/destination.
@@ -35,6 +36,20 @@ enum class ModSource : std::uint32_t {
     Random=401, Function=501,
     Chaos=601, Drift=602, Sequencer=603
 };
+// mct-origami-synth-dynamic-macros: dynamic macros with STABLE ids 1..maxMacros.
+// A macro's source is ModSource(200 + id): ids 1..4 are exactly the original
+// Macro1..Macro4 (every existing route and preset keeps its meaning), ids
+// 5..16 continue the same range (205..216; 301 is the next used value).
+// The id is the identity and the storage index: removing a macro never
+// renumbers another one, so no route can ever move to a different macro.
+inline constexpr std::size_t maxMacros=16;
+inline constexpr std::uint16_t defaultMacroMask=0x000Fu; // Init: MACRO 1..4
+constexpr ModSource macroSource(std::size_t id) noexcept { return static_cast<ModSource>(200u+static_cast<std::uint32_t>(id)); }
+constexpr std::size_t macroIdOf(ModSource s) noexcept {
+    const auto v=static_cast<std::uint32_t>(s);
+    return v>200u && v<=200u+maxMacros ? std::size_t(v-200u) : 0u;
+}
+constexpr bool isMacroSource(ModSource s) noexcept { return macroIdOf(s)!=0; }
 enum class ModDestination : std::uint32_t {
     None=0,
     Cutoff=1, Resonance=2, MasterGain=3, MainTuning=4, Transpose=5,
@@ -331,7 +346,9 @@ struct ModulationState {
     SequencerSettings sequencer{};
     PerformanceSourceCurve velocityCurve{},noteCurve{};
     std::uint32_t performanceSourceActiveMask=0u; // bit0 Velocity, bit1 Note
-    std::array<float,4> macros{};
+    // Values by macro id - 1 (stable identity; holes when removed).
+    std::array<float,maxMacros> macros{};
+    std::uint16_t macroMask=defaultMacroMask; // bit id-1: macro exists
     std::array<ModRoute,capacity> routes{};
     std::uint32_t nextRouteId=1;
     // N04 CONTROL operators (holes allowed: a slot keeps its index while used).
@@ -403,7 +420,8 @@ bool sourceIsVoice(ModSource,const ModulationState&) noexcept;
 // the newest voice's per-voice sources, then (N04) every operator output by
 // storage slot (global value, or the newest voice's for per-voice operators).
 inline constexpr std::size_t operatorOutputSlotCount=ModulationState::maxControlOperators*maxControlOutputs;
-inline constexpr std::size_t modulationSourceSlotCount=26+operatorOutputSlotCount;
+// Global (25: 13 original + macros 5..16) + voice (13) source slots, then operator outputs.
+inline constexpr std::size_t modulationSourceSlotCount=25+13+operatorOutputSlotCount;
 inline constexpr std::size_t operatorOutputIndex(std::size_t slot,std::size_t port) noexcept { return slot*maxControlOutputs+port; }
 using ModulationSourceSlots=std::array<float,modulationSourceSlotCount>;
 // Normalized control contribution of ONE route: source -> polarity -> amount,
@@ -417,6 +435,14 @@ LfoSettings& lfoSettings(ModulationState&,std::size_t index) noexcept;
 bool isGlobalDestination(ModDestination) noexcept;
 bool validModulation(const ModulationState&,const std::array<OscillatorModuleState,16>&) noexcept;
 bool knownModSource(ModSource) noexcept; // a canonical (non-operator) source
+// A macro source whose macro exists (Init: MACRO 1..4).
+inline bool macroActive(const ModulationState& m,std::size_t id) noexcept { return id>=1 && id<=maxMacros && ((m.macroMask>>(id-1))&1u)!=0; }
+// The existing macros' sources, in stable-id order (every view lists these).
+inline std::vector<ModSource> activeMacroSources(const ModulationState& m) {
+    std::vector<ModSource> out;
+    for(std::size_t id=1;id<=maxMacros;++id) if(macroActive(m,id)) out.push_back(macroSource(id));
+    return out;
+}
 float modulationToNormalized(ModDestination,float) noexcept;
 float modulationFromNormalized(ModDestination,float) noexcept;
 
@@ -538,7 +564,7 @@ struct ModulationFrame {
     // global frame; per-voice operators overwrite theirs inside each voice).
     // N06: one value per (operator slot, output port): index slot*4 + port.
     std::array<float,ModulationState::maxControlOperators*maxControlOutputs> operatorOutputs{};
-    std::array<float,13> globalSources{}; // copied for per-voice operators (only when operators exist)
+    std::array<float,25> globalSources{}; // copied for per-voice operators (only when operators exist)
     float cutoff=8000,resonance=.1f,master=.2f,mainTuning=0.0f,transpose=0.0f;
     float portaTime=0.0f,envelopeScaling=1.0f,lfoScaling=1.0f,swing=0.0f;
     dsp::LowPassCoefficients filter{};
@@ -565,11 +591,14 @@ struct ModulationFrame {
 
 // Fields copied by ModulationFrame::copyForVoice: the size is pinned so any
 // field change trips here and forces copyForVoice to be updated with it.
-static_assert(sizeof(ModulationFrame)==8880,"ModulationFrame changed: update copyForVoice");
+static_assert(sizeof(ModulationFrame)==8928,"ModulationFrame changed: update copyForVoice");
 
 class CompiledModulation {
 public:
-    static constexpr std::size_t globalSourceCount=13;
+    // Global slots: 0..12 as always (macros 1..4 at 4..7), 13..24 macros 5..16.
+    // Voice slots follow (globalSourceCount + 0..12), then operator outputs.
+    static constexpr std::size_t globalSourceCount=13+(maxMacros-4);
+    static constexpr std::size_t macroSlot(std::size_t id) noexcept { return id<=4 ? 3+id : 13+(id-5); } // id 1..16
     static constexpr std::size_t voiceSourceCount=13;
     static constexpr std::size_t sourceSlotCount=globalSourceCount+voiceSourceCount;
     static constexpr std::size_t operatorSlotCount=ModulationState::maxControlOperators;
@@ -661,7 +690,7 @@ private:
     struct CompiledOp {
         ControlOperator op{};
         std::uint8_t slot=0;                 // storage slot = output slot
-        std::array<std::int16_t,3> input{{-1,-1,-1}}; // <26: source slot, >=26: 26+operator output index, -1: none
+        std::array<std::int16_t,3> input{{-1,-1,-1}}; // <sourceSlotCount: source slot, else sourceSlotCount+operator output index, -1: none
         std::array<ControlRange,3> range{{ControlRange::Unipolar,ControlRange::Unipolar,ControlRange::Unipolar}};
         bool voice=false;
         bool event=false;                    // an output is an EVENT (counted for monitoring)

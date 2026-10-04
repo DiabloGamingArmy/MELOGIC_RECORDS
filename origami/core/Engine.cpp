@@ -477,14 +477,16 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             const auto& l=lfoSettings(audioModulation_,i);
             sources[i]=l.mode==LfoMode::Free ? globalLfos_[i].next(l,sampleRate_)*currentLfoScaling_ : 0.0f;
         }
+        // Macros by stable id (1..16); only routed ones smooth / publish.
         for(std::size_t i=0;i<smoothedMacros_.size();++i) {
-            if(!compiledModulation_.usesGlobalSource(4+i)) {
+            const auto slot=CompiledModulation::macroSlot(i+1);
+            if(!compiledModulation_.usesGlobalSource(slot)) {
                 smoothedMacros_[i]=audioModulation_.macros[i];
                 continue;
             }
             smoothedMacros_[i]+=modulationSmoothing_*
                 (audioModulation_.macros[i]-smoothedMacros_[i]);
-            sources[4+i]=smoothedMacros_[i];
+            sources[slot]=smoothedMacros_[i];
         }
         if(compiledModulation_.usesGlobalSource(8) && (audioModulation_.generatorActiveMask&0x02u))
             sources[8]=globalRandom_.next(audioModulation_.random,sampleRate_);

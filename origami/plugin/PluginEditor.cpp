@@ -487,14 +487,15 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
 
     auto sourceName=[](mct::origami::ModSource s)->juce::String {
         using S=mct::origami::ModSource;
+        if(const auto id=mct::origami::macroIdOf(s)) return "MACRO "+juce::String(int(id));
         switch(s) {
             case S::Env1:return "ENV 1"; case S::Env2:return "ENV 2"; case S::Env3:return "ENV 3";
             case S::Lfo1:return "LFO 1"; case S::Lfo2:return "LFO 2"; case S::Lfo3:return "LFO 3"; case S::Lfo4:return "LFO 4";
-            case S::Macro1:return "MACRO 1"; case S::Macro2:return "MACRO 2"; case S::Macro3:return "MACRO 3"; case S::Macro4:return "MACRO 4";
             case S::Random:return "RANDOM"; case S::Function:return "FUNCTION";
             case S::Chaos:return "CHAOS"; case S::Drift:return "DRIFT"; case S::Sequencer:return "SEQUENCER";
             case S::ModWheel:return "MOD WHEEL"; case S::Velocity:return "VELOCITY"; case S::Keytrack:return "KEYTRACK";
             case S::Aftertouch:return "AFTERTOUCH"; case S::PitchBend:return "PITCH BEND"; case S::NoteGate:return "NOTE GATE";
+            default:break;
         }
         return "MODULATOR";
     };
@@ -511,13 +512,14 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
     using S=mct::origami::ModSource;
     std::vector<S> sources{S::Env1,S::Env2,S::Env3};
     for(const auto s:{S::Lfo1,S::Lfo2,S::Lfo3,S::Lfo4}) sources.push_back(s);
-    for(const auto s:{S::Macro1,S::Macro2,S::Macro3,S::Macro4}) sources.push_back(s);
+    for(const auto s:mct::origami::activeMacroSources(state.modulation)) sources.push_back(s); // stable macro ids
     for(const auto s:{S::Random,S::Function,S::Chaos,S::Drift,S::Sequencer}) sources.push_back(s);
     for(const auto s:{S::Velocity,S::ModWheel,S::Keytrack,S::Aftertouch,S::PitchBend,S::NoteGate}) sources.push_back(s);
     const auto available=[&state](S s) {
         const auto raw=static_cast<std::uint32_t>(s);
         if(raw>=1 && raw<=3) return (state.modulation.envActiveMask&(1u<<(raw-1)))!=0;
         if(raw>=101 && raw<=104) return (state.modulation.lfoActiveMask&(1u<<(raw-101)))!=0;
+        if(const auto id=mct::origami::macroIdOf(s)) return mct::origami::macroActive(state.modulation,id);
         if(s==S::Random) return (state.modulation.generatorActiveMask&0x02u)!=0;
         if(s==S::Function) return (state.modulation.generatorActiveMask&0x01u)!=0;
         if(s==S::Chaos) return (state.modulation.generatorActiveMask&0x04u)!=0;

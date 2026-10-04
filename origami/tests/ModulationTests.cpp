@@ -199,7 +199,7 @@ void stateV3RoundTrip() {
     check(decoded.modulation.lfo2.shape==LfoShape::Square && decoded.modulation.lfo2.mode==LfoMode::Loop && near(decoded.modulation.lfo2.rateHz,7.0f),"LFO2 persisted");
     check(near(decoded.modulation.env2.attack,.02f) && near(decoded.modulation.env3.release,.7f),"ENV2/3 persisted");
     check(near(decoded.modulation.random.rateHz,5.0f) && near(decoded.modulation.function.curve,.4f),"random/function persisted");
-    check(decoded.modulation.macros==std::array<float,4>{.1f,.2f,.3f,.4f},"macro values persisted");
+    check(decoded.modulation.macros==std::array<float,maxMacros>{.1f,.2f,.3f,.4f},"macro values persisted");
     check(decoded.modulation.routes[0].destination.oscillator==osc2,"stable oscillator destination persisted");
     check(decoded.modulation.routes[1].destination.parameter==ModDestination::Cutoff,"global destination persisted");
 

@@ -134,6 +134,8 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
 
     if(button.getName().startsWith("MOD SOURCE TAB")) {
         auto title=button.getLocalBounds().removeFromTop(17).reduced(4,1);
+        // Narrow macro assignment rows: keep the title clear of the drag grip.
+        if(button.getName().startsWith("MOD SOURCE TAB MACRO")) title=title.withTrimmedLeft(12);
         text(g,button.getButtonText(),title,10.4f,
              button.isEnabled()?Palette::text():Palette::muted(),
              juce::Justification::centred);

@@ -2065,7 +2065,7 @@ void sequencingTests() {
         m.routes[0]={1,true,operatorSource(4),{ModDestination::Cutoff,0,0},0.5f,true}; m.nextRouteId=2;
         check(validModulation(m,modules),"graph B is valid");
         SeqHarness h(m);
-        int captures=0; bool exact=true; std::array<float,13> sources{};
+        int captures=0; bool exact=true; std::array<float,CompiledModulation::globalSourceCount> sources{};
         for(int n=0;n<960*8;++n) {
             sources[0]=std::sin(float(n)*0.01f);
             h.sample(sources);
@@ -2354,7 +2354,7 @@ struct Plan {
     std::unique_ptr<ModulationFrame> frame=std::make_unique<ModulationFrame>();
     std::array<OscillatorModuleState,16> modules{};
     explicit Plan(const ModulationState& m) { modules[0].id=1; compiled->prepare(48000.0); compiled->compile(m,modules,true); }
-    void sample(const std::array<float,13>& sources) {
+    void sample(const std::array<float,CompiledModulation::globalSourceCount>& sources) {
         frame->events.sampleRate=48000.0; frame->events.beatsPerSample=120.0/60.0/48000.0;
         compiled->evaluateGlobalOperators(*frame,sources);
     }
@@ -2406,7 +2406,7 @@ void consolidationTests() {
                 Stepper reference(type,op.params,true);
                 const auto ia=std::size_t(bipolar ? 0 : 4),ib=std::size_t(bipolar ? 1 : 5);
                 for(int n=0;n<500;++n) {
-                    std::array<float,13> sources{};
+                    std::array<float,CompiledModulation::globalSourceCount> sources{};
                     sources[ia]=bipolar ? unit(rng)*2.0f-1.0f : unit(rng); sources[ib]=bipolar ? unit(rng)*2.0f-1.0f : unit(rng);
                     if(n==17) sources[ia]=std::numeric_limits<float>::quiet_NaN();
                     plan.sample(sources);
@@ -2446,7 +2446,7 @@ void consolidationTests() {
         updated.compiled->compile(scale,updated.modules);
         bool equal=true; std::uint32_t r=99;
         for(int n=0;n<2000;++n) {
-            std::array<float,13> s{}; s[0]=unit(r)*2-1; s[1]=unit(r)*2-1; s[2]=unit(r)*2-1; s[4]=unit(r);
+            std::array<float,CompiledModulation::globalSourceCount> s{}; s[0]=unit(r)*2-1; s[1]=unit(r)*2-1; s[2]=unit(r)*2-1; s[4]=unit(r);
             updated.sample(s); fresh.sample(s);
             for(std::size_t slot=0;slot<24;++slot) equal&=updated.out(slot)==fresh.out(slot);
         }
@@ -2472,7 +2472,7 @@ void consolidationTests() {
         auto compiled=std::make_unique<CompiledModulation>(); compiled->prepare(48000.0);
         std::array<OscillatorModuleState,16> mods{}; mods[0].id=1; compiled->compile(m,mods,true);
         const auto stream=[&](std::uint32_t seed) {
-            CompiledModulation::OperatorState state{}; ModulationFrame f; std::array<float,13> v{};
+            CompiledModulation::OperatorState state{}; ModulationFrame f; std::array<float,CompiledModulation::voiceSourceCount> v{};
             std::vector<float> values;
             for(int n=0;n<8;++n) { f.events.voiceSeed=seed; f.events.noteOn=true; compiled->evaluateVoiceOperators(f,v,state); values.push_back(f.operatorOutputs[operatorOutputIndex(1,0)]); }
             return values;

@@ -70,7 +70,7 @@ private:
     ModulationState modulation_{};
     std::vector<unsigned> moduleIds_;
     std::vector<std::pair<ModAddress,std::uint32_t>> dynamicDestinations_;
-    std::uint32_t envMask_=0,lfoMask_=0,generatorMask_=0;
+    std::uint32_t envMask_=0,lfoMask_=0,generatorMask_=0,macroMask_=0;
     bool filterEnabled_=true;
 };
 }

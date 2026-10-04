@@ -249,16 +249,67 @@ private:
     std::array<float,3> dragCurves_{};
 };
 
+// mct-origami-synth-dynamic-macros: the SYNTH macro editor. Two columns of
+// macro cards (name / remove, knob, assignment area) in a vertically
+// scrolling list with its own scrollbar gutter, plus + ADD MACRO.
+//
+// Every card is a view of one canonical macro (stable id, ModSource 200+id);
+// the assignment area is the SYNTH modulator row (drag grip + route rings),
+// so assignments are ordinary ModRoutes shared with the Matrix and NODES.
 class MacroPanel final : public Panel {
 public:
     explicit MacroPanel(ModulationBindings={});
+    ~MacroPanel() override;
     void resized() override;
     void syncFromModel();
+    bool keyPressed(const juce::KeyPress&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+
+    // Canonical edits (each one undo step). Removal deletes exactly the routes
+    // sourced from that macro, in the same transaction.
+    std::size_t addMacro();                  // new stable id, 0 when the limit is reached
+    bool removeMacro(std::size_t id);        // immediate (the card asks first when routed)
+    void requestRemoveMacro(std::size_t id); // routed: in-card confirmation; else immediate
+    bool undo();
+    bool redo();
+    bool canUndo() const noexcept { return !undo_.empty(); }
+    bool canRedo() const noexcept { return !redo_.empty(); }
+
+    // Layout / inspection (tests, snapshots).
+    static constexpr int columns=2,cardHeight=134,gap=4;
+    std::size_t cardCount() const noexcept { return cards_.size(); }
+    juce::Component* card(std::size_t index) const noexcept;
+    std::size_t cardId(std::size_t index) const noexcept;
+    juce::Viewport& viewport() noexcept { return viewport_; }
+    juce::TextButton& addButton() noexcept { return add_; }
+    juce::Slider* knob(std::size_t id) const noexcept;
+    const ModulationSourceRow* assignment(std::size_t id) const noexcept;
+    std::uint32_t rebuildCount() const noexcept { return rebuilds_; }
+    class Card;
 private:
+    struct Step { bool added=false; std::size_t id=0; float value=0.0f; std::vector<ModRoute> routes;
+                  std::vector<std::pair<std::uint32_t,std::uint8_t>> inputs; }; // NODES inputs it fed
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override {}
+    bool applyRemove(std::size_t id,Step&);
+    bool applyAdd(const Step&);
+    void rebuild(const ModulationState&);
+    void layoutCards();
+    void setRouteAmount(std::uint32_t,float);
+    void removeRoute(std::uint32_t);
     ModulationBindings bindings_;
-    std::array<juce::Slider,4> sliders_;
-    std::array<juce::Label,4> labels_;
+    juce::Viewport viewport_;
+    juce::Component content_;
+    juce::TextButton add_{"+ ADD MACRO"};
+    std::vector<std::unique_ptr<Card>> cards_;
+    // A card removed while one of its own buttons is running stays alive (off
+    // screen) until that callback returns; never deleted mid-callback.
+    std::vector<std::unique_ptr<Card>> retired_;
+    int cardActions_=0;
+    friend class Card;
+    std::uint16_t shownMask_=0;
+    std::uint64_t lastRevision_=0;
+    std::uint32_t rebuilds_=0;
+    std::vector<Step> undo_,redo_;
 };
 
 }

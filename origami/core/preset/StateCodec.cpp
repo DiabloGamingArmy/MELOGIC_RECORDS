@@ -55,7 +55,12 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         sequencing|=op.type==ControlOpType::Counter && op.params[1]>1.5f;
     }
     for(const auto& r:s.modulation.routes) sequencing|=r.id!=0 && operatorPortOf(r.source)!=0;
-    Writer w;w.word(magic);w.word(sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u);w.word(static_cast<std::uint32_t>(parameterCount));
+    // Dynamic macros: v31 only when the macro set differs from Init's four;
+    // otherwise saves are byte-identical to before.
+    bool dynamicMacros=s.modulation.macroMask!=defaultMacroMask;
+    for(std::size_t i=4;i<maxMacros;++i) dynamicMacros|=s.modulation.macros[i]!=0.0f;
+    const std::uint32_t version=dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
+    Writer w;w.word(magic);w.word(version);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -73,7 +78,7 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     }
     const auto& mod=s.modulation;
     w.word(static_cast<std::uint32_t>(mod.lfo1.shape));w.word(static_cast<std::uint32_t>(mod.lfo1.mode));w.real(mod.lfo1.rateHz);
-    for(float v:mod.macros) w.real(v);
+    for(std::size_t i=0;i<4;++i) w.real(mod.macros[i]); // MACRO 1..4: the original fixed field
     w.word(mod.nextRouteId);
     std::uint32_t routes=0;for(const auto& r:mod.routes) if(r.id) ++routes;
     w.word(routes);
@@ -203,7 +208,7 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         for(std::size_t i=0;i<m.busRouteCount;++i) {w.word(m.busRoutes[i].bus);w.real(m.busRoutes[i].level);}
     }
     // V28: CONTROL operators by storage slot (holes kept so slots stay stable).
-    if(operators) {
+    if(version>=28) {
         w.word(s.modulation.nextOperatorId);
         w.word(static_cast<std::uint32_t>(s.modulation.operators.size()));
         for(const auto& op:s.modulation.operators) {
@@ -211,14 +216,19 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
             if(!op.id) continue;
             w.word(static_cast<std::uint32_t>(op.type));
             for(float v:op.params) w.real(v);
-            for(std::size_t k=0;k<(eventNodes || sequencing ? 3u : 2u);++k) { // v28: inputs A, B; v29: + third input
+            for(std::size_t k=0;k<(version>=29 ? 3u : 2u);++k) { // v28: inputs A, B; v29: + third input
                 const auto& in=op.inputs[k];
                 w.word(static_cast<std::uint32_t>(in.kind));
                 w.word(static_cast<std::uint32_t>(in.source));
                 w.word(in.op);
-                if(sequencing) w.word(in.port); // v30: the upstream output port
+                if(version>=30) w.word(in.port); // v30: the upstream output port
             }
         }
+    }
+    // V31: the macro set (stable ids 1..16) and the values of macros 5..16.
+    if(version>=31) {
+        w.word(s.modulation.macroMask);
+        for(std::size_t i=4;i<maxMacros;++i) w.real(s.modulation.macros[i]);
     }
     return w.bytes;
 }
@@ -230,7 +240,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>30) return false;
+    if(version<1 || version>31) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -269,7 +279,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     if(version>=3) {
         auto& mod=s.modulation;
         mod.lfo1.shape=static_cast<LfoShape>(r.word());mod.lfo1.mode=static_cast<LfoMode>(r.word());mod.lfo1.rateHz=r.real();
-        for(auto& v:mod.macros) v=r.real();
+        for(std::size_t i=0;i<4;++i) mod.macros[i]=r.real(); // MACRO 1..4
         mod.nextRouteId=r.word();const auto routes=r.word();
         if(routes>mod.routes.size()) return false;
         for(std::size_t i=0;i<routes;++i) {
@@ -473,6 +483,12 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
                 }
             }
         }
+    }
+    if(version>=31) {
+        const auto mask=r.word();
+        if(mask>0xffffu) return false;
+        s.modulation.macroMask=static_cast<std::uint16_t>(mask);
+        for(std::size_t i=4;i<maxMacros;++i) s.modulation.macros[i]=r.real();
     }
     // mct-origami-nodes-n01: (source, destination) pairs are unique. States
     // written before that rule may repeat a pair; merge them deterministically

@@ -881,7 +881,8 @@ OrigamiAudioProcessor::getUiRuntimeVisualizationSnapshot() noexcept {
 }
 bool OrigamiAudioProcessor::setUiMacro(unsigned index,float value) noexcept {
     const juce::ScopedLock lock(stateLock_);
-    if(index>=4) return false;
+    // `index` is the stable macro id - 1 (MACRO 1..4 keep indices 0..3).
+    if(index>=mct::origami::maxMacros || !mct::origami::macroActive(uiInstrumentState_.modulation,index+1)) return false;
     auto mod=uiInstrumentState_.modulation;mod.macros[index]=value;
     if(!engine_.setModulationState(mod)) return false;
     uiInstrumentState_.modulation=mod;

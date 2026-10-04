@@ -28,6 +28,7 @@ inline ModulationUiTelemetry& modulationUiTelemetry() noexcept {
 }
 
 inline int modulationUiSourceIndex(ModSource source) noexcept {
+    if(isMacroSource(source)) return -1; // macros read the canonical value (any stable id)
     switch(source) {
         case ModSource::Env1:return 0;
         case ModSource::Env2:return 1;
@@ -69,6 +70,7 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
 
     const int index=modulationUiSourceIndex(source);
     if(index>=0) return telemetry.sourceValues[static_cast<std::size_t>(index)];
+    if(const auto id=macroIdOf(source)) return telemetry.state.macros[id-1];
 
     switch(source) {
         case ModSource::Macro1:return telemetry.state.macros[0];
@@ -102,6 +104,7 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
 
 inline bool modulationUiSourceIsBipolar(ModSource source) noexcept {
     if(isOperatorSource(source)) return sourceRange(source,modulationUiTelemetry().state)==ControlRange::Bipolar;
+    if(isMacroSource(source)) return false;
     switch(source) {
         case ModSource::Lfo1:
         case ModSource::Lfo2:

@@ -161,7 +161,7 @@ private:
     ChaosGenerator globalChaos_{};
     DriftGenerator globalDrift_{};
     SequencerGenerator globalSequencer_{};
-    std::array<float,4> smoothedMacros_{};
+    std::array<float,maxMacros> smoothedMacros_{}; // by macro id - 1
     float modulationSmoothing_=1;
     OscillatorModuleBank oscillatorModules_;
     std::uint64_t hostModuleGeneration_=0;

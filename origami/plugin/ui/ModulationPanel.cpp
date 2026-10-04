@@ -2453,25 +2453,302 @@ void ModulationPanel::paintPerformanceCurve(juce::Graphics& g) {
     }
 }
 
-MacroPanel::MacroPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {
-    for(std::size_t i=0;i<4;++i) {
-        rotary(*this,sliders_[i],labels_[i],"MACRO "+juce::String(static_cast<int>(i+1)));
-        sliders_[i].setRange(0,1,0);
-        sliders_[i].onValueChange=[this,i]{
-            if(bindings_.macro) bindings_.macro(static_cast<unsigned>(i),static_cast<float>(sliders_[i].getValue()));
-        };
+// ---------------------------------------------------------------- macros
+// mct-origami-synth-dynamic-macros
+
+class MacroPanel::Card final : public juce::Component {
+public:
+    Card(MacroPanel& owner,std::size_t id)
+        // The SYNTH modulator row (same "MOD SOURCE TAB" look: title on top, rings below).
+        :owner_(owner),id_(id),row_(macroSource(id),"ASSIGN","MOD SOURCE TAB MACRO "+juce::String(int(id))) {
+        setName("MACRO CARD "+juce::String(int(id)));
+        knob_.setName("MACRO "+juce::String(int(id)));
+        knob_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        knob_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        knob_.setRotaryParameters(juce::MathConstants<float>::pi*1.2f,juce::MathConstants<float>::pi*2.8f,true);
+        knob_.setMouseDragSensitivity(220);
+        knob_.setScrollWheelEnabled(false);
+        knob_.setRange(0.0,1.0,0.0);
+        knob_.onValueChange=[this]{ if(!syncing_ && owner_.bindings_.macro) owner_.bindings_.macro(unsigned(id_-1),float(knob_.getValue())); };
+        remove_.setName("Remove macro "+juce::String(int(id)));
+        remove_.setTooltip("Remove MACRO "+juce::String(int(id))+" (and its assignments)");
+        remove_.onClick=[this]{ Action a(owner_); owner_.requestRemoveMacro(id_); };
+        confirm_.setName("Confirm remove macro "+juce::String(int(id)));
+        cancel_.onClick=[this]{ setConfirming(false,0); };
+        confirm_.onClick=[this]{ Action a(owner_); owner_.removeMacro(id_); };
+        row_.onRouteAmount=[this](std::uint32_t route,float amount){ owner_.setRouteAmount(route,amount); };
+        row_.onRouteRemove=[this](std::uint32_t route){ owner_.removeRoute(route); };
+        row_.onHoverChanged=[this]{ repaint(); };
+        for(auto* c:std::initializer_list<juce::Component*>{&knob_,&remove_,&row_}) addAndMakeVisible(c);
+        addChildComponent(confirm_); addChildComponent(cancel_);
     }
+    std::size_t id() const noexcept { return id_; }
+    juce::Slider& knob() noexcept { return knob_; }
+    ModulationSourceRow& row() noexcept { return row_; }
+    void setValue(float v) {
+        if(knob_.isMouseButtonDown()) return;
+        syncing_=true; knob_.setValue(v,juce::dontSendNotification); syncing_=false;
+    }
+    void setConfirming(bool on,std::size_t links) {
+        confirming_=on; links_=links;
+        knob_.setVisible(!on); row_.setVisible(!on); remove_.setVisible(!on);
+        confirm_.setVisible(on); cancel_.setVisible(on);
+        resized(); repaint();
+    }
+    bool confirming() const noexcept { return confirming_; }
+    void resized() override {
+        auto b=getLocalBounds().reduced(3);
+        auto header=b.removeFromTop(20);
+        remove_.setBounds(header.removeFromRight(22).withSizeKeepingCentre(22,18));
+        if(confirming_) {
+            // Narrow card: full-width buttons, stacked (never truncated labels).
+            confirm_.setBounds(b.removeFromBottom(24).reduced(1,1));
+            cancel_.setBounds(b.removeFromBottom(24).reduced(1,1));
+            return;
+        }
+        row_.setBounds(b.removeFromBottom(ModulationSourceRow::routedHeight));
+        knob_.setBounds(b.withSizeKeepingCentre(std::min(52,b.getWidth()-8),std::min(50,b.getHeight())));
+    }
+    void paint(juce::Graphics& g) override {
+        auto b=getLocalBounds().toFloat().reduced(0.5f);
+        g.setColour(Palette::inset()); g.fillRect(b);
+        g.setColour(Palette::borderSoft()); g.drawRect(b,1.0f);
+        auto header=getLocalBounds().reduced(3).removeFromTop(20).withTrimmedLeft(4).withTrimmedRight(24);
+        g.setColour(Palette::text()); g.setFont(juce::FontOptions(9.0f));
+        g.drawFittedText("MACRO "+juce::String(int(id_)),header,juce::Justification::centredLeft,1,0.75f);
+        if(confirming_) {
+            auto area=getLocalBounds().reduced(6).withTrimmedTop(24).withTrimmedBottom(54);
+            g.setColour(Palette::text()); g.setFont(juce::FontOptions(9.0f));
+            g.drawFittedText("REMOVE?",area.removeFromTop(16),juce::Justification::centredLeft,1,0.8f);
+            g.setColour(Palette::muted()); g.setFont(juce::FontOptions(8.0f));
+            g.drawFittedText(juce::String(int(links_))+(links_==1 ? " assignment goes" : " assignments go")+" with it.",
+                             area,juce::Justification::topLeft,3,0.85f);
+        }
+    }
+private:
+    struct Action { // marks "a card button is running" for safe retirement
+        MacroPanel& p; explicit Action(MacroPanel& o):p(o) { ++p.cardActions_; }
+        ~Action() { --p.cardActions_; }
+    };
+    MacroPanel& owner_;
+    std::size_t id_;
+    juce::Slider knob_;
+    juce::TextButton remove_{"X"},confirm_{"REMOVE"},cancel_{"CANCEL"};
+    ModulationSourceRow row_;
+    bool syncing_=false,confirming_=false;
+    std::size_t links_=0;
+};
+
+MacroPanel::MacroPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {
+    setWantsKeyboardFocus(true);
+    viewport_.setName("MACRO LIST");
+    viewport_.setViewedComponent(&content_,false);
+    viewport_.setScrollBarsShown(true,false,true,false); // vertical only; never horizontal
+    viewport_.setScrollBarThickness(8);
+    addAndMakeVisible(viewport_);
+    add_.setName("Add macro");
+    add_.onClick=[this]{ addMacro(); };
+    addAndMakeVisible(add_);
     syncFromModel();
 }
-void MacroPanel::syncFromModel() {
-    if(!bindings_.snapshot) return;const auto values=bindings_.snapshot().modulation.macros;
-    for(std::size_t i=0;i<4;++i) if(!sliders_[i].isMouseButtonDown())
-        sliders_[i].setValue(values[i],juce::dontSendNotification);
+
+MacroPanel::~MacroPanel() { viewport_.setViewedComponent(nullptr,false); }
+
+juce::Component* MacroPanel::card(std::size_t index) const noexcept { return index<cards_.size() ? cards_[index].get() : nullptr; }
+std::size_t MacroPanel::cardId(std::size_t index) const noexcept { return index<cards_.size() ? cards_[index]->id() : 0; }
+juce::Slider* MacroPanel::knob(std::size_t id) const noexcept {
+    for(const auto& c:cards_) if(c->id()==id) return &c->knob();
+    return nullptr;
 }
+const ModulationSourceRow* MacroPanel::assignment(std::size_t id) const noexcept {
+    for(const auto& c:cards_) if(c->id()==id) return &c->row();
+    return nullptr;
+}
+
+// Cards are rebuilt only when the macro SET changes; values and routes are
+// refreshed in place, and only when the model revision moved.
+void MacroPanel::syncFromModel() {
+    if(!bindings_.snapshot) return;
+    const auto revision=bindings_.modelRevision ? bindings_.modelRevision() : 0;
+    if(revision!=0 && revision==lastRevision_ && !cards_.empty()) return;
+    lastRevision_=revision;
+    const auto state=bindings_.snapshot().modulation;
+    if(state.macroMask!=shownMask_ || cards_.empty()) rebuild(state);
+    for(auto& c:cards_) {
+        c->setValue(state.macros[c->id()-1]);
+        c->row().setRoutes(modulationSourceRoutes(state,macroSource(c->id())));
+    }
+    std::size_t count=0; for(std::size_t id=1;id<=maxMacros;++id) count+=macroActive(state,id);
+    add_.setEnabled(count<maxMacros);
+    add_.setTooltip(count<maxMacros ? juce::String("Add a macro (up to "+juce::String(int(maxMacros))+")")
+                                    : juce::String("All "+juce::String(int(maxMacros))+" macros are in use"));
+}
+
+// Reconciles cards with the macro set by stable id: surviving cards are kept
+// (their sliders, hover and drag state stay intact), new ones are created,
+// removed ones retired.
+void MacroPanel::rebuild(const ModulationState& state) {
+    ++rebuilds_;
+    if(cardActions_==0) retired_.clear();
+    std::vector<std::unique_ptr<Card>> next;
+    for(const auto source:activeMacroSources(state)) {
+        const auto id=macroIdOf(source);
+        auto it=std::find_if(cards_.begin(),cards_.end(),[id](const std::unique_ptr<Card>& c){ return c && c->id()==id; });
+        if(it!=cards_.end()) next.push_back(std::move(*it));
+        else { next.push_back(std::make_unique<Card>(*this,id)); content_.addAndMakeVisible(*next.back()); }
+    }
+    for(auto& old:cards_) if(old) { content_.removeChildComponent(old.get()); retired_.push_back(std::move(old)); }
+    cards_=std::move(next);
+    if(cardActions_==0) retired_.clear();
+    shownMask_=state.macroMask;
+    layoutCards();
+}
+
 void MacroPanel::resized() {
-    const auto body=contentBounds();const int width=body.getWidth()/2,height=body.getHeight()/2;
-    for(std::size_t i=0;i<4;++i)
-        place({body.getX()+static_cast<int>(i%2)*width,body.getY()+static_cast<int>(i/2)*height,width,height},
-              sliders_[i],labels_[i]);
+    auto area=contentBounds().reduced(4,2);
+    add_.setBounds(area.removeFromBottom(24).reduced(0,2));
+    area.removeFromBottom(2);
+    viewport_.setBounds(area);
+    layoutCards();
+}
+
+// The scrollbar owns a dedicated gutter: when the cards overflow, the content
+// is narrowed by the scrollbar width (+ a gap), so the bar never covers a card.
+void MacroPanel::layoutCards() {
+    const int rows=int((cards_.size()+columns-1)/columns);
+    const int height=rows*cardHeight+std::max(0,rows-1)*gap;
+    const bool scrolls=height>viewport_.getHeight();
+    const int width=std::max(0,viewport_.getWidth()-(scrolls ? viewport_.getScrollBarThickness()+gap : 0));
+    content_.setSize(width,height);
+    const int column=(width-gap)/columns;
+    for(std::size_t i=0;i<cards_.size();++i)
+        cards_[i]->setBounds(int(i%columns)*(column+gap),int(i/columns)*(cardHeight+gap),column,cardHeight);
+}
+
+std::size_t MacroPanel::addMacro() {
+    if(!bindings_.snapshot || !bindings_.modulation) return 0;
+    const auto state=bindings_.snapshot().modulation;
+    std::size_t id=0;
+    for(std::size_t candidate=1;candidate<=maxMacros && id==0;++candidate) if(!macroActive(state,candidate)) id=candidate;
+    if(id==0) return 0;
+    Step step; step.added=true; step.id=id;
+    if(!applyAdd(step)) return 0;
+    undo_.push_back(step); if(undo_.size()>64) undo_.erase(undo_.begin());
+    redo_.clear();
+    syncFromModel();
+    for(auto& c:cards_) if(c->id()==id) viewport_.setViewPosition(0,std::max(0,c->getBottom()-viewport_.getHeight()));
+    return id;
+}
+
+void MacroPanel::requestRemoveMacro(std::size_t id) {
+    if(!bindings_.snapshot) return;
+    const auto state=bindings_.snapshot().modulation;
+    std::size_t links=0;
+    for(const auto& r:state.routes) links+=r.id!=0 && r.source==macroSource(id);
+    for(const auto& op:state.operators) for(const auto& in:op.inputs) links+=op.id && in.kind==ControlInput::Kind::Source && in.source==macroSource(id);
+    if(links==0) { removeMacro(id); return; }
+    // Destructive with consequences: an Origami-native, in-card confirmation.
+    for(auto& c:cards_) if(c->id()==id) c->setConfirming(true,links);
+}
+
+bool MacroPanel::removeMacro(std::size_t id) {
+    Step step;
+    if(!applyRemove(id,step)) return false;
+    undo_.push_back(step); if(undo_.size()>64) undo_.erase(undo_.begin());
+    redo_.clear();
+    syncFromModel();
+    return true;
+}
+
+namespace {
+// Routes are kept in id order with no holes (the canonical invariant).
+void sortRoutes(ModulationState& m) {
+    std::vector<ModRoute> kept;
+    for(const auto& r:m.routes) if(r.id) kept.push_back(r);
+    std::sort(kept.begin(),kept.end(),[](const ModRoute& a,const ModRoute& b){ return a.id<b.id; });
+    m.routes={};
+    for(std::size_t i=0;i<kept.size() && i<m.routes.size();++i) m.routes[i]=kept[i];
+}
+}
+
+// One transaction: the macro, every route it sources and every NODES input it
+// feeds go together; nothing is ever redirected to another macro.
+bool MacroPanel::applyRemove(std::size_t id,Step& step) {
+    if(!bindings_.snapshot || !bindings_.modulation) return false;
+    auto next=bindings_.snapshot().modulation;
+    if(!macroActive(next,id)) return false;
+    step.id=id; step.value=next.macros[id-1]; step.routes.clear(); step.inputs.clear();
+    for(auto& r:next.routes) if(r.id && r.source==macroSource(id)) { step.routes.push_back(r); r={}; }
+    for(auto& op:next.operators)
+        for(std::uint8_t k=0;k<op.inputs.size();++k)
+            if(op.id && op.inputs[k].kind==ControlInput::Kind::Source && op.inputs[k].source==macroSource(id)) {
+                step.inputs.push_back({op.id,k}); op.inputs[k]={};
+            }
+    sortRoutes(next);
+    next.macroMask=std::uint16_t(next.macroMask&~(1u<<(id-1)));
+    next.macros[id-1]=0.0f;
+    return bindings_.modulation(next);
+}
+
+bool MacroPanel::applyAdd(const Step& step) {
+    if(!bindings_.snapshot || !bindings_.modulation) return false;
+    auto next=bindings_.snapshot().modulation;
+    if(macroActive(next,step.id)) return false;
+    next.macroMask=std::uint16_t(next.macroMask|(1u<<(step.id-1)));
+    next.macros[step.id-1]=step.value;
+    for(const auto& r:step.routes) {
+        bool clash=false; std::size_t used=0;
+        for(const auto& o:next.routes) { used+=o.id!=0; clash|=o.id==r.id || (o.id && o.source==r.source && o.destination==r.destination); }
+        if(clash || used>=next.routes.size()) continue;
+        for(auto& slot:next.routes) if(!slot.id) { slot=r; break; }
+        next.nextRouteId=std::max(next.nextRouteId,r.id+1);
+    }
+    sortRoutes(next);
+    for(const auto& [op,input]:step.inputs) {
+        const auto slot=controlOperatorSlot(next,op);
+        if(slot<next.operators.size() && next.operators[slot].inputs[input].kind==ControlInput::Kind::None)
+            next.operators[slot].inputs[input]={ControlInput::Kind::Source,macroSource(step.id),0};
+    }
+    return bindings_.modulation(next);
+}
+
+bool MacroPanel::undo() {
+    if(undo_.empty()) return false;
+    auto step=undo_.back(); undo_.pop_back();
+    const bool ok=step.added ? applyRemove(step.id,step) : applyAdd(step);
+    if(ok) redo_.push_back(step);
+    syncFromModel();
+    return ok;
+}
+
+bool MacroPanel::redo() {
+    if(redo_.empty()) return false;
+    auto step=redo_.back(); redo_.pop_back();
+    const bool ok=step.added ? applyAdd(step) : applyRemove(step.id,step);
+    if(ok) undo_.push_back(step);
+    syncFromModel();
+    return ok;
+}
+
+void MacroPanel::setRouteAmount(std::uint32_t routeId,float amount) {
+    if(!bindings_.snapshot || !bindings_.route) return;
+    for(const auto& r:bindings_.snapshot().modulation.routes)
+        if(r.id==routeId) { auto updated=r; updated.amount=juce::jlimit(-1.0f,1.0f,amount); bindings_.route(updated); }
+    syncFromModel();
+}
+
+void MacroPanel::removeRoute(std::uint32_t routeId) {
+    if(bindings_.removeRoute) bindings_.removeRoute(routeId);
+    syncFromModel();
+}
+
+void MacroPanel::mouseDown(const juce::MouseEvent&) { grabKeyboardFocus(); }
+
+bool MacroPanel::keyPressed(const juce::KeyPress& key) {
+    const auto mods=key.getModifiers();
+    if((mods.isCommandDown() || mods.isCtrlDown()) && (key.getKeyCode()=='Z' || key.getKeyCode()=='z')) {
+        return mods.isShiftDown() ? redo() : undo();
+    }
+    return false;
 }
 }
