@@ -38,6 +38,8 @@
 
 namespace mct::origami::ui {
 namespace {
+// LFO editor bottom row: the TOOLS / FUNC strip plus a 1 px margin each side.
+constexpr int lfoStripHeight=LfoControlStrip::preferredHeight+2;
 constexpr std::array<ParameterId,4> envelopeIds{
     ParameterId::Attack,ParameterId::Decay,ParameterId::Sustain,ParameterId::Release
 };
@@ -412,19 +414,18 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     for(std::size_t i=0;i<sequenceSteps_.size();++i) { sequenceGatePreview_[i].onValueChange=commitSequenceExpression; sequenceRatchet_[i].onChange=commitSequenceExpression; }
     sequenceHumanize_.onValueChange=commitSequenceExpression;
 
-    shape_.addItem("MSEG",1);
-    // Three explicit playback behaviours. IDs preserve legacy serialization:
-    // Free=1, Loop (old NoteRetrigger)=2, Envelope=3.
-    mode_.addItem("Loop",2);
-    mode_.addItem("Free",1);
-    mode_.addItem("Envelope",3);
-    for(auto* box:{&shape_,&mode_}) {addAndMakeVisible(*box);box->setScrollWheelEnabled(false);}
-    addAndMakeVisible(lfoLoop_);
-    addAndMakeVisible(lfoTools_);
-    lfoLoop_.setToggleState(true,juce::dontSendNotification);
-    lfoLoop_.setVisible(false);
+    // mct-origami-lfo-editor-controls: the LFO editor's TOOLS / FUNC strip.
+    // Sound edits (mode, rate, explicit path tools) go to the canonical LFO;
+    // grid / snap / page / unit are editor state and never touch the model.
+    addChildComponent(lfoStrip_);
     for(auto& shape:lfoMseg_) resetMsegShape(shape);
-    lfoTools_.onClick=[this]{showLfoToolsMenu();};
+    lfoStrip_.setCallbacks({
+        [this](LfoMode m){ commitLfo([m](LfoSettings& l){ l.mode=m; }); repaint(); },
+        [this](float hz){ commitLfo([hz](LfoSettings& l){ l.rateHz=juce::jlimit(.01f,40.0f,hz); }); },
+        [this](juce::Component& anchor){ showLfoToolsMenu(anchor); },
+        [this](bool on){ snap_.setToggleState(on,juce::dontSendNotification); },
+        [this]{ repaint(); },
+        [this]{ return bindings_.hostBpm ? bindings_.hostBpm() : 120.0; }});
     addAndMakeVisible(performanceTools_);
     addAndMakeVisible(performanceSnap_);
     addAndMakeVisible(performanceInputLabel_);
@@ -435,7 +436,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     performanceInputLabel_.setColour(juce::Label::textColourId,Palette::muted());
     for(auto& shape:performanceMseg_) resetPerformanceShape(shape);
     auto update=[this]{commitGenerator();repaint();};
-    mode_.onChange=update;rate_.onValueChange=update;curve_.onValueChange=update;
+    rate_.onValueChange=update;curve_.onValueChange=update;
     randomSmooth_.onValueChange=update;
     randomHold_.onValueChange=update;
     randomDelay_.onValueChange=update;
@@ -644,20 +645,8 @@ bool ModulationPanel::commitSequenceSteps() {
 void ModulationPanel::commitGenerator() {
     if(!bindings_.snapshot || !bindings_.modulation) return;
     auto mod=bindings_.snapshot().modulation;
-    if(selected_>=3 && selected_<=6) {
-        auto& l=lfoSettings(mod,static_cast<std::size_t>(selected_-3));
-        l.shape=LfoShape::Sine;
-        l.mode=static_cast<LfoMode>(mode_.getSelectedId());
-        l.rateHz=static_cast<float>(rate_.getValue());
-
-        const auto& editor=lfoMseg_[static_cast<std::size_t>(selected_-3)];
-        l.pointCount=static_cast<std::uint32_t>(std::min(editor.count,l.points.size()));
-        for(std::size_t i=0;i<l.pointCount;++i) {
-            l.points[i].x=editor.points[i].x;
-            l.points[i].y=editor.points[i].y;
-            l.points[i].curve=editor.points[i].curve;
-        }
-    } else if(selected_==7) {
+    // LFOs are edited by the TOOLS strip (commitLfo) and the point canvas.
+    if(selected_==7) {
         mod.function.rateHz=static_cast<float>(rate_.getValue());
         mod.function.curve=static_cast<float>(curve_.getValue());
     } else if(selected_==8) {
@@ -694,17 +683,19 @@ void ModulationPanel::updateVisibleControls() {
 
     for(auto& s:envSliders_) s.setVisible(env);
     for(auto& l:envLabels_) l.setVisible(env);
-    const bool graphEditor=env||lfo;
+    // The BPM/SEC/DAW grid, tempo and zoom drive the ENV time axis only; the
+    // LFO canvas is one phase cycle with its own grid in the TOOLS strip.
+    const bool graphEditor=env;
+    lfoStrip_.setVisible(lfo);
     snap_.setVisible(graphEditor);gridMode_.setVisible(graphEditor);
     division_.setVisible(graphEditor && gridModeValue_==GridMode::Daw);
     zoomOut_.setVisible(graphEditor);zoomIn_.setVisible(graphEditor);
     tempo_.setVisible(graphEditor && gridModeValue_==GridMode::Tempo);
-    envScroll_.setVisible(env);lfoLoop_.setVisible(false);lfoTools_.setVisible(lfo);
+    envScroll_.setVisible(env);
 
     const bool rateGenerator=random||chaos||drift||sequencer;
-    rate_.setVisible(lfo||function||rateGenerator);
-    rateLabel_.setVisible(lfo||function||rateGenerator);
-    shape_.setVisible(lfo);mode_.setVisible(lfo);
+    rate_.setVisible(function||rateGenerator);
+    rateLabel_.setVisible(function||rateGenerator);
     curve_.setVisible(function);curveLabel_.setVisible(function);
     randomSmooth_.setVisible(random);randomSmoothLabel_.setVisible(random);
     randomHold_.setVisible(random);randomHoldLabel_.setVisible(random);
@@ -765,9 +756,8 @@ void ModulationPanel::syncFromModel() {
         const auto& l=lfoSettings(cached_,static_cast<std::size_t>(selected_-3));
         if(lfoPointDrag_<0 && lfoCurveDrag_<0)
             loadMsegShapeFromSettings(lfoMseg_[static_cast<std::size_t>(selected_-3)],l);
-        shape_.setSelectedId(1,juce::dontSendNotification);
-        mode_.setSelectedId(static_cast<int>(l.mode),juce::dontSendNotification);
-        if(!rate_.isMouseButtonDown()) rate_.setValue(l.rateHz,juce::dontSendNotification);
+        lfoStrip_.setLfo(static_cast<std::size_t>(selected_-3),l);
+        lfoStrip_.setSnap(snap_.getToggleState());
     } else if(selected_==7) {
         if(!rate_.isMouseButtonDown()) rate_.setValue(cached_.function.rateHz,juce::dontSendNotification);
         if(!curve_.isMouseButtonDown()) curve_.setValue(cached_.function.curve,juce::dontSendNotification);
@@ -992,9 +982,8 @@ void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
 
     if(shape.count>=shape.points.size()) return;
 
-    float x=juce::jlimit(0.0f,1.0f,(e.position.x-envCanvas_.getX())/juce::jmax(1.0f,envCanvas_.getWidth()));
-    if(snap_.getToggleState()) x=std::round(x*16.0f)/16.0f;
-    const float y=juce::jlimit(-1.0f,1.0f,(envCanvas_.getCentreY()-e.position.y)/juce::jmax(1.0f,envCanvas_.getHeight()*.46f));
+    const float x=snapLfoX(juce::jlimit(0.0f,1.0f,(e.position.x-envCanvas_.getX())/juce::jmax(1.0f,envCanvas_.getWidth())));
+    const float y=snapLfoY(juce::jlimit(-1.0f,1.0f,(envCanvas_.getCentreY()-e.position.y)/juce::jmax(1.0f,envCanvas_.getHeight()*.46f)));
 
     std::size_t insert=0;
     while(insert<shape.count && shape.points[insert].x<x) ++insert;
@@ -1033,8 +1022,8 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
         if(lfoPointDrag_>=0) {
             const auto i=static_cast<std::size_t>(lfoPointDrag_);
             const auto local=e.getEventRelativeTo(this).position;
-            const float y=juce::jlimit(-1.0f,1.0f,
-                (envCanvas_.getCentreY()-local.y)/juce::jmax(1.0f,envCanvas_.getHeight()*.46f));
+            const float y=snapLfoY(juce::jlimit(-1.0f,1.0f,
+                (envCanvas_.getCentreY()-local.y)/juce::jmax(1.0f,envCanvas_.getHeight()*.46f)));
 
             if(i==0 || i+1==shape.count) {
                 // Loop seam endpoints are vertically movable only, and are
@@ -1044,8 +1033,7 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
                 shape.points[0].y=y;
                 shape.points[shape.count-1].y=y;
             } else {
-                float x=(local.x-envCanvas_.getX())/juce::jmax(1.0f,envCanvas_.getWidth());
-                if(snap_.getToggleState()) x=std::round(x*16.0f)/16.0f;
+                const float x=snapLfoX((local.x-envCanvas_.getX())/juce::jmax(1.0f,envCanvas_.getWidth()));
                 shape.points[i].x=juce::jlimit(
                     shape.points[i-1].x+.005f,shape.points[i+1].x-.005f,x);
                 shape.points[i].y=y;
@@ -1363,8 +1351,18 @@ void ModulationPanel::resized() {
     sourceViewport_.setBounds(rail);
     layoutSourceRail();
 
-    auto controls=body.removeFromBottom(62);
-    if(selected_<=6) {
+    const bool lfoEditor=selected_>=3 && selected_<=6;
+    // The LFO strip is one compact control row; ENV keeps its 62 px row.
+    auto controls=body.removeFromBottom(lfoEditor ? lfoStripHeight : 62);
+    lfoStrip_.setBounds({});
+    if(lfoEditor) {
+        lfoStrip_.setBounds(controls.reduced(4,(controls.getHeight()-LfoControlStrip::preferredHeight)/2));
+        for(auto* c:std::initializer_list<juce::Component*>{&snap_,&gridMode_,&tempo_,&division_,&zoomOut_,&zoomIn_,&envScroll_})
+            c->setBounds({});
+        // Caption above, no time scrollbar below: the waveform takes the rest.
+        body.removeFromTop(17);
+        envCanvas_=body.reduced(10,6).toFloat();
+    } else if(selected_<=2) {
         // V33: ENV and LFO/MSEG deliberately share editor geometry.
         // V30.0.1: ENV utility controls belong with the parameter controls, not
         // inside the graph viewport. Keep ATTACK/DECAY/SUSTAIN/RELEASE on the
@@ -1384,14 +1382,9 @@ void ModulationPanel::resized() {
         controls.removeFromRight(6);
         toolbar=toolbar.reduced(4,8);
 
-        if(selected_<=2) {
+        {
             const int cell=controls.getWidth()/4;
             for(std::size_t i=0;i<4;++i) place(controls.removeFromLeft(cell),envSliders_[i],envLabels_[i]);
-        } else {
-            auto rc=controls.removeFromLeft(120);rateLabel_.setBounds(rc.removeFromBottom(17));rate_.setBounds(rc);
-            lfoLoop_.setBounds({});
-            controls.removeFromLeft(8);lfoTools_.setBounds(controls.removeFromLeft(70).reduced(2,9));
-            controls.removeFromLeft(8);mode_.setBounds(controls.removeFromLeft(132).reduced(2,18));shape_.setBounds({});
         }
         snap_.setBounds(toolbar.removeFromLeft(58));toolbar.removeFromLeft(gap);
         gridMode_.setBounds(toolbar.removeFromLeft(70));toolbar.removeFromLeft(gap);
@@ -1524,6 +1517,41 @@ void ModulationPanel::resized() {
     updateVisibleControls();
 }
 
+bool ModulationPanel::selectSource(ModSource source) {
+    for(std::size_t i=0;i<tabs_.size();++i)
+        if(sourceForTab(i)==source) {
+            if(!sourceTabActive(i)) return false;
+            if(tabs_[i]->onClick) tabs_[i]->onClick();
+            return selected_==static_cast<int>(i);
+        }
+    return false;
+}
+
+float ModulationPanel::snapLfoX(float x) const noexcept {
+    if(!snap_.getToggleState()) return x;
+    const float columns=static_cast<float>(lfoStrip_.gridColumns());
+    return juce::jlimit(0.0f,1.0f,std::round(x*columns)/columns);
+}
+
+float ModulationPanel::snapLfoY(float y) const noexcept {
+    if(!snap_.getToggleState()) return y;
+    const float half=static_cast<float>(lfoStrip_.gridRows())*.5f;
+    return juce::jlimit(-1.0f,1.0f,std::round((y+1.0f)*half)/half-1.0f);
+}
+
+bool ModulationPanel::commitLfo(const std::function<void(LfoSettings&)>& edit) {
+    // One canonical LFO: edit exactly the requested field of the current
+    // model (shape, points and the other LFOs are carried through untouched).
+    if(selected_<3 || selected_>6 || !bindings_.snapshot || !bindings_.modulation) return false;
+    auto mod=bindings_.snapshot().modulation;
+    auto& l=lfoSettings(mod,static_cast<std::size_t>(selected_-3));
+    edit(l);
+    if(!bindings_.modulation(mod)) return false;
+    applyModulationState(mod);
+    lfoStrip_.setLfo(static_cast<std::size_t>(selected_-3),lfoSettings(cached_,static_cast<std::size_t>(selected_-3)));
+    return true;
+}
+
 void ModulationPanel::loadMsegShapeFromSettings(MsegShape& shape,const LfoSettings& s) noexcept {
     if(s.pointCount>=2 && s.pointCount<=s.points.size()) {
         shape={};
@@ -1645,16 +1673,16 @@ float ModulationPanel::curveForHandleY(const MsegShape& source,std::size_t segme
     }
     return bestCurve;
 }
-void ModulationPanel::showLfoToolsMenu() {
+void ModulationPanel::showLfoToolsMenu(juce::Component& anchor) {
     if(selected_<3 || selected_>6) return;
     const std::vector<NativeChoiceItem> items{
         {1,"Reset shape",true,""},
         {2,"Flip vertical",true,""},
         {3,"Normalize vertical",true,""},
-        {4,"Quantize points to 1/16",true,""},
+        {4,"Quantize points to grid ("+juce::String(lfoStrip_.gridColumns())+" x "+juce::String(lfoStrip_.gridRows())+")",true,""},
         {5,"Flatten segment curves",true,""}
     };
-    showNativeChoiceMenu(lfoTools_,"LFO / MSEG TOOLS",items,0,
+    showNativeChoiceMenu(anchor,"LFO / PATH TOOLS",items,0,
         [safe=juce::Component::SafePointer<ModulationPanel>(this)](int id){
             if(safe==nullptr || safe->selected_<3 || safe->selected_>6) return;
             auto& shape=safe->lfoMseg_[static_cast<std::size_t>(safe->selected_-3)];
@@ -1665,7 +1693,10 @@ void ModulationPanel::showLfoToolsMenu() {
                 for(std::size_t i=0;i<shape.count;++i) peak=juce::jmax(peak,std::abs(shape.points[i].y));
                 if(peak>1.0e-5f) for(std::size_t i=0;i<shape.count;++i) shape.points[i].y=juce::jlimit(-1.0f,1.0f,shape.points[i].y/peak);
             } else if(id==4) {
-                for(std::size_t i=1;i+1<shape.count;++i) shape.points[i].x=std::round(shape.points[i].x*16.0f)/16.0f;
+                // Explicit edit: quantise every point to the editor grid.
+                const float columns=static_cast<float>(safe->lfoStrip_.gridColumns()),rows=static_cast<float>(safe->lfoStrip_.gridRows());
+                for(std::size_t i=1;i+1<shape.count;++i) shape.points[i].x=std::round(shape.points[i].x*columns)/columns;
+                for(std::size_t i=0;i<shape.count;++i) shape.points[i].y=juce::jlimit(-1.0f,1.0f,std::round((shape.points[i].y+1.0f)*rows*.5f)/(rows*.5f)-1.0f);
                 for(std::size_t i=1;i+1<shape.count;++i)
                     shape.points[i].x=juce::jlimit(shape.points[i-1].x+.002f,shape.points[i+1].x-.002f,shape.points[i].x);
             } else if(id==5) {
@@ -1707,13 +1738,14 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     g.drawRoundedRectangle(sourceTitleBox,2.5f,1.0f);
     text(g,"SOURCE",sourceTitle,8.5f,Palette::secondary(),juce::Justification::centred);
 
-    body.removeFromBottom(66);auto caption=body.removeFromTop(17);
+    body.removeFromBottom(selected_>=3 && selected_<=6 ? lfoStripHeight+4 : 66);auto caption=body.removeFromTop(17);
     juce::String title;
     if(selected_<=2) title="ENV "+juce::String(selected_+1)+(selected_==0?" / AMP + SOURCE":" / MOD SOURCE");
     else if(selected_>=3 && selected_<=6)
         {
             const auto mode=lfoSettings(cached_,static_cast<std::size_t>(selected_-3)).mode;
-            const char* modeName=mode==LfoMode::Free?"FREE":mode==LfoMode::Envelope?"ENVELOPE":"LOOP";
+            // Matches the TOOLS behaviour icons (Loop is the retrigger mode).
+            const char* modeName=mode==LfoMode::Free?"FREE":mode==LfoMode::Envelope?"ENVELOPE":"RETRIGGER";
             title="LFO "+juce::String(selected_-2)+" / "+modeName;
         }
     else if(selected_==7) title="FUNCTION / CURVED BIPOLAR";
@@ -1916,13 +1948,31 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
         if(envCanvas_.isEmpty()) return;
         const auto& shape=lfoMseg_[static_cast<std::size_t>(selected_-3)];
         auto r=envCanvas_;juce::Path p;
-        for(int i=0;i<=16;++i){
-            const float x=r.getX()+r.getWidth()*static_cast<float>(i)/16.0f;
-            g.setColour(Palette::borderSoft().withAlpha(i%4==0?.55f:.24f));
+        // Editor grid (display only; SNAP decides whether edits quantise to it).
+        // Quarter-cycle columns and the zero line are emphasised; lines closer
+        // than 4 px are skipped visually but remain snap targets.
+        const int columns=lfoStrip_.gridColumns(),rows=lfoStrip_.gridRows();
+        const bool denseColumns=r.getWidth()/static_cast<float>(columns)<4.0f;
+        for(int i=0;i<=columns;++i){
+            const bool major=(i*4)%columns==0;
+            if(denseColumns && !major) continue;
+            const float x=r.getX()+r.getWidth()*static_cast<float>(i)/static_cast<float>(columns);
+            g.setColour(Palette::borderSoft().withAlpha(major?.55f:.24f));
             g.drawVerticalLine(juce::roundToInt(x),r.getY(),r.getBottom());
         }
-        g.setColour(Palette::borderSoft().withAlpha(.42f));
-        g.drawHorizontalLine(juce::roundToInt(r.getCentreY()),r.getX(),r.getRight());
+        const float top=msegPixel({0.0f,1.0f,0.0f}).y,bottom=msegPixel({0.0f,-1.0f,0.0f}).y;
+        const bool denseRows=(bottom-top)/static_cast<float>(rows)<4.0f;
+        for(int i=0;i<=rows;++i){
+            const bool zero=i*2==rows;
+            if(denseRows && !zero) continue;
+            const float y=top+(bottom-top)*static_cast<float>(i)/static_cast<float>(rows);
+            g.setColour(Palette::borderSoft().withAlpha(zero?.42f:.20f));
+            g.drawHorizontalLine(juce::roundToInt(y),r.getX(),r.getRight());
+        }
+        if(rows%2!=0) {
+            g.setColour(Palette::borderSoft().withAlpha(.42f));
+            g.drawHorizontalLine(juce::roundToInt(r.getCentreY()),r.getX(),r.getRight());
+        }
         for(int i=0;i<384;++i){
             const float x=static_cast<float>(i)/383.0f;
             const auto q=msegPixel({x,msegValue(shape,x),0.0f});

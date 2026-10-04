@@ -169,6 +169,16 @@ if(ORIGAMI_BUILD_VST3)
       assets/branding/mct_origami_logo.png
       assets/branding/mct_origami_wordmark.png
       assets/synthui/oragami_header.png
+      # mct-origami-lfo-editor-controls: monochrome source icons (tinted in code)
+      assets/icons/lfo/lfo_retrigger.svg
+      assets/icons/lfo/lfo_envelope.svg
+      assets/icons/lfo/lfo_free.svg
+      assets/icons/lfo/lfo_ping_pong.svg
+      assets/icons/lfo/lfo_custom_path.svg
+      assets/icons/lfo/grid_alignment.svg
+      assets/icons/lfo/snap_grid.svg
+      assets/icons/lfo/direction_forward.svg
+      assets/icons/lfo/direction_backward.svg
   )
   # mct-origami-native-app-icon-v21.3
   # mct-origami-favicon-fill-v21.3.1
@@ -205,7 +215,7 @@ if(ORIGAMI_BUILD_VST3)
   target_sources(OrigamiPlugin PRIVATE
     plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp plugin/ui/GlobalPanel.cpp
     plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
-    plugin/ui/ModulationPanel.cpp plugin/ui/ModulationSourceRow.cpp plugin/ui/ModulationMatrix.cpp
+    plugin/ui/ModulationPanel.cpp plugin/ui/LfoControlStrip.cpp plugin/ui/OrigamiIcon.cpp plugin/ui/ModulationSourceRow.cpp plugin/ui/ModulationMatrix.cpp
     plugin/ui/ModulationDestinations.cpp
     plugin/ui/PerformanceKeyboard.cpp plugin/ui/ArpeggiatorPanel.cpp
     plugin/ui/FxPage.cpp)

@@ -22,6 +22,7 @@
 #include "plugin/ui/FxPage.h"
 #include "core/preset/StateCodec.h"
 #include "tests/NodesScenarios.h"
+#include <BinaryData.h>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -4023,6 +4024,414 @@ void synthDynamicMacrosAudit() {
     }
 }
 
+// mct-origami-lfo-editor-controls: TOOLS / FUNC strip, icons, grid, snap.
+void lfoEditorControlsAudit() {
+    using namespace mct::origami;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    editor->setSize(1500,920);
+    ui::ModulationPanel* synth=nullptr; ui::ModulationMatrix* matrix=nullptr; ui::FxPage* page=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* x=dynamic_cast<ui::ModulationPanel*>(&c)) synth=x;
+        if(auto* x=dynamic_cast<ui::FxPage*>(&c)) page=x;
+        if(auto* x=dynamic_cast<ui::ModulationMatrix*>(&c)) if(x->layout()==ui::ModulationMatrix::Layout::Page) matrix=x; });
+    check(synth && matrix && page,"lfo audit: panels");
+    auto& strip=synth->lfoStrip();
+    const auto mod=[&]{ return p.getUiInstrumentState().modulation; };
+    const auto bytes=[&]{ return encodeInstrumentState(p.getUiInstrumentState()); };
+    const auto sync=[&]{ editor->refreshModulationViews(); synth->syncFromModel(); };
+    const auto lfo2=[&]{ return mod().lfo2; };
+
+    // ---- assets: compiled in, parsed once, tinted in code ------------------
+    for(int i=0;i<static_cast<int>(ui::IconId::Count);++i) {
+        const auto id=static_cast<ui::IconId>(i);
+        int size=0; const char* data=BinaryData::getNamedResource(ui::iconResourceName(id),size);
+        const auto& icon=ui::icon(id);
+        check(data!=nullptr && size>1000 && icon.isValid() && icon.layerCount()>=1 && &icon==&ui::icon(id),
+              (std::string("icon compiled + parsed from BinaryData: ")+ui::iconResourceName(id)).c_str());
+    }
+    check(BinaryData::namedResourceListSize>=12,"all 9 SVGs are packaged next to the existing PNG assets");
+    check(ui::iconTint(ui::IconState::Active)==ui::signalSourceColour(),"active icon tint = Origami red");
+    check(ui::iconTint(ui::IconState::Hover).getBrightness()>ui::iconTint(ui::IconState::Normal).getBrightness() &&
+          ui::iconTint(ui::IconState::Disabled).getBrightness()<ui::iconTint(ui::IconState::Normal).getBrightness() &&
+          ui::iconTint(ui::IconState::Normal).getSaturation()<.05f && ui::iconTint(ui::IconState::Disabled).getSaturation()<.05f,
+          "tint ladder: disabled < normal (grey) < hover (white); only active is red");
+    check(ui::IconButton::stateFor(false,true,true,true)==ui::IconState::Disabled &&
+          ui::IconButton::stateFor(true,false,false,true)==ui::IconState::Pressed &&
+          ui::IconButton::stateFor(true,true,true,false)==ui::IconState::ActiveHover &&
+          ui::IconButton::stateFor(true,true,false,false)==ui::IconState::Active &&
+          ui::IconButton::stateFor(true,false,true,false)==ui::IconState::Hover &&
+          ui::IconButton::stateFor(true,false,false,false)==ui::IconState::Normal,"icon state machine");
+    const auto redPixels=[](juce::Component& c) {
+        const auto img=c.createComponentSnapshot(c.getLocalBounds(),true,2.0f);
+        int red=0,lit=0;
+        for(int y=0;y<img.getHeight();++y) for(int x=0;x<img.getWidth();++x) {
+            const auto px=img.getPixelAt(x,y);
+            if(px.getRed()>140 && px.getGreen()<60) ++red;
+            if(px.getBrightness()>.30f) ++lit;
+        }
+        return std::pair<int,int>{red,lit};
+    };
+
+    // ---- the LFO editor: old bottom controls are gone ----------------------
+    check(synth->selectSource(ModSource::Lfo2),"select LFO 2");
+    sync();
+    check(strip.isVisible() && strip.getHeight()<=ui::LfoControlStrip::preferredHeight+2,"LFO editor shows the compact TOOLS strip");
+    bool oldControls=false;
+    for(auto* child:synth->getChildren()) {
+        if(!child->isVisible()) continue;
+        oldControls|=dynamic_cast<juce::ComboBox*>(child)!=nullptr;            // old MODE / grid-mode boxes
+        oldControls|=dynamic_cast<juce::ToggleButton*>(child)!=nullptr;        // old SNAP / LOOP toggles
+        if(auto* t=dynamic_cast<juce::TextButton*>(child)) oldControls|=t->getButtonText()=="TOOLS";
+        if(auto* s=dynamic_cast<juce::Slider*>(child)) oldControls|=s->getName()=="RATE / Hz" || s->getName()=="ENV GRID BPM";
+        if(auto* sb=dynamic_cast<juce::ScrollBar*>(child)) oldControls|=sb->isVisible();
+    }
+    check(!oldControls,"no old LFO controls remain under / behind the new strip (one way to edit each value)");
+    const auto canvas=synth->lfoCanvas();
+    check(!canvas.isEmpty() && canvas.getHeight()>3.0f*static_cast<float>(strip.getHeight()),"the waveform stays dominant (> 3x the strip height)");
+    check(canvas.getBottom()<=static_cast<float>(strip.getY()),"waveform and strip never overlap");
+
+    // ---- TOOLS / FUNC ------------------------------------------------------
+    const auto before=bytes(); const auto revision=p.getUiModelRevision();
+    check(strip.page()==ui::LfoControlStrip::Page::Tools && strip.toolsViewport().isVisible() && !strip.funcViewport().isVisible(),"TOOLS is the default page");
+    strip.pageSelector().setSelected(1,juce::sendNotificationSync);
+    check(strip.page()==ui::LfoControlStrip::Page::Func && strip.funcViewport().isVisible() && !strip.toolsViewport().isVisible(),"FUNC replaces the tool controls");
+    strip.pageSelector().setSelected(0,juce::sendNotificationSync);
+    check(strip.page()==ui::LfoControlStrip::Page::Tools && strip.toolsViewport().isVisible(),"back to TOOLS");
+    check(bytes()==before && p.getUiModelRevision()==revision,"TOOLS / FUNC switching never touches instrument state (no audio change, no history)");
+    for(auto* c:{static_cast<juce::Component*>(&strip.modeButton(LfoMode::Loop)),static_cast<juce::Component*>(&strip.snapButton())}) {
+        c->mouseEnter(event(*c)); c->mouseExit(event(*c));
+    }
+    check(bytes()==before,"hovering icons never touches instrument state");
+
+    // ---- rate units: one canonical Hz value, three representations ---------
+    { auto m=mod(); m.lfo2.rateHz=2.0f; check(p.setUiModulationState(m),"LFO 2 at 2 Hz"); sync(); }
+    const auto rateBytes=bytes();
+    strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);
+    check(strip.rateText()=="2.00 Hz","HZ shows the canonical frequency");
+    strip.setRateUnit(ui::LfoControlStrip::RateUnit::Seconds);
+    check(strip.rateText()=="0.500 s","SECONDS shows the canonical period");
+    strip.setRateUnit(ui::LfoControlStrip::RateUnit::Beats);
+    check(std::abs(strip.currentBpm()-120.0)<1e-9 && strip.rateText()=="1/4","BEATS shows the musical division at the current tempo (2 Hz @ 120 BPM = 1/4)");
+    check(bytes()==rateBytes && lfo2().rateHz==2.0f,"switching units never changes the rate");
+    strip.unitSelector().setSelected(2,juce::sendNotificationSync);
+    check(strip.rateUnit()==ui::LfoControlStrip::RateUnit::Hz && strip.rateText()=="2.00 Hz" && bytes()==rateBytes,"unit selector click: view only");
+    strip.setRateUnit(ui::LfoControlStrip::RateUnit::Beats);
+    {   // BEATS knob steps through divisions and writes the canonical Hz.
+        const auto& table=ui::LfoControlStrip::divisions();
+        int eighth=-1, idx=0;
+        for(std::size_t i=0;i<table.size();++i) { const double hz=ui::LfoControlStrip::divisionHz(table[i],120.0); if(hz<.01 || hz>40.0) continue; if(std::string(table[i].name)=="1/8") eighth=idx; ++idx; }
+        check(eighth>=0,"1/8 is reachable at 120 BPM");
+        strip.rateKnob().setValue(eighth,juce::sendNotificationSync);
+        check(std::abs(lfo2().rateHz-4.0f)<1e-4f && strip.rateText()=="1/8","BEATS knob: 1/8 = 4 Hz canonical");
+    }
+    strip.rateField().setText("1/16",juce::sendNotificationSync);
+    check(std::abs(lfo2().rateHz-8.0f)<1e-4f && strip.rateText()=="1/16","typed division 1/16 -> 8 Hz");
+    strip.setRateUnit(ui::LfoControlStrip::RateUnit::Seconds);
+    strip.rateField().setText("0.25",juce::sendNotificationSync);
+    check(std::abs(lfo2().rateHz-4.0f)<1e-4f,"typed 0.25 s -> 4 Hz");
+    strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);
+    strip.rateField().setText("3.5",juce::sendNotificationSync);
+    check(lfo2().rateHz==3.5f && strip.rateText()=="3.50 Hz","typed 3.5 Hz");
+    for(const char* bad:{"abc","0","100","-2"}) { strip.rateField().setText(bad,juce::sendNotificationSync); check(lfo2().rateHz==3.5f && strip.rateText()=="3.50 Hz",(std::string("invalid rate text ignored: ")+bad).c_str()); }
+    strip.rateKnob().setValue(10.0,juce::sendNotificationSync);
+    check(std::abs(lfo2().rateHz-10.0f)<1e-4f,"HZ knob writes the canonical rate");
+    check(ui::LfoControlStrip::parseRate("1/4D",ui::LfoControlStrip::RateUnit::Beats,120.0).has_value() &&
+          ui::LfoControlStrip::parseRate("250ms",ui::LfoControlStrip::RateUnit::Seconds,120.0).value_or(0.0f)==4.0f &&
+          !ui::LfoControlStrip::parseRate("1/5",ui::LfoControlStrip::RateUnit::Beats,120.0).has_value(),"rate parser");
+    check(ui::LfoControlStrip::formatRate(2.3f,ui::LfoControlStrip::RateUnit::Beats,120.0).startsWith("~"),"an off-division rate is marked approximate in BEATS");
+    // ---- knob direction per unit (polish pass: SECONDS shows time) --------
+    {
+        auto& knob=strip.rateKnob();
+        const auto setKnob=[&](double v){ knob.setValue(v,juce::sendNotificationSync); return lfo2().rateHz; };
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Seconds);
+        const float fastest=setKnob(knob.getMinimum());
+        check(std::abs(fastest-40.0f)<1e-3f && strip.rateText()=="0.025 s","SECONDS knob minimum = shortest period (0.025 s) = highest rate (40 Hz)");
+        const float slowest=setKnob(knob.getMaximum());
+        check(std::abs(slowest-.01f)<1e-5f && strip.rateText()=="100.0 s","SECONDS knob maximum = longest period (100 s) = lowest rate (0.01 Hz)");
+        const float s1=1.0f/setKnob(1.0), s2=1.0f/setKnob(1.5), s3=1.0f/setKnob(.8);
+        check(std::abs(s1-1.0f)<1e-4f && s2>s1 && s3<s1,"SECONDS: clockwise lengthens the period, counter-clockwise shortens it");
+        check(knob.getValue()>knob.getMinimum() && std::abs(knob.getValue()-1.0/double(lfo2().rateHz))<1e-6,"SECONDS knob position is the displayed period");
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);
+        const float h0=setKnob(knob.getMinimum()), h1=setKnob(knob.getMaximum());
+        const float a=setKnob(2.0), b=setKnob(3.0);
+        check(std::abs(h0-.01f)<1e-5f && std::abs(h1-40.0f)<1e-3f && b>a,"HZ unchanged: minimum = 0.01 Hz, maximum = 40 Hz, clockwise = faster");
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Beats);
+        const float b0=setKnob(knob.getMinimum()), bMax=setKnob(knob.getMaximum());
+        const float b4=setKnob(4.0), b5=setKnob(5.0);
+        check(std::abs(b0-120.0f/60.0f/64.0f)<1e-5f && bMax>20.0f && b5>b4 && strip.rateText()!="","BEATS unchanged: minimum = 16/1 (slowest), clockwise = faster divisions");
+        // Unit switching at 2 Hz: display and knob change, the canonical rate never does.
+        { auto m=mod(); m.lfo2.rateHz=2.0f; p.setUiModulationState(m); sync(); }
+        const auto at2=bytes(); const auto rev=p.getUiModelRevision();
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);      const bool hzOk=strip.rateText()=="2.00 Hz" && std::abs(knob.getValue()-2.0)<1e-6;
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Seconds); const bool sOk=strip.rateText()=="0.500 s" && std::abs(knob.getValue()-.5)<1e-6;
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Beats);   const bool bOk=strip.rateText()=="1/4";
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);
+        check(hzOk && sOk && bOk && strip.rateText()=="2.00 Hz" && bytes()==at2 && p.getUiModelRevision()==rev && lfo2().rateHz==2.0f,
+              "2 Hz -> 0.500 s -> 1/4 -> 2 Hz: knob/display follow the unit, canonical Hz untouched (no state write)");
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Seconds);
+        for(const auto& [text,hz]:std::initializer_list<std::pair<const char*,float>>{{"2.5",.4f},{"2.5s",.4f},{"250ms",4.0f},{"0.25 s",4.0f}}) {
+            strip.rateField().setText(text,juce::sendNotificationSync);
+            check(std::abs(lfo2().rateHz-hz)<1e-5f && std::abs(knob.getValue()-1.0/double(hz))<1e-4,(std::string("typed seconds '")+text+"' -> canonical Hz, knob at that period").c_str());
+        }
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);
+    }
+    { auto m=mod(); m.lfo2.rateHz=0.37f; p.setUiModulationState(m); sync(); }
+    for(auto unit:{ui::LfoControlStrip::RateUnit::Beats,ui::LfoControlStrip::RateUnit::Seconds,ui::LfoControlStrip::RateUnit::Hz}) strip.setRateUnit(unit);
+    check(lfo2().rateHz==0.37f,"an existing (non-division) rate survives every unit view untouched");
+
+    // ---- behaviour icons -> canonical LfoMode ------------------------------
+    strip.modeButton(LfoMode::Loop).onClick();
+    check(lfo2().mode==LfoMode::Loop && strip.modeButton(LfoMode::Loop).getToggleState() && !strip.modeButton(LfoMode::Free).getToggleState(),"RETRIGGER = LfoMode::Loop (per-voice, restarts on note)");
+    strip.modeButton(LfoMode::Envelope).onClick();
+    check(lfo2().mode==LfoMode::Envelope && strip.modeButton(LfoMode::Envelope).getToggleState(),"ENVELOPE = LfoMode::Envelope (per-voice one-shot)");
+    strip.modeButton(LfoMode::Free).onClick();
+    check(lfo2().mode==LfoMode::Free && strip.modeButton(LfoMode::Free).getToggleState() && !strip.modeButton(LfoMode::Envelope).getToggleState(),"FREE = LfoMode::Free (global)");
+    check(modulationSourceSlot(ModSource::Lfo2,mod())<CompiledModulation::globalSourceCount,"FREE LFO 2 is a global source");
+    strip.modeButton(LfoMode::Loop).onClick();
+    check(modulationSourceSlot(ModSource::Lfo2,mod())>=CompiledModulation::globalSourceCount,"RETRIGGER LFO 2 is a per-voice source");
+    { auto m=mod(); m.lfo2.mode=LfoMode::Envelope; p.setUiModulationState(m); sync(); }
+    check(strip.modeButton(LfoMode::Envelope).getToggleState() && !strip.modeButton(LfoMode::Loop).getToggleState(),"external mode edits (Matrix/preset) are reflected: no separate LFO copy");
+    check(!strip.pingPongButton().isEnabled() && !strip.reverseButton().isEnabled(),"PING-PONG and REVERSE are disabled: no canonical traversal/direction state exists");
+    check(strip.forwardButton().getToggleState() && strip.forwardButton().isEnabled(),"FORWARD shows the (only) canonical traversal");
+    {
+        const auto dirBefore=bytes();
+        strip.reverseButton().setState(juce::Button::buttonDown); strip.reverseButton().setState(juce::Button::buttonNormal);
+        strip.forwardButton().onClick ? strip.forwardButton().onClick() : void();
+        check(bytes()==dirBefore,"direction controls never write state");
+    }
+    check(!strip.pingPongButton().getTooltip().isEmpty() && !strip.reverseButton().getTooltip().isEmpty() &&
+          strip.modeButton(LfoMode::Loop).getTooltip().startsWith("Retrigger"),"tooltips identify every icon");
+    {   // CUSTOM PATH lights only when the LFO carries custom points.
+        auto m=mod(); m.lfo2.pointCount=0; p.setUiModulationState(m); sync();
+        check(!strip.customPathButton().getToggleState(),"legacy built-in shape: CUSTOM PATH not lit");
+        m=mod(); m.lfo2.pointCount=3; m.lfo2.points[0]={0.0f,0.0f,0.0f}; m.lfo2.points[1]={0.5f,1.0f,0.0f}; m.lfo2.points[2]={1.0f,0.0f,0.0f};
+        check(p.setUiModulationState(m),"LFO 2 custom 3-point path"); sync();
+        check(strip.customPathButton().getToggleState(),"custom points: CUSTOM PATH lit");
+    }
+    // Rendered tint: the active mode icon contains red, the disabled ping-pong none.
+    {
+        auto& active=strip.modeButton(LfoMode::Envelope);
+        const auto a=redPixels(active), d=redPixels(strip.pingPongButton()), n=redPixels(strip.modeButton(LfoMode::Free));
+        check(a.first>40,"active icon renders red");
+        check(d.first==0 && n.first==0 && n.second>40,"normal icon renders grey (visible), disabled renders without red");
+        check(d.second<n.second,"disabled icon is darker than normal");
+        const auto cp=redPixels(strip.customPathButton());
+        check(strip.customPathButton().getToggleState() && cp.first==0 && cp.second>n.second/2,"CUSTOM PATH status renders neutral white (red is kept for selections)");
+    }
+
+    // ---- grid: two independent editor values -------------------------------
+    const auto gridBefore=bytes();
+    check(strip.gridRowsField().getName()=="LFO GRID HORIZONTAL" && strip.gridColumnsField().getName()=="LFO GRID VERTICAL" &&
+          strip.gridRowsField().getBottom()<=strip.gridColumnsField().getY(),"TOP = horizontal grid lines, BOTTOM = vertical grid lines (as drawn in the icon)");
+    strip.gridRowsField().setValue(24,juce::sendNotificationSync);
+    check(strip.gridRows()==24 && strip.gridColumns()==ui::LfoControlStrip::defaultGridColumns,"horizontal grid value (independent)");
+    strip.gridColumnsField().setValue(12,juce::sendNotificationSync);
+    check(strip.gridColumns()==12 && strip.gridRows()==24,"vertical grid value (independent)");
+    strip.gridColumnsField().setValue(0); strip.gridRowsField().setValue(-5);
+    check(strip.gridColumns()==1 && strip.gridRows()==1,"grid values never go to zero / negative");
+    strip.gridColumnsField().setValue(999);
+    check(strip.gridColumns()==ui::LfoControlStrip::maxGrid,"grid values are bounded");
+    strip.gridRowsField().setText("0",juce::sendNotificationSync);
+    check(strip.gridRows()==1,"typed 0 is clamped");
+    check(bytes()==gridBefore,"grid settings are editor state (no sound / save change)");
+
+    // ---- snap ---------------------------------------------------------------
+    strip.setGrid(8,4);
+    const auto pointsBefore=lfo2();
+    const bool snapWas=strip.snapButton().getToggleState();
+    strip.snapButton().onClick();
+    check(strip.snapButton().getToggleState()!=snapWas,"SNAP toggles");
+    strip.snapButton().onClick();
+    check(strip.snapButton().getToggleState()==snapWas,"SNAP toggles back");
+    bool same=pointsBefore.pointCount==lfo2().pointCount;
+    for(std::size_t i=0;i<pointsBefore.pointCount;++i) same&=pointsBefore.points[i].x==lfo2().points[i].x && pointsBefore.points[i].y==lfo2().points[i].y;
+    check(same && bytes()==gridBefore,"toggling SNAP never rewrites existing points");
+    if(!strip.snapButton().getToggleState()) strip.snapButton().onClick();
+    check(std::abs(synth->snapLfoX(.40f)-.375f)<1e-6f && std::abs(synth->snapLfoY(.40f)-.5f)<1e-6f,"SNAP on: x to 1/8, y to 1/2 (grid 8 x 4)");
+    {
+        const auto c=synth->lfoCanvas();
+        const auto at=[&](float x,float y){ return juce::Point<float>(c.getX()+x*c.getWidth(),c.getCentreY()-y*c.getHeight()*.46f); };
+        const auto click=[&](juce::Point<float> pos){
+            const juce::MouseEvent e{juce::Desktop::getInstance().getMainMouseSource(),pos,{},1,0,0,0,0,synth,synth,
+                                     juce::Time::getCurrentTime(),pos,juce::Time::getCurrentTime(),2,false};
+            synth->mouseDoubleClick(e);
+        };
+        const auto has=[&](float x,float y,float tol){ const auto l=lfo2(); for(std::size_t i=0;i<l.pointCount;++i) if(std::abs(l.points[i].x-x)<tol && std::abs(l.points[i].y-y)<tol) return true; return false; };
+        const auto n0=lfo2().pointCount;
+        click(at(.40f,.40f));
+        check(lfo2().pointCount==n0+1 && has(.375f,.5f,1e-5f),"SNAP on: a new point lands exactly on the grid (0.375, 0.5)");
+        strip.snapButton().onClick();
+        check(!strip.snapButton().getToggleState() && std::abs(synth->snapLfoX(.4f)-.4f)<1e-7f,"SNAP off: identity");
+        click(at(.62f,-.30f));
+        check(lfo2().pointCount==n0+2 && has(.62f,-.30f,.01f) && !has(.625f,-.5f,1e-5f),"SNAP off: a new point lands where clicked");
+        strip.snapButton().onClick();
+    }
+
+    // ---- FUNC bank ---------------------------------------------------------
+    for(std::size_t i=0;i<ui::LfoControlStrip::funcCount;++i) {
+        const auto& info=ui::LfoControlStrip::funcInfo()[i];
+        check(strip.funcKnob(i).isEnabled()==info.implemented && !strip.funcKnob(i).getTooltip().isEmpty() && strip.funcLabel(i).getText()==info.name,
+              (std::string("FUNC ")+info.name+": disabled (no canonical LFO parameter), labelled, explained").c_str());
+    }
+    const std::array<const char*,9> funcOrder{"SMOOTH","ATTACK","DELAY","PHASE","STEREO","SKEW","QUANTIZE","ENTROPY","FRACTURE"};
+    bool order=true; for(std::size_t i=0;i<9;++i) order&=std::string(ui::LfoControlStrip::funcInfo()[i].name)==funcOrder[i];
+    check(order,"FUNC order");
+
+    // ---- one canonical LFO: Matrix / NODES ---------------------------------
+    {
+        auto m=mod(); m.routes[0]={m.nextRouteId++,true,ModSource::Lfo2,{ModDestination::Cutoff,0,0},0.5f,false};
+        check(p.setUiModulationState(m),"route from LFO 2"); sync(); matrix->syncFromModel(); page->syncFromModel();
+        const auto rid=mod().routes[0].id;
+        strip.modeButton(LfoMode::Free).onClick();
+        sync(); matrix->syncFromModel(); page->syncFromModel();
+        bool nodes=false; for(const auto& l:page->controlGraph().links) nodes|=l.routeId==rid;
+        check(mod().routes[0].source==ModSource::Lfo2 && mod().lfo2.mode==LfoMode::Free && nodes && matrix->routeCount()>=1,
+              "strip edits change the one LFO 2 that the Matrix and NODES route from (same source id, same route)");
+        check(synth->sourceRow(ModSource::Lfo2)->routes().size()==1,"the SYNTH LFO 2 card shows the route");
+    }
+
+    // ---- preset compatibility ----------------------------------------------
+    {
+        auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256);
+        const auto init=encodeInstrumentState(q->getUiInstrumentState());
+        auto s=q->getUiInstrumentState();
+        s.modulation.lfo1.mode=LfoMode::Loop; s.modulation.lfo1.rateHz=3.3f;
+        s.modulation.lfo3.mode=LfoMode::Envelope; s.modulation.lfo3.shape=LfoShape::Saw; s.modulation.lfo3.pointCount=0;
+        const auto legacy=encodeInstrumentState(s);
+        q->setStateInformation(legacy.data(),static_cast<int>(legacy.size()));
+        auto ed=std::unique_ptr<juce::AudioProcessorEditor>(q->createEditor()); ed->setVisible(true); ed->setSize(1500,920);
+        ui::ModulationPanel* qs=nullptr; walk(*ed,[&](auto& c){ if(auto* x=dynamic_cast<ui::ModulationPanel*>(&c)) qs=x; });
+        check(qs && qs->selectSource(ModSource::Lfo1),"preset: LFO 1 editor");
+        check(qs->lfoStrip().modeButton(LfoMode::Loop).getToggleState() && qs->lfoStrip().rateText()=="3.30 Hz","preset LFO 1 (Loop, 3.3 Hz) initialises the strip");
+        check(qs->selectSource(ModSource::Lfo3) && qs->lfoStrip().modeButton(LfoMode::Envelope).getToggleState() && !qs->lfoStrip().customPathButton().getToggleState(),
+              "preset LFO 3 (Envelope, built-in saw) initialises the strip");
+        qs->lfoStrip().setPage(ui::LfoControlStrip::Page::Func); qs->lfoStrip().setPage(ui::LfoControlStrip::Page::Tools);
+        qs->lfoStrip().setRateUnit(ui::LfoControlStrip::RateUnit::Beats); qs->lfoStrip().setGrid(32,16);
+        check(encodeInstrumentState(q->getUiInstrumentState())==legacy,"opening / browsing the LFO editor leaves an existing preset byte-identical");
+        check(init[7]==legacy[7] && init[7]<31,"no new save version");
+        auto r=std::make_unique<OrigamiAudioProcessor>(); r->prepareToPlay(48000.0,256);
+        r->setStateInformation(legacy.data(),static_cast<int>(legacy.size()));
+        auto r2=std::make_unique<OrigamiAudioProcessor>(); r2->prepareToPlay(48000.0,256);
+        r2->setStateInformation(legacy.data(),static_cast<int>(legacy.size()));
+        auto ed2=std::unique_ptr<juce::AudioProcessorEditor>(r2->createEditor());
+        const auto a=renderNote(*r,60,.8f,4096), b=renderNote(*r2,60,.8f,4096);
+        bool identical=true; for(int ch=0;ch<2;++ch) for(int i=0;i<4096;++i) identical&=a.getSample(ch,i)==b.getSample(ch,i);
+        check(identical,"an LFO preset sounds identical with the new editor open");
+    }
+
+    // ---- layout at minimum / normal / large --------------------------------
+    const auto layoutOk=[&](const std::string& label) {
+        synth->selectSource(ModSource::Lfo2); sync();
+        bool ok=strip.isVisible() && strip.getHeight()<=ui::LfoControlStrip::preferredHeight+2 && synth->getLocalBounds().contains(strip.getBounds());
+        const auto c=synth->lfoCanvas();
+        ok&=c.getHeight()>3.0f*static_cast<float>(strip.getHeight()) && c.getBottom()<=static_cast<float>(strip.getY());
+        for(auto pg:{ui::LfoControlStrip::Page::Tools,ui::LfoControlStrip::Page::Func}) {
+            strip.setPage(pg);
+            auto& vp=pg==ui::LfoControlStrip::Page::Tools ? strip.toolsViewport() : strip.funcViewport();
+            auto* content=vp.getViewedComponent();
+            std::vector<juce::Component*> kids; for(auto* k:content->getChildren()) if(k->isVisible()) kids.push_back(k);
+            for(std::size_t i=0;i<kids.size();++i) {
+                ok&=content->getLocalBounds().contains(kids[i]->getBounds()) && kids[i]->getHeight()>=9;
+                for(std::size_t j=i+1;j<kids.size();++j) ok&=!kids[i]->getBounds().intersects(kids[j]->getBounds());
+            }
+            const bool scrolls=content->getWidth()>vp.getWidth();
+            ok&=!scrolls || content->getHeight()+vp.getScrollBarThickness()<=vp.getHeight(); // the bar has its own gutter
+            ok&=!strip.pageSelector().getBounds().intersects(vp.getBounds());
+        }
+        // Groups: none overlap, every control sits inside its own group, icons keep a usable size.
+        strip.setPage(ui::LfoControlStrip::Page::Tools);
+        const auto& g=strip.toolGroups();
+        for(std::size_t i=0;i<g.size();++i) for(std::size_t j=i+1;j<g.size();++j) ok&=!g[i].intersects(g[j]);
+        ok&=g[0].contains(strip.rateKnob().getBounds()) && g[0].contains(strip.unitSelector().getBounds()) && g[0].contains(strip.rateField().getBounds());
+        for(auto m:{LfoMode::Loop,LfoMode::Envelope,LfoMode::Free}) ok&=g[1].contains(strip.modeButton(m).getBounds());
+        ok&=g[1].contains(strip.pingPongButton().getBounds()) && g[1].contains(strip.customPathButton().getBounds());
+        ok&=g[2].contains(strip.gridIcon().getBounds()) && g[2].contains(strip.gridColumnsField().getBounds()) && g[2].contains(strip.gridRowsField().getBounds()) && g[2].contains(strip.snapButton().getBounds());
+        ok&=g[3].contains(strip.forwardButton().getBounds()) && g[3].contains(strip.reverseButton().getBounds());
+        ok&=strip.gridRowsField().getBottom()<=strip.gridColumnsField().getY() && strip.forwardButton().getBottom()<=strip.reverseButton().getY();
+        ok&=g[3].getRight()==strip.toolsViewport().getViewedComponent()->getWidth();   // direction at the far right
+        const auto glyph=strip.modeButton(LfoMode::Free).glyphArea();
+        const float frac=glyph.getHeight()/static_cast<float>(strip.modeButton(LfoMode::Free).getHeight());
+        ok&=frac>=.55f && frac<=.72f && glyph.getHeight()>=28.0f;
+        // Polish-pass density (design units): substantial controls, tight groups.
+        const auto knobCircle=[](const juce::Component& k){ return juce::jmin(k.getWidth(),k.getHeight())-6; };
+        ok&=knobCircle(strip.rateKnob())>=34 && strip.modeButton(LfoMode::Free).getWidth()>=38 && strip.modeButton(LfoMode::Free).getHeight()>=46;
+        ok&=strip.snapButton().getBounds().getHeight()==strip.modeButton(LfoMode::Free).getHeight() && strip.snapButton().getWidth()>=37;
+        ok&=strip.gridRowsField().getHeight()>=22 && strip.rateField().getWidth()>=70 && strip.unitSelector().getWidth()>=60 && strip.pageSelector().getWidth()>=64;
+        for(std::size_t i=0;i+1<g.size();++i) ok&=g[i+1].getX()-g[i].getRight()>=4 && g[i+1].getX()-g[i].getRight()<=8;
+        for(const auto& gr:g) ok&=gr.getY()==g[0].getY() && gr.getHeight()==g[0].getHeight();
+        ok&=strip.pageSelector().getY()==g[0].getY()+strip.toolsViewport().getY() && strip.pageSelector().getHeight()==g[0].getHeight();
+        ok&=g[1].getRight()-strip.customPathButton().getRight()<=6 && strip.modeButton(LfoMode::Loop).getX()-g[1].getX()<=6;
+        ok&=!strip.toolsViewport().getHorizontalScrollBar().isVisible(); // one row at every editor size
+        strip.setPage(ui::LfoControlStrip::Page::Func);
+        ok&=knobCircle(strip.funcKnob(0))>=34 && !strip.funcViewport().getHorizontalScrollBar().isVisible();
+        for(std::size_t i=0;i+1<ui::LfoControlStrip::funcCount;++i) ok&=!strip.funcLabel(i).getBounds().intersects(strip.funcLabel(i+1).getBounds()) && strip.funcLabel(i).getY()==strip.funcLabel(i+1).getY();
+        strip.setPage(ui::LfoControlStrip::Page::Tools);
+        check(ok,("LFO strip layout: "+label).c_str());
+    };
+    layoutOk("normal 1500x920");
+    for(const auto size:{std::pair<int,int>{960,600},{2240,1400}}) {
+        editor->setSize(size.first,size.second);
+        layoutOk(std::to_string(size.first)+"x"+std::to_string(size.second));
+    }
+    editor->setSize(1500,920);
+    {   // Responsive: a strip narrower than its controls scrolls (never shrinks).
+        const auto saved=strip.getBounds();
+        strip.setBounds(saved.withWidth(360));
+        auto& vp=strip.toolsViewport();
+        check(vp.getViewedComponent()->getWidth()==ui::LfoControlStrip::minimumToolsWidth() && vp.getHorizontalScrollBar().isVisible() &&
+              vp.getViewedComponent()->getHeight()+vp.getScrollBarThickness()<=vp.getHeight() && strip.modeButton(LfoMode::Free).getWidth()==38,
+              "narrow strip: TOOLS scrolls horizontally in its own gutter, controls keep their size");
+        strip.setPage(ui::LfoControlStrip::Page::Func);
+        check(strip.funcViewport().getViewedComponent()->getWidth()==ui::LfoControlStrip::minimumFuncWidth() && strip.funcKnob(0).getWidth()==44,
+              "narrow strip: FUNC scrolls, knobs keep their size");
+        strip.setPage(ui::LfoControlStrip::Page::Tools);
+        strip.setBounds(saved);
+    }
+
+    // ---- optional renders for the visual audit -----------------------------
+    if(const char* dir=std::getenv("ORIGAMI_SNAPSHOT_DIR")) {
+        {   // Geometry report (design units == px at the 1440 x 900 default editor).
+            editor->setSize(1440,900); synth->selectSource(ModSource::Lfo2); strip.setPage(ui::LfoControlStrip::Page::Tools);
+            const auto r=[](const juce::Component& c){ return c.getBounds().toString().toStdString(); };
+            std::cerr<<"[lfo geometry] panel "<<r(*synth)<<" strip "<<r(strip)<<" canvas "<<synth->lfoCanvas().toString()<<"\n";
+            std::cerr<<"[lfo geometry] page "<<r(strip.pageSelector())<<" unit "<<r(strip.unitSelector())<<" knob "<<r(strip.rateKnob())<<" value "<<r(strip.rateField())<<"\n";
+            std::cerr<<"[lfo geometry] mode "<<r(strip.modeButton(LfoMode::Free))<<" glyph "<<strip.modeButton(LfoMode::Free).glyphArea().toString()<<" snap "<<r(strip.snapButton())<<" gridIcon "<<r(strip.gridIcon())<<" field "<<r(strip.gridRowsField())<<" fwd "<<r(strip.forwardButton())<<"\n";
+            for(const auto& g:strip.toolGroups()) std::cerr<<"[lfo geometry] group "<<g.toString()<<"\n";
+            strip.setPage(ui::LfoControlStrip::Page::Func);
+            std::cerr<<"[lfo geometry] func knob "<<r(strip.funcKnob(0))<<" label "<<r(strip.funcLabel(0))<<" funcContent "<<strip.funcViewport().getViewedComponent()->getBounds().toString()<<"\n";
+            strip.setPage(ui::LfoControlStrip::Page::Tools);
+            editor->setSize(1500,920);
+        }
+        const auto shot=[&](const std::string& name,float scale) {
+            const auto r=synth->getBoundsInParent();
+            const auto img=editor->createComponentSnapshot(editor->getLocalArea(synth->getParentComponent(),r),true,scale);
+            juce::File f(juce::String(dir)+"/"+name+".png"); f.deleteFile(); juce::FileOutputStream out(f); juce::PNGImageFormat{}.writeImageToStream(img,out);
+        };
+        const auto setLfo=[&](LfoMode mode){ auto m=mod(); m.lfo2.mode=mode; p.setUiModulationState(m); sync(); };
+        synth->selectSource(ModSource::Lfo2); strip.setGrid(16,8); strip.setRateUnit(ui::LfoControlStrip::RateUnit::Beats);
+        setLfo(LfoMode::Free); if(strip.snapButton().getToggleState()) strip.snapButton().onClick();
+        shot("A_tools_normal",1.0f); shot("H_active_free",1.0f);
+        strip.setPage(ui::LfoControlStrip::Page::Func); shot("B_func_normal",1.0f); shot("L_disabled_func",2.0f); strip.setPage(ui::LfoControlStrip::Page::Tools);
+        setLfo(LfoMode::Loop); shot("G_active_retrigger",1.0f);
+        strip.snapButton().onClick(); shot("J_snap_enabled",1.0f);
+        shot("M_retina_2x",2.0f);
+        shot("K_reverse_disabled",2.0f);
+        setLfo(LfoMode::Envelope); shot("I_envelope_pingpong_disabled",2.0f);
+        editor->setSize(960,600); synth->selectSource(ModSource::Lfo2); shot("C_tools_min",1.0f); strip.setPage(ui::LfoControlStrip::Page::Func); shot("D_func_min",1.0f); strip.setPage(ui::LfoControlStrip::Page::Tools);
+        editor->setSize(2240,1400); synth->selectSource(ModSource::Lfo2); shot("E_tools_large",1.0f); strip.setPage(ui::LfoControlStrip::Page::Func); shot("F_func_large",1.0f); strip.setPage(ui::LfoControlStrip::Page::Tools);
+        editor->setSize(1500,920);
+        const auto stripShot=[&](const std::string& name,float scale){
+            const auto img=strip.createComponentSnapshot(strip.getLocalBounds(),true,scale);
+            juce::File f(juce::String(dir)+"/"+name+".png"); f.deleteFile(); juce::FileOutputStream out(f); juce::PNGImageFormat{}.writeImageToStream(img,out);
+        };
+        stripShot("S_strip_tools_3x",3.0f); strip.setPage(ui::LfoControlStrip::Page::Func); stripShot("S_strip_func_3x",3.0f); strip.setPage(ui::LfoControlStrip::Page::Tools);
+    }
+}
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -4040,6 +4449,7 @@ void run() {
     nodesN07Audit();
     nodesMenuHierarchyAudit();
     synthDynamicMacrosAudit();
+    lfoEditorControlsAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

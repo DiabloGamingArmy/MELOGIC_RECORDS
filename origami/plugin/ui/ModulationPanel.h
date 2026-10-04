@@ -15,11 +15,13 @@
 // mct-origami-v34.0.0-random-lfo
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 // mct-origami-v34.3.0-lfo-interaction-mod-properties
+// mct-origami-lfo-editor-controls
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
 #include "ModulationSourceRow.h"
 #include "VisualizationSettings.h"
+#include "LfoControlStrip.h"
 #include <deque>
 #include <memory>
 #include <optional>
@@ -40,6 +42,15 @@ public:
     bool revealSourceAtParentPoint(juce::Point<int> parentPoint);
     // The rail's card for a source (null when the source has no card).
     const ModulationSourceRow* sourceRow(ModSource) const noexcept;
+    // Selects a source's editor (as clicking its card does). False when the
+    // source has no active card.
+    bool selectSource(ModSource);
+    // The LFO editor's TOOLS / FUNC strip and point canvas (inspection).
+    LfoControlStrip& lfoStrip() noexcept { return lfoStrip_; }
+    juce::Rectangle<float> lfoCanvas() const noexcept { return selected_>=3 && selected_<=6 ? envCanvas_ : juce::Rectangle<float>{}; }
+    // Editor grid quantisation of an LFO point (identity while SNAP is off).
+    float snapLfoX(float) const noexcept;
+    float snapLfoY(float) const noexcept;
 
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
@@ -155,9 +166,10 @@ private:
     NativeComboBox sequenceStepCount_{},sequenceDirection_{},sequenceLoopMode_{};
     juce::ToggleButton sequenceSync_{"SYNC"};
     bool commitSequenceSteps();
-    NativeComboBox shape_,mode_;
-    juce::ToggleButton lfoLoop_{"LOOP"};
-    juce::TextButton lfoTools_{"TOOLS"};
+    // LFO editor bottom strip (TOOLS / FUNC). Replaces the old RATE / TOOLS /
+    // mode row; the strip is a view, every sound edit goes through commitLfo.
+    LfoControlStrip lfoStrip_;
+    bool commitLfo(const std::function<void(LfoSettings&)>&);
 
     struct MsegPoint { float x=0.0f,y=0.0f,curve=0.0f; };
     struct MsegShape {
@@ -171,7 +183,7 @@ private:
     void resetMsegShape(MsegShape&) noexcept;
     void loadMsegShapeFromSettings(MsegShape&,const LfoSettings&) noexcept;
     bool commitMsegShape();
-    void showLfoToolsMenu();
+    void showLfoToolsMenu(juce::Component& anchor);
     float msegValue(const MsegShape&,float) const noexcept;
     juce::Point<float> msegPixel(const MsegPoint&) const noexcept;
     int hitMsegPoint(juce::Point<float>) const noexcept;
