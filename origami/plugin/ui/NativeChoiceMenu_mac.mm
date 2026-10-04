@@ -8,7 +8,44 @@
 -(void)choose:(id)sender {selectedId_=[sender tag];}
 @end
 namespace mct::origami::ui {
-void showNativeChoiceMenu(juce::Component& anchor,const juce::String& title,const std::vector<NativeChoiceItem>& items,int current,std::function<void(int)> callback) {
+namespace {
+NSString* nsString(const juce::String& text,NSString* fallback) {
+    NSString* s=[NSString stringWithUTF8String:text.toRawUTF8()];
+    return s!=nil ? s : fallback;
+}
+NSMenuItem* choiceItem(const NativeChoiceItem& choice,int current,MCTOrigamiChoiceTarget* target) {
+    if(choice.id==0) return [NSMenuItem separatorItem];
+    NSMenuItem* item=[[NSMenuItem alloc]initWithTitle:nsString(choice.text,@"") action:@selector(choose:) keyEquivalent:@""];
+    [item setTarget:target];[item setTag:choice.id];[item setEnabled:choice.enabled?YES:NO];
+    [item setState:(choice.checked || choice.id==current)?NSControlStateValueOn:NSControlStateValueOff];
+    if(choice.tooltip.isNotEmpty()) [item setToolTip:nsString(choice.tooltip,@"")];
+#if !__has_feature(objc_arc)
+    [item autorelease];
+#endif
+    return item;
+}
+// mct-origami-nodes-menu-hierarchy-fix: categories as real nested submenus.
+// A node's direct entries first, a separator, then its sub-categories.
+void addNode(NSMenu* menu,const NativeChoiceNode& node,int current,MCTOrigamiChoiceTarget* target) {
+    for(const auto& choice:node.items) [menu addItem:choiceItem(choice,current,target)];
+    if(!node.items.empty() && !node.children.empty()) [menu addItem:[NSMenuItem separatorItem]];
+    for(const auto& child:node.children) {
+        NSString* name=nsString(child.name,@"Other");
+        NSMenuItem* parent=[[NSMenuItem alloc]initWithTitle:name action:nil keyEquivalent:@""];
+        NSMenu* submenu=[[NSMenu alloc]initWithTitle:name];
+        [submenu setAutoenablesItems:NO];
+        addNode(submenu,child,current,target);
+        [parent setSubmenu:submenu];
+        [menu addItem:parent];
+#if !__has_feature(objc_arc)
+        [submenu release];[parent release];
+#endif
+    }
+}
+}
+
+void showNativeChoiceMenu(juce::Component& anchor,const juce::String& title,const std::vector<NativeChoiceItem>& items,int current,std::function<void(int)> callback,
+                          NativeMenuLayout layout) {
     auto* peer=anchor.getPeer();if(!peer||!peer->getNativeHandle())return;
     NSView* view=(__bridge NSView*)peer->getNativeHandle();if(!view||!view.window)return;
     auto* target=[[MCTOrigamiChoiceTarget alloc]init];
@@ -21,7 +58,8 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String& title,cons
     NSMenu* activeMenu=menu;
     std::vector<NSMenu*> ownedSubmenus;
 
-    for(const auto& choice:items) {
+    if(layout==NativeMenuLayout::Hierarchical) addNode(menu,buildNativeChoiceTree(items),current,target);
+    else for(const auto& choice:items) {
         if(choice.group!=activeGroup) {
             activeGroup=choice.group;
             activeMenu=menu;

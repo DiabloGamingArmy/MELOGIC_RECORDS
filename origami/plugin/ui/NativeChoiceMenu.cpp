@@ -1,10 +1,30 @@
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
+// mct-origami-nodes-menu-hierarchy-fix
 #include "NativeChoiceMenu.h"
 namespace mct::origami::ui {
-void showNativeChoiceMenu(juce::Component& anchor,const juce::String&,const std::vector<NativeChoiceItem>& items,int current,std::function<void(int)> callback) {
+namespace {
+void addChoice(juce::PopupMenu& menu,const NativeChoiceItem& item,int current) {
+    if(item.id==0) { menu.addSeparator(); return; }
+    menu.addItem(item.id,item.text,item.enabled,item.checked || item.id==current);
+}
+// A node's direct entries first, a separator, then its sub-categories.
+void addNode(juce::PopupMenu& menu,const NativeChoiceNode& node,int current) {
+    for(const auto& item:node.items) addChoice(menu,item,current);
+    if(!node.items.empty() && !node.children.empty()) menu.addSeparator();
+    for(const auto& child:node.children) {
+        juce::PopupMenu submenu;
+        addNode(submenu,child,current);
+        menu.addSubMenu(child.name,submenu);
+    }
+}
+}
+
+void showNativeChoiceMenu(juce::Component& anchor,const juce::String&,const std::vector<NativeChoiceItem>& items,int current,std::function<void(int)> callback,
+                          NativeMenuLayout layout) {
     juce::PopupMenu menu;
-    for(std::size_t i=0;i<items.size();) {
+    if(layout==NativeMenuLayout::Hierarchical) addNode(menu,buildNativeChoiceTree(items),current);
+    else for(std::size_t i=0;i<items.size();) {
         if(items[i].group.isEmpty()) {
             const auto& item=items[i++];
             if(item.id==0) { menu.addSeparator(); continue; }

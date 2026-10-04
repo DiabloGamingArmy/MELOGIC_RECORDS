@@ -3659,6 +3659,132 @@ void nodesN07Audit() {
 }
 
 
+// mct-origami-nodes-menu-hierarchy-fix
+void nodesMenuHierarchyAudit() {
+    using namespace mct::origami;
+    using T=ControlOpType;
+    using Item=ui::NativeChoiceItem;
+    const auto item=[](int id,const char* text,const char* group){ return Item{id,text,true,group}; };
+    const auto names=[](const ui::NativeChoiceNode& n){ juce::StringArray s; for(const auto& c:n.children) s.add(c.name); return s; };
+    const auto find=[](const ui::NativeChoiceNode& n,const juce::String& name)->const ui::NativeChoiceNode* {
+        for(const auto& c:n.children) if(c.name==name) return &c; return nullptr; };
+    // 1-3: one, two and three levels.
+    {
+        const auto t=ui::buildNativeChoiceTree({item(1,"A","EFFECTS"),item(2,"B","EFFECTS / DISTORTION"),item(3,"C","EFFECTS / FILTER / EQ")});
+        const auto* fx=find(t,"EFFECTS");
+        check(t.children.size()==1 && fx && fx->items.size()==1 && fx->items[0].id==1,"one-level path: EFFECTS holds its module");
+        check(fx && find(*fx,"DISTORTION") && find(*fx,"DISTORTION")->items[0].id==2,"two-level path: EFFECTS > DISTORTION");
+        const auto* filter=fx ? find(*fx,"FILTER") : nullptr;
+        check(filter && find(*filter,"EQ") && find(*filter,"EQ")->items[0].id==3 && filter->items.empty(),"three-level path: EFFECTS > FILTER > EQ");
+    }
+    // 4: trailing / empty components never create a category.
+    {
+        const auto t=ui::buildNativeChoiceTree({item(1,"A","CONTROL /"),item(2,"B"," CONTROL //  MATH / ")});
+        const auto* control=find(t,"CONTROL");
+        check(t.children.size()==1 && control && control->items.size()==1 && control->items[0].id==1 && names(*control)==juce::StringArray("MATH"),
+              "\"CONTROL /\" normalizes to CONTROL (no empty submenu); components are trimmed");
+    }
+    // 5-6: one root per category; direct modules coexist with sub-categories.
+    {
+        const auto t=ui::buildNativeChoiceTree({item(1,"P","CONTROL"),item(2,"M","CONTROL / MATH"),item(3,"S","CONTROL / SHAPING"),item(4,"Q","CONTROL")});
+        const auto* control=find(t,"CONTROL");
+        check(t.children.size()==1 && control!=nullptr,"duplicate root: exactly one CONTROL");
+        check(control && control->items.size()==2 && control->items[0].id==1 && control->items[1].id==4 && names(*control)==juce::StringArray("MATH","SHAPING"),
+              "a category keeps its direct modules beside its sub-categories");
+    }
+    // 7-8: filtering prunes empty branches; order follows the catalog, deterministically.
+    {
+        std::vector<Item> all{item(1,"Z","B / Y"),item(2,"A","A"),item(3,"M","B / X")};
+        std::vector<Item> filtered; for(const auto& i:all) if(i.id!=2) filtered.push_back(i);
+        const auto t=ui::buildNativeChoiceTree(filtered);
+        check(names(t)==juce::StringArray("B") && names(*find(t,"B"))==juce::StringArray("Y","X"),"filtered catalog: removed items leave no empty branch; order is first use (not alphabetical)");
+        check(names(ui::buildNativeChoiceTree(all))==juce::StringArray("B","A") && names(ui::buildNativeChoiceTree(all))==names(ui::buildNativeChoiceTree(all)),"ordering is deterministic");
+    }
+
+    // ---- the real Add Module catalog ----------------------------------------
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::FxPage* page=nullptr; juce::TextButton* nodesButton=nullptr;
+    walk(*editor,[&](auto& c){ if(auto* f=dynamic_cast<ui::FxPage*>(&c)) page=f;
+        if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="NODES" && !nodesButton) nodesButton=b; });
+    check(page && nodesButton,"menu audit: NODES page");
+    nodesButton->onClick();
+    const auto catalog=page->moduleMenuItems(true);
+    const auto tree=ui::buildNativeChoiceTree(catalog);
+    // Visual verification: the exact tree the native menu is built from.
+    std::function<void(const ui::NativeChoiceNode&,int)> dump=[&](const ui::NativeChoiceNode& n,int depth) {
+        for(const auto& c:n.children) {
+            std::cerr<<"[menu] "<<std::string(std::size_t(depth*4),' ')<<c.name<<" >  ("<<c.items.size()<<" items)\n";
+            dump(c,depth+1);
+        }
+    };
+    dump(tree,0);
+    check(names(tree)==juce::StringArray("EFFECTS","ROUTING","SOURCES","CONTROL","EVENT","SEQUENCING"),"top level: EFFECTS ROUTING SOURCES CONTROL EVENT SEQUENCING (no slash paths)");
+    bool slashFree=true,emptyFree=true;
+    std::function<void(const ui::NativeChoiceNode&)> walkTree=[&](const ui::NativeChoiceNode& n) {
+        for(const auto& c:n.children) { emptyFree&=c.name.trim().isNotEmpty() && !c.empty(); walkTree(c); }
+        for(const auto& i:n.items) emptyFree&=i.text.trim().isNotEmpty();
+    };
+    walkTree(tree);
+    for(const auto& c:tree.children) slashFree&=!c.name.contains("/");
+    check(slashFree && emptyFree,"no top-level path labels, no blank category or blank item (the \"CONTROL /\" ghost is gone)");
+    const auto* effects=find(tree,"EFFECTS");
+    check(effects && names(*effects)==juce::StringArray("DYNAMICS","FILTER / EQ","DISTORTION","MODULATION","SPATIAL","TIME","UTILITY") && effects->items.empty(),
+          "EFFECTS > DYNAMICS, FILTER / EQ (one canonical category), DISTORTION, MODULATION, SPATIAL, TIME, UTILITY");
+    const auto* control=find(tree,"CONTROL");
+    check(control && names(*control)==juce::StringArray("SOURCES","MATH","SHAPING","UTILITY") && control->items.size()==1 && control->items[0].text=="Parameter...",
+          "CONTROL > [Parameter...] + SOURCES, MATH, SHAPING, UTILITY");
+    const auto* event=find(tree,"EVENT");
+    check(event && names(*event)==juce::StringArray("SOURCES","CONVERSION","LOGIC","STATEFUL","TARGETS") && event->items.empty(),"EVENT > SOURCES, CONVERSION, LOGIC, STATEFUL, TARGETS");
+    const auto* seq=find(tree,"SEQUENCING");
+    check(seq && names(*seq)==juce::StringArray("SEQUENCING","GENERATIVE"),"SEQUENCING > SEQUENCING, GENERATIVE (canonical category names)");
+    int ops=0; for(const auto& i:catalog) ops+=i.id>=ui::FxModuleMenu::controlOperatorBase;
+    check(ops==14+21+9,"every catalog node appears exactly once (14 CONTROL + 21 EVENT + 9 SEQUENCING)");
+    // 9: search stays flat, with category context.
+    page->showNodePalette(fx::FxPoint{600.0f,700.0f});
+    auto& palette=page->nodePalette();
+    palette.setQuery("prob");
+    check(!palette.results().empty() && palette.results().front().label=="PROBABILITY" && palette.results().front().group=="SEQUENCING > GENERATIVE",
+          "search is flat: \"prob\" -> PROBABILITY directly, with \"SEQUENCING > GENERATIVE\" context");
+    palette.setQuery("distortion");
+    bool drive=false; for(const auto& r:palette.results()) drive|=r.group=="EFFECTS > DISTORTION";
+    check(drive,"searching a category name finds its modules (EFFECTS > DISTORTION)");
+    palette.dismiss();
+    // 10: cable-drop filtering before the tree: only compatible, no empty branches.
+    const auto clock=page->addControlOperator(T::Clock);
+    const auto drop=ui::buildNativeChoiceTree(page->controlCreateItems(nodes::ControlEndpoint::fromOperator(*clock)));
+    bool compatible=true;
+    std::function<void(const ui::NativeChoiceNode&)> checkDrop=[&](const ui::NativeChoiceNode& n) {
+        for(const auto& c:n.children) { compatible&=!c.empty(); checkDrop(c); }
+        for(const auto& i:n.items) if(i.id>=ui::FxModuleMenu::controlOperatorBase) {
+            const auto* info=controlOpInfo(static_cast<T>(i.id-ui::FxModuleMenu::controlOperatorBase));
+            bool takes=false; for(std::uint8_t k=0;k<info->inputs;++k) takes|=info->inputSignals[k]==ControlSignal::Event;
+            compatible&=takes;
+        }
+    };
+    checkDrop(drop);
+    for(const auto& n:names(drop)) std::cerr<<"[menu] cable-drop root "<<n<<"\n";
+    check(compatible && names(drop)==juce::StringArray("EVENT") && find(drop,"EVENT")!=nullptr && find(*find(drop,"EVENT"),"SOURCES")==nullptr,
+          "EVENT cable drop: only EVENT consumers; branches without a compatible node (EVENT > SOURCES) are pruned");
+    // 11: a leaf inserts exactly its node type.
+    const ui::NativeChoiceItem* leaf=nullptr;
+    if(seq) if(const auto* generative=find(*seq,"GENERATIVE")) for(const auto& i:generative->items) if(i.text=="PROBABILITY") leaf=&i;
+    const auto before=p.getUiInstrumentState().modulation;
+    if(leaf) page->addFromCatalog(leaf->id,fx::FxPoint{700.0f,800.0f});
+    bool added=false; for(const auto& o:p.getUiInstrumentState().modulation.operators) added|=o.id && o.type==T::Probability;
+    check(leaf && added,"choosing the SEQUENCING > GENERATIVE > PROBABILITY leaf inserts a PROBABILITY node");
+    // 12: one sequencer.
+    page->addControlOperator(T::Sequencer);
+    bool disabled=false; juce::String reason;
+    const auto after=ui::buildNativeChoiceTree(page->moduleMenuItems(true));
+    if(const auto* family=find(after,"SEQUENCING")) if(const auto* category=find(*family,"SEQUENCING"))
+        for(const auto& i:category->items) if(i.text=="SEQUENCER") { disabled=!i.enabled; reason=i.tooltip; }
+    check(disabled && reason.contains("one sequencer"),"a second SEQUENCER stays disabled in the tree, with its reason");
+}
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -3674,6 +3800,7 @@ void run() {
     nodesN05Audit();
     nodesN06Audit();
     nodesN07Audit();
+    nodesMenuHierarchyAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();
