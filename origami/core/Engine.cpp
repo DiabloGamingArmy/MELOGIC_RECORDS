@@ -84,7 +84,9 @@ void OrigamiEngine::reset() noexcept {
     modulationMailbox_.consume(audioModulation_);
     audioModulation_=modulation_; // reset requires exclusive access
     smoothedMacros_=audioModulation_.macros;
-    for(auto& lfo:globalLfos_) lfo.reset();
+    // Global FREE LFOs: their lifecycle (DELAY / ATTACK) starts at engine reset;
+    // one coherent ENTROPY stream per LFO index.
+    for(std::size_t i=0;i<globalLfos_.size();++i) { globalLfos_[i].reset(); globalLfos_[i].setStreams(Lfo::globalStream(i),Lfo::fractureSeed(i)); }
     globalRandom_.reset();globalFunction_.reset();globalChaos_.reset();globalDrift_.reset();globalSequencer_.reset();
     const auto resetModules=oscillatorModules_.snapshot();
     compiledModulation_.markStateRevision();
@@ -532,7 +534,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             runtimeVisualizationCountdown_=visualizationPeriod-1;
             for(std::size_t i=0;i<4;++i) {
                 runtimeVisualization_.sourceValues[3+i]=sources[i];
-                runtimeVisualization_.sourcePhases[3+i]=static_cast<float>(globalLfos_[i].phase());
+                runtimeVisualization_.sourcePhases[3+i]=static_cast<float>(globalLfos_[i].readPosition());
             }
             runtimeVisualization_.sourceValues[7]=sources[9];
             runtimeVisualization_.sourceValues[8]=sources[8];

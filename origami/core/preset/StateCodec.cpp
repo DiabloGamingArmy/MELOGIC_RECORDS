@@ -59,7 +59,11 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     // otherwise saves are byte-identical to before.
     bool dynamicMacros=s.modulation.macroMask!=defaultMacroMask;
     for(std::size_t i=4;i<maxMacros;++i) dynamicMacros|=s.modulation.macros[i]!=0.0f;
-    const std::uint32_t version=dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
+    // LFO FUNC processing / PING-PONG: v32 only when some LFO uses them;
+    // all-neutral LFOs keep saving in the older format, byte for byte.
+    bool lfoFunctions=false;
+    for(std::size_t i=0;i<4;++i) lfoFunctions|=!lfoFunctionsNeutral(lfoSettings(s.modulation,i));
+    const std::uint32_t version=lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
     Writer w;w.word(magic);w.word(version);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
@@ -230,6 +234,14 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         w.word(s.modulation.macroMask);
         for(std::size_t i=4;i<maxMacros;++i) w.real(s.modulation.macros[i]);
     }
+    // V32: per LFO, PING-PONG flag + the eight FUNC values.
+    if(version>=32) {
+        for(std::size_t i=0;i<4;++i) {
+            const auto& l=lfoSettings(s.modulation,i);
+            w.word(l.pingPong ? 1u : 0u);
+            for(float v:{l.smooth,l.attackSeconds,l.delaySeconds,l.phase,l.skew,l.quantize,l.entropy,l.fracture}) w.real(v);
+        }
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -240,7 +252,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>31) return false;
+    if(version<1 || version>32) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -489,6 +501,16 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         if(mask>0xffffu) return false;
         s.modulation.macroMask=static_cast<std::uint16_t>(mask);
         for(std::size_t i=4;i<maxMacros;++i) s.modulation.macros[i]=r.real();
+    }
+    // Older states: every FUNC field stays at its neutral default.
+    if(version>=32) {
+        for(std::size_t i=0;i<4;++i) {
+            auto& l=lfoSettings(s.modulation,i);
+            const auto flags=r.word();
+            if(flags>1u) return false;
+            l.pingPong=flags==1u;
+            for(float* v:{&l.smooth,&l.attackSeconds,&l.delaySeconds,&l.phase,&l.skew,&l.quantize,&l.entropy,&l.fracture}) *v=r.real();
+        }
     }
     // mct-origami-nodes-n01: (source, destination) pairs are unique. States
     // written before that rule may repeat a pair; merge them deterministically

@@ -148,6 +148,7 @@ private:
     // lifecycles started on this slot since the engine reset. A stolen or
     // retriggered voice starts a NEW stream; identical renders repeat exactly.
     std::uint32_t slot_=0,lifecycle_=0;
+    void seedLfos() noexcept;
     std::uint32_t voiceSeed() const noexcept { return (slot_+1u)*0x27d4eb2fu ^ (lifecycle_*0x165667b1u+0x5bd1e995u); }
     // N07: velocity / note curve values are constant for a note: cached and
     // recomputed only when the note, velocity or modulation state changes.
