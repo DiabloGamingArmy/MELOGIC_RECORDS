@@ -1623,7 +1623,9 @@ void FxCanvas::showControlLinkMenu(const ControlHit& hit) {
     // the consumer from their unambiguous matching port.)
     for(const auto type:page_.controlInsertTypes(hit.route,hit.op,hit.input))
         if(const auto* info=controlOpInfo(type))
-            items.push_back({int(type),juce::String(info->label),true,juce::String("INSERT NODE / ")+juce::String(info->category).toUpperCase()});
+            { NativeChoiceItem item{int(type),juce::String(info->label),true,juce::String("INSERT NODE / ")+juce::String(info->category).toUpperCase()};
+              item.path={"INSERT NODE",juce::String(info->category).toUpperCase()};
+              items.push_back(item); }
     constexpr int removeId=1000;
     items.push_back({removeId,hit.route!=0 ? "Delete Modulation" : "Disconnect",true,"CONNECTION"});
     juce::Component::SafePointer<FxPage> page(&page_);
@@ -1636,14 +1638,14 @@ void FxCanvas::showControlLinkMenu(const ControlHit& hit) {
         const auto type=static_cast<ControlOpType>(choice);
         if(hit.route!=0) page->insertControlOperatorOnRoute(hit.route,type);
         else page->insertControlOperatorOnInput(hit.op,hit.input,type);
-    });
+    },NativeMenuLayout::Hierarchical);
 }
 
 void FxCanvas::showConnectionMenu(FxConnectionId id,juce::Point<float> at) {
     const auto* connection=page_.graph().findConnection(id);
     if(connection==nullptr) return;
     auto items=page_.moduleMenuItems(false);
-    for(auto& item:items) item.group="INSERT MODULE / "+item.group;
+    for(auto& item:items) { item.path.insert(0,"INSERT MODULE"); item.group="INSERT MODULE / "+item.group; }
     constexpr int addPoint=3001,resetRouting=3002,removeConnection=3003;
     items.push_back({addPoint,"Add Routing Point",true,"CONNECTION"});
     items.push_back({resetRouting,"Reset Routing",!connection->layout.empty(),"CONNECTION"});
@@ -1657,7 +1659,7 @@ void FxCanvas::showConnectionMenu(FxConnectionId id,juce::Point<float> at) {
         if(choice==resetRouting) { page->resetConnectionRouting(id); return; }
         if(choice==removeConnection) { page->removeConnection(id); return; }
         if(const auto spec=FxModuleMenu::decode(choice)) page->insertModuleOnConnection(id,*spec,graphAt);
-    });
+    },NativeMenuLayout::Hierarchical);
 }
 
 void FxCanvas::mouseDown(const juce::MouseEvent& e) {
@@ -3997,51 +3999,68 @@ void FxPage::endParameterGesture() {
     refreshToolbar();
 }
 
+// The Add Module catalog. Every item carries its STRUCTURED category path
+// (family, then category) from canonical metadata, so menus nest it as real
+// submenus; `group` keeps the joined label for flat views and search.
+namespace {
+NativeChoiceItem catalogItem(int id,const juce::String& text,bool enabled,juce::StringArray path,juce::String reason={}) {
+    NativeChoiceItem item{id,text,enabled,path.joinIntoString(" / "),false,std::move(reason)};
+    item.path=std::move(path);
+    return item;
+}
+// An operator type that is really in the catalog (the N04 list ends with a
+// None sentinel, which must never become a blank entry).
+const ControlOpInfo* catalogOpInfo(ControlOpType type) noexcept {
+    const auto* info=type!=ControlOpType::None ? controlOpInfo(type) : nullptr;
+    return info!=nullptr && info->label!=nullptr && info->category!=nullptr ? info : nullptr;
+}
+}
+
 std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
     std::vector<NativeChoiceItem> items;
     for(const auto category:{FxCategory::Dynamics,FxCategory::FilterEq,FxCategory::Distortion,FxCategory::Modulation,
                              FxCategory::Spatial,FxCategory::Time,FxCategory::Utility})
         for(const auto& d:fxEffectCatalog())
             if(d.processesAudio && d.category==category)
-                items.push_back({int(d.type),juce::String(d.label),true,juce::String("EFFECTS / ")+fxCategoryName(category)});
-    items.push_back({FxModuleMenu::splitId,"Split",true,"ROUTING"});
-    items.push_back({FxModuleMenu::mergeId,"Merge",true,"ROUTING"});
-    items.push_back({FxModuleMenu::sendId,"Send (pending)",false,"ROUTING"});
-    items.push_back({FxModuleMenu::returnId,"Return (pending)",false,"ROUTING"});
+                // One category (FxCategory), even when its name reads "FILTER / EQ".
+                items.push_back(catalogItem(int(d.type),juce::String(d.label),true,{"EFFECTS",fxCategoryName(category)}));
+    items.push_back(catalogItem(FxModuleMenu::splitId,"Split",true,{"ROUTING"}));
+    items.push_back(catalogItem(FxModuleMenu::mergeId,"Merge",true,{"ROUTING"}));
+    items.push_back(catalogItem(FxModuleMenu::sendId,"Send (pending)",false,{"ROUTING"},"Send / return routing is pending"));
+    items.push_back(catalogItem(FxModuleMenu::returnId,"Return (pending)",false,{"ROUTING"},"Send / return routing is pending"));
     if(allowSources) {
         InstrumentState state;
         if(bindings_.snapshot) state=bindings_.snapshot();
         // A bus graph's audio input is its own bus.
         if(graph().sourceForBus(bus_)==invalidFxNodeId)
-            items.push_back({FxModuleMenu::busBase+int(bus_),busName(bus_)+" IN",true,"SOURCES"});
+            items.push_back(catalogItem(FxModuleMenu::busBase+int(bus_),busName(bus_)+" IN",true,{"SOURCES"}));
         (void)state;
-        items.push_back({FxModuleMenu::externalId,"External Input (pending)",false,"SOURCES"});
+        items.push_back(catalogItem(FxModuleMenu::externalId,"External Input (pending)",false,{"SOURCES"},"External input is not available yet"));
         // CONTROL: views of the instrument's own sources, and PARAMETER.
         for(const auto s:{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,
                           ModSource::Env1,ModSource::Env2,ModSource::Env3,
                           ModSource::Macro1,ModSource::Macro2,ModSource::Macro3,ModSource::Macro4,ModSource::Random})
             if(nodes::controlSourceActive(s,state.modulation))
-                items.push_back({FxModuleMenu::controlSourceBase+int(s),sourceName(s),!controlNodeShown(nodes::sourceKey(s)),"CONTROL / SOURCES"});
+                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","SOURCES"},"Already on the canvas"));
         for(const auto s:{ModSource::Function,ModSource::Chaos,ModSource::Drift,ModSource::Sequencer,
                           ModSource::Velocity,ModSource::ModWheel,ModSource::Keytrack,ModSource::Aftertouch,ModSource::PitchBend,ModSource::NoteGate})
             if(nodes::controlSourceActive(s,state.modulation))
-                items.push_back({FxModuleMenu::controlSourceBase+int(s),sourceName(s),!controlNodeShown(nodes::sourceKey(s)),"CONTROL / SOURCES"});
-        // N04 processing operators.
-        for(const auto type:controlOpCatalog())
-            if(const auto* info=controlOpInfo(type))
-                items.push_back({FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),true,juce::String("CONTROL / ")+juce::String(info->category).toUpperCase()});
-        for(const auto type:controlEventOpCatalog())
-            if(const auto* info=controlOpInfo(type))
-                items.push_back({FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),true,juce::String("EVENT / LOGIC / ")+juce::String(info->category).toUpperCase()});
-        // N06 sequencing / generative nodes. There is one canonical sequencer.
-        for(const auto type:controlSequencingOpCatalog())
-            if(const auto* info=controlOpInfo(type)) {
-                const bool creatable=nodes::controlOperatorCreatable(state.modulation,type);
-                items.push_back({FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),creatable,
-                                 juce::String("SEQUENCING / ")+juce::String(info->category).toUpperCase(),false,
-                                 creatable ? juce::String() : juce::String("The instrument has one sequencer: it is already on the canvas")});
-            }
-        items.push_back({FxModuleMenu::parameterPickerId,"Parameter...",true,"CONTROL"});
+                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","SOURCES"},"Already on the canvas"));
+        // Processing nodes: family (CONTROL / EVENT / SEQUENCING), then the
+        // node's own category from its ControlOpInfo.
+        const auto addOps=[&](const auto& catalog,const char* family) {
+            for(const auto type:catalog)
+                if(const auto* info=catalogOpInfo(type)) {
+                    const bool creatable=nodes::controlOperatorCreatable(state.modulation,type);
+                    items.push_back(catalogItem(FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),creatable,
+                                                {family,juce::String(info->category).toUpperCase()},
+                                                creatable ? juce::String() : juce::String("The instrument has one sequencer: it is already on the canvas")));
+                }
+        };
+        addOps(controlOpCatalog(),"CONTROL");
+        addOps(controlEventOpCatalog(),"EVENT");
+        addOps(controlSequencingOpCatalog(),"SEQUENCING");
+        items.push_back(catalogItem(FxModuleMenu::parameterPickerId,"Parameter...",true,{"CONTROL"}));
     }
     return items;
 }
@@ -4062,7 +4081,7 @@ void FxPage::showModuleMenu(juce::Component& anchor,bool allowSources,std::funct
         if(choice>=FxModuleMenu::controlSourceBase) { safe->addControlSource(static_cast<ModSource>(choice-FxModuleMenu::controlSourceBase),at); return; }
         if(choice==FxModuleMenu::parameterPickerId) { safe->showParameterPicker(anchorRef!=nullptr ? *anchorRef : *safe,std::nullopt,at); return; }
         if(const auto spec=FxModuleMenu::decode(choice); spec && chosen) chosen(*spec);
-    });
+    },NativeMenuLayout::Hierarchical);
 }
 
 // ================================================================ CONTROL layer
@@ -4557,9 +4576,9 @@ std::optional<std::uint32_t> FxPage::duplicateControlOperator(std::uint32_t op) 
 
 namespace {
 template<typename Fn> void forEachControlNodeType(Fn&& fn) {
-    for(const auto type:controlOpCatalog()) if(controlOpInfo(type)!=nullptr) fn(type);
-    for(const auto type:controlEventOpCatalog()) fn(type);
-    for(const auto type:controlSequencingOpCatalog()) fn(type);
+    for(const auto type:controlOpCatalog()) if(catalogOpInfo(type)!=nullptr) fn(type);
+    for(const auto type:controlEventOpCatalog()) if(catalogOpInfo(type)!=nullptr) fn(type);
+    for(const auto type:controlSequencingOpCatalog()) if(catalogOpInfo(type)!=nullptr) fn(type);
 }
 juce::String controlMenuGroup(const ControlOpInfo& info,const juce::String& prefix) {
     return prefix+juce::String(info.category).toUpperCase();
@@ -4605,9 +4624,11 @@ std::vector<NativeChoiceItem> FxPage::controlCreateItems(const nodes::ControlEnd
         else fits=nodes::controlAutoOutputPort(*info,signal)>=0;
         if(!fits) return;
         const bool creatable=nodes::controlOperatorCreatable(m,type);
-        items.push_back({FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),creatable,
-                         controlMenuGroup(*info,juce::String(nodes::toString(nodes::nodeSignal(signal)))+" / "),false,
-                         creatable ? juce::String() : juce::String("The instrument has one sequencer")});
+        NativeChoiceItem item{FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),creatable,
+                              controlMenuGroup(*info,juce::String(nodes::toString(nodes::nodeSignal(signal)))+" / "),false,
+                              creatable ? juce::String() : juce::String("The instrument has one sequencer")};
+        item.path={nodes::toString(nodes::nodeSignal(signal)),juce::String(info->category).toUpperCase()};
+        items.push_back(item);
     });
     // CONTROL only: a PARAMETER terminates the cable; a canonical source feeds it.
     if(signal==ControlSignal::Control && fromOutput) items.push_back({FxModuleMenu::parameterPickerId,"Parameter...",true,"CONTROL"});
@@ -4615,7 +4636,7 @@ std::vector<NativeChoiceItem> FxPage::controlCreateItems(const nodes::ControlEnd
         for(const auto s:{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,ModSource::Env1,ModSource::Env2,ModSource::Env3,
                           ModSource::Macro1,ModSource::Macro2,ModSource::Macro3,ModSource::Macro4,ModSource::Random,ModSource::Sequencer})
             if(nodes::controlSourceExposed(s) && nodes::controlSourceActive(s,m))
-                items.push_back({FxModuleMenu::controlSourceBase+int(s),sourceName(s),true,"CONTROL / SOURCES"});
+                { NativeChoiceItem item{FxModuleMenu::controlSourceBase+int(s),sourceName(s),true,"CONTROL / SOURCES"}; item.path={"CONTROL","SOURCES"}; items.push_back(item); }
     return items;
 }
 
@@ -4984,7 +5005,13 @@ std::size_t FxPage::autoLayoutControl() {
 std::vector<NodePalette::Entry> FxPage::paletteEntries(std::optional<nodes::ControlEndpoint> dangling) const {
     std::vector<NodePalette::Entry> entries;
     const auto items=dangling ? controlCreateItems(*dangling) : moduleMenuItems(true);
-    for(const auto& item:items) entries.push_back({item.id,item.text,item.group,item.tooltip.isNotEmpty() ? item.tooltip : juce::String("Unavailable"),item.enabled});
+    // Search stays flat; each result names its category path for context
+    // ("EFFECTS > DISTORTION", "EVENT > STATEFUL").
+    for(const auto& item:items) {
+        const auto path=nativeChoicePath(item);
+        entries.push_back({item.id,item.text,path.isEmpty() ? item.group : path.joinIntoString(" > "),
+                           item.tooltip.isNotEmpty() ? item.tooltip : juce::String("Unavailable"),item.enabled});
+    }
     return entries;
 }
 
