@@ -42,6 +42,7 @@ bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, uns
     rebuildHostWavetables();
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
     for (auto& voice : voices_) voice.prepare(sampleRate);
+    for (std::size_t v=0;v<voices_.size();++v) voices_[v].setSlot(std::uint32_t(v));
     prepared_ = true; reset(); return true;
 }
 bool OrigamiEngine::installWavetable(dsp::Wavetable table) {
@@ -86,11 +87,13 @@ void OrigamiEngine::reset() noexcept {
     for(auto& lfo:globalLfos_) lfo.reset();
     globalRandom_.reset();globalFunction_.reset();globalChaos_.reset();globalDrift_.reset();globalSequencer_.reset();
     const auto resetModules=oscillatorModules_.snapshot();
+    compiledModulation_.markStateRevision();
     compiledModulation_.compile(audioModulation_,resetModules,true);
+    publishNodesDiagnostics();
     compiledModulation_.resetOperatorState();
     oscillatorPlan_.compile(resetModules);
     for(std::size_t i=0;i<resetModules.size();++i) compiledModuleIds_[i]=resetModules[i].id;
-    for (auto& voice : voices_) voice.reset();
+    for (auto& voice : voices_) { voice.reset(); voice.restartLifecycles(); }
     lastVoiceSamples_.fill({});
     stealResidual_.fill({});
     for(auto& a:lastAux_) a.fill(0.0f);
@@ -379,8 +382,12 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
         oscillatorPlan_.compile(hostModules_,hostBusSlots_);
         rebuildHostWavetables();
     }
-    if(modulationChanged || moduleTopologyChanged || oscillatorGenerationChanged)
+    if(modulationChanged) compiledModulation_.markStateRevision();
+    if(modulationChanged || moduleTopologyChanged || oscillatorGenerationChanged) {
         compiledModulation_.compile(audioModulation_,hostModules_);
+        publishNodesDiagnostics();
+    }
+    if(suppressVisualization_) diagSuppressedBlocks_.fetch_add(1,std::memory_order_relaxed);
     std::size_t activeModules=0;
     for(const auto& m:hostModules_) if(m.enabled) ++activeModules;
     hostNormalization_=activeModules ? 1.0/static_cast<double>(activeModules) : 1.0;
@@ -392,7 +399,17 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     return true;
 }
 
+void OrigamiEngine::publishNodesDiagnostics() noexcept {
+    const auto& c=compiledModulation_.compileCounters();
+    diagCompiles_.store(c.compiles,std::memory_order_relaxed);
+    diagParameterUpdates_.store(c.parameterUpdates,std::memory_order_relaxed);
+    diagCompileSkips_.store(c.skipped,std::memory_order_relaxed);
+    diagStateRevision_.store(compiledModulation_.stateRevision(),std::memory_order_relaxed);
+    diagEventOverflows_.store(eventOverflows_,std::memory_order_relaxed);
+}
+
 void OrigamiEngine::endHostBlock() noexcept {
+    if(eventOverflows_!=diagEventOverflows_.load(std::memory_order_relaxed)) diagEventOverflows_.store(eventOverflows_,std::memory_order_relaxed);
     hostBlockActive_=false;
     hostChannels_=0;
 }
@@ -496,6 +513,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             frame.events.transportStop=pendingTransportStop_;
             frame.events.sequencer=sequencerActive ? &globalSequencer_ : nullptr;
             frame.events.sequencerSettings=sequencerActive ? &audioModulation_.sequencer : nullptr;
+            frame.events.eventOverflow=&eventOverflows_;
         }
         pendingTransportStart_=pendingTransportStop_=false;
         beats_+=beatsPerSample;
@@ -544,7 +562,12 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             --runtimeVisualizationCountdown_;
         }
         compiledModulation_.advance(modulationSmoothing_);
-        frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
+        // N07: the module slots are 8 KB; inactive modules never change within a
+        // block (the plan changes only at block start), so after the first
+        // sample only the active ones are refreshed.
+        if(sample==0) frame.modules=modules;
+        else for(std::size_t a=0;a<oscillatorPlan_.activeCount;++a) frame.modules[oscillatorPlan_.active[a]]=modules[oscillatorPlan_.active[a]];
+        frame.cutoff=value(ParameterId::Cutoff);
         frame.resonance=value(ParameterId::Resonance);frame.master=value(ParameterId::MasterGain);
         frame.mainTuning=0.0f;frame.transpose=0.0f;
         frame.portaTime=performance_.glideSeconds;

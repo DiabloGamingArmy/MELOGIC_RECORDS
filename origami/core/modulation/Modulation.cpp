@@ -14,6 +14,7 @@
 #include "core/dsp/FastMath.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 namespace mct::origami {
 namespace {
 // Signed generator slots (LFOs, random, function, chaos, drift, sequencer):
@@ -135,6 +136,7 @@ bool isGlobalDestination(ModDestination d) noexcept {
            d==ModDestination::PortaTime || d==ModDestination::EnvelopeScaling ||
            d==ModDestination::LfoScaling || d==ModDestination::Swing;
 }
+bool knownModSource(ModSource s) noexcept { return known(s); }
 bool validModulation(const ModulationState& s,const std::array<OscillatorModuleState,16>& modules) noexcept {
     if((s.envActiveMask&~0x7u)!=0 || (s.envActiveMask&0x1u)==0) return false;
     if((s.lfoActiveMask&~0xFu)!=0) return false;
@@ -551,11 +553,100 @@ void SequencerGenerator::restart(const SequencerSettings& s) noexcept {
     finished_=false; phase_=0.0; substep_=0; begun_=false;
 }
 
+bool CompiledModulation::ModulePlanKey::operator==(const ModulePlanKey& o) const noexcept {
+    return id==o.id && process1==o.process1 && process2==o.process2 && processCount==o.processCount && routeCount==o.routeCount
+        && processIds==o.processIds && processTypes==o.processTypes && routeIds==o.routeIds;
+}
+
+namespace {
+bool sameRoute(const ModRoute& a,const ModRoute& b) noexcept {
+    return a.id==b.id && a.enabled==b.enabled && a.source==b.source && a.destination==b.destination
+        && std::memcmp(&a.amount,&b.amount,sizeof(float))==0 && a.bipolar==b.bipolar;
+}
+bool sameParams(const ControlOperator& a,const ControlOperator& b) noexcept {
+    return std::memcmp(a.params.data(),b.params.data(),sizeof(float)*a.params.size())==0;
+}
+}
+
+CompiledModulation::PlanChange CompiledModulation::classifyChange(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules) const noexcept {
+    const auto& k=planKey_;
+    if(!k.valid || k.sampleRate!=sampleRate_ || k.filterEnabled!=state.filterEnabled) return PlanChange::Topology;
+    for(std::size_t i=0;i<4;++i) if(k.lfoModes[i]!=lfoSettings(state,i).mode) return PlanChange::Topology;
+    for(std::size_t i=0;i<state.routes.size();++i) if(!sameRoute(k.routes[i],state.routes[i])) return PlanChange::Topology;
+    for(std::size_t i=0;i<modules.size();++i) {
+        ModulePlanKey m;
+        const auto& s=modules[i];
+        m.id=s.id; m.process1=s.process1; m.process2=s.process2; m.processCount=s.processCount; m.routeCount=s.routeCount;
+        for(std::size_t p=0;p<s.processCount && p<maxOscProcesses;++p) { m.processIds[p]=s.processes[p].id; m.processTypes[p]=s.processes[p].type; }
+        for(std::size_t r=0;r<s.routeCount && r<maxOscRoutes;++r) m.routeIds[r]=s.routes[r].id;
+        if(!(m==k.modules[i])) return PlanChange::Topology;
+    }
+    bool params=false;
+    for(std::size_t i=0;i<state.operators.size();++i) {
+        const auto& a=k.operators[i]; const auto& b=state.operators[i];
+        if(a.id!=b.id || a.type!=b.type || !(a.inputs==b.inputs)) return PlanChange::Topology;
+        if(!sameParams(a,b)) params=true;
+    }
+    return params ? PlanChange::Parameters : PlanChange::None;
+}
+
+void CompiledModulation::storePlanKey(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules) noexcept {
+    auto& k=planKey_;
+    k.valid=true; k.sampleRate=sampleRate_; k.filterEnabled=state.filterEnabled;
+    for(std::size_t i=0;i<4;++i) k.lfoModes[i]=lfoSettings(state,i).mode;
+    k.routes=state.routes; k.operators=state.operators;
+    for(std::size_t i=0;i<modules.size();++i) {
+        auto& m=k.modules[i]; m=ModulePlanKey{};
+        const auto& s=modules[i];
+        m.id=s.id; m.process1=s.process1; m.process2=s.process2; m.processCount=s.processCount; m.routeCount=s.routeCount;
+        for(std::size_t p=0;p<s.processCount && p<maxOscProcesses;++p) { m.processIds[p]=s.processes[p].id; m.processTypes[p]=s.processes[p].type; }
+        for(std::size_t r=0;r<s.routeCount && r<maxOscRoutes;++r) m.routeIds[r]=s.routes[r].id;
+    }
+}
+
+bool CompiledModulation::updateParameters(const ModulationState& state) noexcept {
+    // Pass 1 (no mutation): every changed operator must keep its output ranges
+    // (ranges flow into downstream inputs and route polarity), and envelope
+    // targets are compiled tables, so they force a full compile.
+    for(std::size_t i=0;i<opCount_;++i) {
+        const auto& c=ops_[i];
+        const auto& next=state.operators[c.slot];
+        if(sameParams(c.op,next)) continue;
+        if(c.op.type==ControlOpType::EnvelopeTrigger) return false;
+        auto probe=c.op; probe.params=next.params;
+        const bool a=c.input[0]>=0,b=c.input[1]>=0;
+        for(std::size_t port=0;port<c.outputCount;++port)
+            if(controlOpOutputRangeAt(probe,port,c.range[0],a,c.range[1],b)!=outputRange_[operatorOutputIndex(c.slot,port)]) return false;
+    }
+    // Pass 2: apply. Runtime state is kept (same operators, same connections).
+    for(std::size_t i=0;i<opCount_;++i) {
+        auto& c=ops_[i];
+        const auto& next=state.operators[c.slot];
+        if(sameParams(c.op,next)) continue;
+        c.op.params=next.params;
+        c.prepared=prepareControlOp(c.op,sampleRate_);
+        resolveKernel(c,{{c.input[0]>=0,c.input[1]>=0,c.input[2]>=0}});
+    }
+    return true;
+}
+
 void CompiledModulation::compile(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules,bool immediate) noexcept {
+    if(!immediate) {
+        const auto change=classifyChange(state,modules);
+        if(change==PlanChange::None) { ++counters_.skipped; return; }
+        if(change==PlanChange::Parameters && updateParameters(state)) {
+            planKey_.operators=state.operators;
+            ++counters_.parameterUpdates;
+            return;
+        }
+    }
+    storePlanKey(state,modules);
+    ++counters_.compiles;
     const auto old=groups_;const auto oldCount=count_;
     count_=voiceCount_=0;fxCount_=0;fxVoice_=false;++generation_;
-    voiceFilter_=false;groups_={};globalSourceUsed_.fill(false);
+    voiceFilter_=false;groups_={};globalSourceUsed_.fill(false);voiceSourceUsed_.fill(false);
     voiceProcessModules_.fill(false);
+    voiceModuleMask_=0;
     smoothingActive_=false;
     filterEnabled_=state.filterEnabled;
     // N04: operators in topological order, inputs resolved to slots, ranges
@@ -602,18 +693,20 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                         const auto s=slotFor(in.source,state);
                         c.input[k]=static_cast<std::int16_t>(s);
                         c.range[k]=signedGeneratorSlot(s) ? ControlRange::Bipolar : ControlRange::Unipolar;
-                        if(s<globalSourceCount) globalSourceUsed_[s]=true; else c.voice=true;
+                        if(s<globalSourceCount) globalSourceUsed_[s]=true; else { c.voice=true; voiceSourceUsed_[s-globalSourceCount]=true; }
                         connected[k]=true;
                     } else if(in.kind==ControlInput::Kind::Operator) {
                         const auto from=controlOperatorSlot(state,in.op);
                         const auto output=operatorOutputIndex(from,std::min<std::size_t>(in.port,maxControlOutputs-1));
                         c.input[k]=static_cast<std::int16_t>(sourceSlotCount+output);
                         c.range[k]=outputRange_[output];
+                        if(!opVoice_[from]) c.globalOperatorInputs|=std::uint8_t(1u<<k);
                         c.voice=c.voice || opVoice_[from];
                         connected[k]=true;
                     }
                 }
                 c.prepared=prepareControlOp(op,sampleRate_);
+                resolveKernel(c,connected);
                 // Note sources and envelope targets live inside each voice.
                 if(info->voiceOnly) c.voice=true;
                 c.event=info->output==ControlSignal::Event;
@@ -632,6 +725,8 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                 }
                 for(std::size_t port=0;port<info->outputCount;++port)
                     outputRange_[operatorOutputIndex(slot,port)]=controlOpOutputRangeAt(op,port,c.range[0],connected[0],c.range[1],connected[1]);
+                if(c.voice) voiceOrder_[voiceOpCount_]=static_cast<std::uint8_t>(opCount_-1);
+                else globalOrder_[globalOpCount_]=static_cast<std::uint8_t>(opCount_-1);
                 opVoice_[slot]=c.voice;
                 (c.voice ? voiceOpCount_ : globalOpCount_)++;
                 placed[slot]=true;
@@ -711,9 +806,12 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         groups_[i].target[sourceSlot]+=route.amount;
         groups_[i].bipolar[sourceSlot]=route.bipolar;
         if(sourceSlot<globalSourceCount) globalSourceUsed_[sourceSlot]=true;
+        else if(sourceSlot<sourceSlotCount) voiceSourceUsed_[sourceSlot-globalSourceCount]=true;
     }
     for(std::size_t i=0;i<count_;++i) {
         auto& g=groups_[i];g.weight=g.target;
+        g.logSpan=std::log(g.maximum/g.minimum);
+        g.log2Span=std::log2(g.maximum/g.minimum);
         if(!immediate) {
             g.weight={};
             for(std::size_t j=0;j<oldCount;++j)
@@ -749,6 +847,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         }
         if(voice) {
             voiceGroups_[voiceCount_++]=i;
+            if(!isGlobalDestination(g.address.parameter)) voiceModuleMask_|=std::uint16_t(1u<<g.slot);
             if(g.address.parameter==ModDestination::ProcessAmount ||
                g.address.parameter==ModDestination::Process1Amount ||
                g.address.parameter==ModDestination::Process2Amount) voiceProcessModules_[g.slot]=true;
@@ -806,7 +905,7 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
     float v=g.minimum+n*(g.maximum-g.minimum);
     if(g.address.parameter==ModDestination::Cutoff)
         v=g.minimum*static_cast<float>(dsp::fastExp2Audio(
-            static_cast<double>(n)*std::log2(g.maximum/g.minimum)));
+            static_cast<double>(n)*g.log2Span));
     auto& m=f.modules[g.slot];
     switch(g.address.parameter) {
         case ModDestination::Cutoff:f.cutoff=v;break;case ModDestination::Resonance:f.resonance=v;break;
@@ -1103,10 +1202,13 @@ std::uint32_t xorshift(std::uint32_t& x) noexcept {
     x^=x<<13; x^=x>>17; x^=x<<5;
     return x;
 }
-std::uint32_t seedFor(float seed,std::uint32_t id) noexcept {
+std::uint32_t seedFor(float seed,std::uint32_t id,std::uint32_t voiceSeed=0) noexcept {
     // Deterministic per operator: the same preset recalls the same sequence.
     std::uint32_t h=static_cast<std::uint32_t>(std::lround(seed))*2654435761u ^ (id*0x85ebca6bu);
     h^=h>>16; h*=0x7feb352du; h^=h>>15;
+    if(voiceSeed!=0) { // N07: a distinct, repeatable stream per voice lifecycle
+        h^=voiceSeed*0x9e3779b9u; h^=h>>16; h*=0x85ebca6bu; h^=h>>13;
+    }
     return h==0 ? 0x1234567u : h;
 }
 float unitRandom(std::uint32_t& x) noexcept { return float(xorshift(x)>>8)/float(1u<<24); }
@@ -1268,7 +1370,7 @@ void evaluateControlOpOutputs(const ControlOperator& op,const ControlOpInputs& i
         // RESET (input B) restarts the seeded sequence before TRIG is seen.
         if(!state.initialized || event(1)) {
             state.initialized=true;
-            state.rng=seedFor(p[2],op.id);
+            state.rng=seedFor(p[2],op.id,ctx.voiceSeed);
             state.value=p[0]+(p[1]-p[0])*unitRandom(state.rng); // a value exists from the first sample
         }
         if(event(0)) state.value=p[0]+(p[1]-p[0])*unitRandom(state.rng);
@@ -1329,17 +1431,18 @@ void evaluateControlOpOutputs(const ControlOperator& op,const ControlOpInputs& i
             if(p[0]>=0.5f && ctx.beatsPerSample>0.0)
                 samples=std::max<std::int32_t>(1,static_cast<std::int32_t>(std::lround(prepared.divisionBeats/ctx.beatsPerSample)));
             if(state.pendingCount<ControlOpRuntime::delayCapacity) state.pending[state.pendingCount++]=samples;
+            else if(ctx.eventOverflow!=nullptr) ++*ctx.eventOverflow;
         }
         out=fire ? 1.0f : 0.0f;
         break;
     }
     case ControlOpType::Probability:
-        if(!state.initialized) { state.initialized=true; state.rng=seedFor(p[1],op.id); }
+        if(!state.initialized) { state.initialized=true; state.rng=seedFor(p[1],op.id,ctx.voiceSeed); }
         // The generator advances once per incoming event: deterministic per event index.
         out=event(0) && unitRandom(state.rng)<p[0] ? 1.0f : 0.0f;
         break;
     case ControlOpType::ChanceSplit:
-        if(!state.initialized) { state.initialized=true; state.rng=seedFor(p[1],op.id); }
+        if(!state.initialized) { state.initialized=true; state.rng=seedFor(p[1],op.id,ctx.voiceSeed); }
         if(event(0)) { if(unitRandom(state.rng)<p[0]) outputs[0]=1.0f; else outputs[1]=1.0f; } // exactly one
         out=outputs[0];
         break;
@@ -1365,7 +1468,7 @@ void evaluateControlOpOutputs(const ControlOperator& op,const ControlOpInputs& i
     }
     case ControlOpType::RandomWalk: {
         const float lo=std::min(p[1],p[2]),hi=std::max(p[1],p[2]);
-        if(!state.initialized || event(1)) { state.initialized=true; state.rng=seedFor(p[3],op.id); state.value=0.5f*(lo+hi); }
+        if(!state.initialized || event(1)) { state.initialized=true; state.rng=seedFor(p[3],op.id,ctx.voiceSeed); state.value=0.5f*(lo+hi); }
         if(event(0)) {
             float v=state.value+(unitRandom(state.rng)*2.0f-1.0f)*p[0];
             if(p[4]>=0.5f) { // REFLECT at the bounds
@@ -1582,29 +1685,89 @@ float CompiledModulation::operatorRouteValue(std::size_t slot,float raw,bool bip
     return bipolar ? raw*0.5f : std::clamp(raw*0.5f+0.5f,0.0f,1.0f);
 }
 
-float CompiledModulation::operatorInput(std::int16_t input,const std::array<float,voiceSourceCount>* voice,const ModulationFrame& f) noexcept {
+float CompiledModulation::operatorInput(std::int16_t input,const std::array<float,voiceSourceCount>* voice,const ModulationFrame& f,
+                                        const ModulationFrame& operators) noexcept {
     if(input<0) return 0.0f;
     const auto i=static_cast<std::size_t>(input);
     if(i<globalSourceCount) return f.globalSources[i];
     if(i<sourceSlotCount) return voice!=nullptr ? (*voice)[i-globalSourceCount] : 0.0f;
-    return f.operatorOutputs[i-sourceSlotCount];
+    return operators.operatorOutputs[i-sourceSlotCount];
+}
+
+void CompiledModulation::resolveKernel(CompiledOp& c,const std::array<bool,3>& connected) noexcept {
+    using K=CompiledOp::Kernel;
+    const auto& p=c.op.params;
+    const bool a=connected[0],b=connected[1];
+    // One connected input of a two-input math node passes it through (the
+    // general evaluator's identity element gives the same value).
+    const auto passOrConstant=[&](float none){ if(a) { c.kernel=K::Pass; c.kernelInput=0; } else if(b) { c.kernel=K::Pass; c.kernelInput=1; } else { c.kernel=K::Constant; c.k0=none; } };
+    switch(c.op.type) {
+    case ControlOpType::Add: if(a && b) c.kernel=K::Sum; else passOrConstant(0.0f); break;
+    case ControlOpType::Subtract:
+        if(a && b) c.kernel=K::Difference;
+        else if(a) { c.kernel=K::Pass; c.kernelInput=0; }
+        else if(b) { c.kernel=K::Linear; c.kernelInput=1; c.k0=-1.0f; c.k1=0.0f; } // 0 - b
+        else { c.kernel=K::Constant; c.k0=0.0f; }
+        break;
+    case ControlOpType::Multiply: if(a && b) c.kernel=K::Product; else passOrConstant(1.0f); break;
+    case ControlOpType::Min: if(a && b) c.kernel=K::Minimum; else passOrConstant(0.0f); break;
+    case ControlOpType::Max: if(a && b) c.kernel=K::Maximum; else passOrConstant(0.0f); break;
+    case ControlOpType::ScaleOffset: c.kernel=K::Linear; c.k0=p[0]; c.k1=p[1]; break;
+    // -a and 1-a are exactly a*-1+0 and a*-1+1 in IEEE arithmetic.
+    case ControlOpType::Invert: c.kernel=K::Linear; c.k0=-1.0f; c.k1=c.range[0]==ControlRange::Bipolar ? 0.0f : 1.0f; break;
+    case ControlOpType::Abs: c.kernel=K::Absolute; break;
+    case ControlOpType::Clamp: c.kernel=K::ClampRange; c.k0=std::min(p[0],p[1]); c.k1=std::max(p[0],p[1]); break;
+    case ControlOpType::Constant: c.kernel=K::Constant; c.k0=p[0]; break;
+    case ControlOpType::Smooth: c.kernel=K::SmoothFollow; break;
+    default: c.kernel=K::General; break;
+    }
 }
 
 void CompiledModulation::runOperator(const CompiledOp& c,const std::array<float,voiceSourceCount>* voice,
-                                     ModulationFrame& f,ControlOpRuntime& state) const noexcept {
+                                     ModulationFrame& f,ControlOpRuntime& state,const ModulationFrame& global) const noexcept {
     if(state.id!=c.op.id) { state=ControlOpRuntime{}; state.id=c.op.id; } // a new operator in this slot starts fresh
+    const std::size_t base=operatorOutputIndex(c.slot,0);
+    if(c.kernel!=CompiledOp::Kernel::General) {
+        // Prepared kernels: same arithmetic, same NaN guards as the general
+        // evaluator (inputs and output), single output port.
+        using K=CompiledOp::Kernel;
+        const auto in=[&](std::size_t k){ return finiteOr0(operatorInput(c.input[k],voice,f,((c.globalOperatorInputs>>k)&1u)!=0 ? global : f)); };
+        float out=0.0f;
+        switch(c.kernel) {
+        case K::Constant: out=c.k0; break;
+        case K::Pass: out=in(c.kernelInput); break;
+        case K::Linear: out=in(c.kernelInput)*c.k0+c.k1; break;
+        case K::Sum: out=in(0)+in(1); break;
+        case K::Difference: out=in(0)-in(1); break;
+        case K::Product: out=in(0)*in(1); break;
+        case K::Minimum: out=std::min(in(0),in(1)); break;
+        case K::Maximum: out=std::max(in(0),in(1)); break;
+        case K::Absolute: out=std::abs(in(0)); break;
+        case K::ClampRange: out=std::clamp(in(0),c.k0,c.k1); break;
+        case K::SmoothFollow: {
+            const float a=in(0);
+            if(!state.initialized) { state.value=a; state.initialized=true; }
+            else state.value+=(a>state.value ? c.prepared.rise : c.prepared.fall)*(a-state.value);
+            out=state.value;
+            break;
+        }
+        case K::General: break;
+        }
+        f.operatorOutputs[base]=finiteOr0(out);
+        return;
+    }
     ControlOpInputs in;
     for(std::size_t k=0;k<3;++k) {
-        in.value[k]=operatorInput(c.input[k],voice,f);
+        in.value[k]=operatorInput(c.input[k],voice,f,((c.globalOperatorInputs>>k)&1u)!=0 ? global : f);
         in.connected[k]=c.input[k]>=0;
         in.range[k]=c.range[k];
     }
     std::array<float,maxControlOutputs> outputs{};
     evaluateControlOpOutputs(c.op,in,state,c.prepared,f.events,outputs);
     // Every port of this operator is written each sample (EVENT ports are 0
-    // between events), at index slot*4 + port.
-    const std::size_t base=operatorOutputIndex(c.slot,0);
-    for(std::size_t port=0;port<maxControlOutputs;++port) f.operatorOutputs[base+port]=port<c.outputCount ? outputs[port] : 0.0f;
+    // between events), at index slot*4 + port. Ports beyond outputCount are
+    // never read (validation rejects them).
+    for(std::size_t port=0;port<maxControlOutputs;++port) f.operatorOutputs[base+port]=outputs[port]; // fixed count: unrolled (unused ports are 0)
 }
 
 // Same-sample ordering (N05): sources -> global operators (topological) ->
@@ -1612,10 +1775,9 @@ void CompiledModulation::runOperator(const CompiledOp& c,const std::array<float,
 // sample N is seen by every downstream node at sample N.
 void CompiledModulation::evaluateGlobalOperators(ModulationFrame& f,const std::array<float,globalSourceCount>& sources) noexcept {
     f.globalSources=sources;
-    for(std::size_t i=0;i<opCount_;++i) {
-        const auto& c=ops_[i];
-        if(c.voice) continue;
-        runOperator(c,nullptr,f,globalOpState_[c.slot]);
+    for(std::size_t i=0;i<globalOpCount_;++i) {
+        const auto& c=ops_[globalOrder_[i]];
+        runOperator(c,nullptr,f,globalOpState_[c.slot],f);
         const std::size_t base=operatorOutputIndex(c.slot,0);
         // The SEQUENCER node's VALUE is the canonical SEQ source this sample.
         if(c.op.type==ControlOpType::Sequencer) f.globalSources[12]=f.operatorOutputs[base];
@@ -1624,11 +1786,12 @@ void CompiledModulation::evaluateGlobalOperators(ModulationFrame& f,const std::a
 }
 
 void CompiledModulation::evaluateVoiceOperators(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,
-                                                OperatorState& state,std::array<std::uint32_t,operatorSlotCount>* counts) const noexcept {
-    for(std::size_t i=0;i<opCount_;++i) {
-        const auto& c=ops_[i];
-        if(!c.voice) continue;
-        runOperator(c,&sources,f,state[c.slot]);
+                                                OperatorState& state,std::array<std::uint32_t,operatorSlotCount>* counts,
+                                                const ModulationFrame* global) const noexcept {
+    const ModulationFrame& globalOperators=global!=nullptr ? *global : f;
+    for(std::size_t i=0;i<voiceOpCount_;++i) {
+        const auto& c=ops_[voiceOrder_[i]];
+        runOperator(c,&sources,f,state[c.slot],globalOperators);
         const std::size_t base=operatorOutputIndex(c.slot,0);
         if(counts!=nullptr && eventFired(c,f.operatorOutputs,base)) ++(*counts)[c.slot];
     }
@@ -1648,7 +1811,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
         if(isFxDestination(g.address.parameter)) continue;
         const float base=std::clamp(read(f,g),g.minimum,g.maximum);
         float n=g.address.parameter==ModDestination::Cutoff
-            ? std::log(base/g.minimum)/std::log(g.maximum/g.minimum)
+            ? std::log(base/g.minimum)/g.logSpan
             : (base-g.minimum)/(g.maximum-g.minimum);
         for(std::size_t k=0;k<g.globalSlotCount;++k) {
             const auto s=static_cast<std::size_t>(g.globalSlots[k]);

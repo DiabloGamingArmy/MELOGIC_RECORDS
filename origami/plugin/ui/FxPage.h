@@ -145,7 +145,16 @@ public:
     std::optional<int> previewCellAt(juce::Point<float>) const noexcept;
     const ControlNodeView& view() const noexcept { return view_; }
     static int heightFor(const ControlNodeView&) noexcept;
+    static int widthFor(const ControlNodeView&) noexcept; // N07: long PATTERNs get a wider node
     static constexpr int width=220;
+    // N07 semantic zoom: what a node draws at the current zoom. Hit targets
+    // keep their graph size; secondary text, previews and inline controls are
+    // hidden when they would be unreadable, and the title keeps a minimum
+    // on-screen size.
+    enum class Detail : std::uint8_t { Full,Reduced,Minimal };
+    static Detail detailFor(float zoom) noexcept { return zoom>=0.6f ? Detail::Full : zoom>=0.45f ? Detail::Reduced : Detail::Minimal; }
+    void setDetail(Detail);
+    Detail detail() const noexcept { return detail_; }
     void paint(juce::Graphics&) override;
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;
@@ -161,10 +170,12 @@ private:
     float activity_=0.0f;
     bool gateOpen_=false;
     int sequencerStep_=-1;
+    Detail detail_=Detail::Full;
+    juce::Point<int> groupDragOrigin_{};
     juce::TextButton remove_{"X"};
     juce::Slider primary_;
     bool primaryInitialised_=false;
-    enum class Drag { None,Move,Wire };
+    enum class Drag { None,Move,Wire,Group };
     Drag drag_=Drag::None;
     juce::Point<int> dragOrigin_;
 };
@@ -212,6 +223,14 @@ public:
     void dragControlWire(juce::Point<int>);
     void endControlWire(juce::Point<int>);
     std::optional<nodes::ControlEndpoint> controlWireSource() const noexcept { return controlWireActive_ && !controlWireReverse_ ? std::optional<nodes::ControlEndpoint>(controlWireFrom_) : std::nullopt; }
+    std::uint32_t paintCount() const noexcept { return paints_; }
+    // N07 marquee selection (left-drag on empty canvas; Shift adds).
+    juce::Rectangle<float> marquee() const noexcept { return marqueeActive_ ? marquee_ : juce::Rectangle<float>{}; }
+    void beginMarquee(juce::Point<float>,bool additive);
+    void dragMarquee(juce::Point<float>);
+    void endMarquee();
+    std::vector<ControlNodeComponent*> controlNodes() const;
+    void setControlDetail(ControlNodeComponent::Detail);
 
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -245,6 +264,10 @@ private:
     bool controlWireReverse_=false;
     juce::Point<float> controlWireStart_{},controlWireEnd_{};
     int minWidth_=0,minHeight_=0;
+    std::uint32_t paints_=0;
+    bool marqueeActive_=false,marqueeAdditive_=false;
+    juce::Point<float> marqueeStart_{};
+    juce::Rectangle<float> marquee_{};
     juce::Point<float> portInCanvas(fx::FxNodeId,bool input,std::uint8_t port) const noexcept;
     void computeWire(Wire&) const;
     void showConnectionMenu(fx::FxConnectionId,juce::Point<float>);
@@ -264,7 +287,9 @@ private:
 // Zoom/pan host for the canvas. Graph <-> view: view = graph*zoom - pan.
 class FxGraphView final : public juce::Component, private juce::ScrollBar::Listener {
 public:
-    static constexpr float minZoom=0.4f,maxZoom=2.5f;
+    // N07: 30% floor. Below 45% nodes draw identity + ports only, with titles
+    // kept >= 9 px on screen (semantic zoom), so a deep graph fits readably.
+    static constexpr float minZoom=0.3f,maxZoom=2.5f;
     explicit FxGraphView(FxCanvas&);
     ~FxGraphView() override;
     float zoom() const noexcept { return zoom_; }
@@ -344,6 +369,38 @@ private:
     std::unique_ptr<List> list_;
 };
 
+// N07: Origami-native searchable node palette (Add Module, quick add, and
+// cable drops). Typing filters by name, category and aliases ("prob", "s&h",
+// "seq"); arrows + Return choose; Escape dismisses. Disabled entries show why.
+class NodePalette final : public juce::Component {
+public:
+    struct Entry { int id=0; juce::String label,group,reason; bool enabled=true; };
+    NodePalette();
+    void open(std::vector<Entry>,juce::Point<int> at,const juce::String& title);
+    void dismiss();
+    bool isOpen() const noexcept { return isVisible(); }
+    void setQuery(const juce::String&);
+    juce::String query() const;
+    // The current results, best match first (inspection / tests).
+    std::vector<Entry> results() const;
+    bool chooseSelected();
+    void moveSelection(int delta);
+    std::function<void(int id)> onChoose;
+    static juce::String aliasesFor(const juce::String& label);
+    void paint(juce::Graphics&) override;
+    void resized() override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails&) override;
+    static constexpr int rowHeight=26,width=320,visibleRows=11;
+private:
+    class Field;
+    void filter();
+    std::vector<Entry> all_,shown_;
+    juce::String title_;
+    int selected_=0,scroll_=0;
+    std::unique_ptr<Field> field_;
+};
+
 // Origami-native modal surface (never an OS alert/window).
 class FxModalOverlay final : public juce::Component {
 public:
@@ -399,7 +456,18 @@ public:
     bool keyPressed(const juce::KeyPress&) override;
     void visibilityChanged() override;
     void syncFromModel();
+    void modelChanged(); // N07: hidden-aware (stale flag) model-change notification
     std::function<void()> onOpenSynthFilter;
+    // N07 UI diagnostics (bounded counters; development / tests / debug view).
+    struct UiDiagnostics {
+        std::uint32_t modelSyncs=0;      // sidebar + CONTROL view rebuilds from the model
+        std::uint32_t skippedSyncs=0;    // timer syncs answered by "revision unchanged"
+        std::uint32_t hiddenSyncs=0;     // syncs while the page is hidden (no work done)
+        std::uint32_t controlRebuilds=0; // CONTROL graph derivations (refreshControl)
+        std::uint32_t rejectedConnections=0;
+    };
+    const UiDiagnostics& uiDiagnostics() const noexcept { return uiDiagnostics_; }
+    std::uint32_t canvasPaintCount() const noexcept;
 
     // Interaction API (node components, canvas, toolbar, sidebar, inspector, tests).
     fx::FxGraphDocument& document() noexcept { return *document_; }
@@ -451,7 +519,6 @@ public:
     // created at `at` (else at the view centre).
     void showModuleMenu(juce::Component& anchor,bool allowSources,std::function<void(fx::FxModuleSpec)> chosen,
                         std::optional<fx::FxPoint> at={});
-    void showAddEffectMenu(juce::Component& anchor) { showModuleMenu(anchor,true,[this](fx::FxModuleSpec s){addModule(s);}); }
     std::vector<NativeChoiceItem> moduleMenuItems(bool allowSources) const;
     std::vector<int> moduleMenuIds(bool allowSources) const;
     void showTemplatesMenu(juce::Component& anchor);
@@ -523,6 +590,42 @@ public:
     // from the unambiguous compatible output port.
     std::optional<std::uint32_t> createConnectedControlOperator(ControlOpType,const nodes::ControlEndpoint& dangling,std::optional<fx::FxPoint> at);
     bool togglePatternStep(std::uint32_t op,int step);
+    // ---- N07: selection, layout utilities, palette, clipboard, diagnostics ----
+    // Multi-selection of CONTROL nodes (Shift-click toggles, marquee selects).
+    const std::vector<nodes::ControlNodeKey>& selectedControlNodes() const noexcept { return controlMulti_; }
+    void setControlNodeSelection(std::vector<nodes::ControlNodeKey>);
+    void toggleControlNodeSelection(const nodes::ControlNodeKey&);
+    bool controlNodeSelected(const nodes::ControlNodeKey&) const noexcept;
+    // Deletes the selected user-created nodes (canonical SOURCE / PARAMETER
+    // nodes are only removed from the canvas when unlinked). One undo step.
+    bool deleteSelectedControlNodes();
+    // Moves a group of nodes by `delta` (graph units): one undo step.
+    void moveControlNodes(const std::vector<nodes::ControlNodeKey>&,juce::Point<float> delta);
+    enum class Align { Left,Center,Right,Top,DistributeHorizontally,DistributeVertically };
+    bool alignControlNodes(Align);
+    // AUTO LAYOUT (explicit command): layered left-to-right placement of the
+    // whole CONTROL graph. Layout only (one undo step); never touches DSP.
+    std::size_t autoLayoutControl();
+    // The searchable palette. `dangling`: filtered for a cable dropped on empty
+    // canvas (and auto-connected); otherwise the whole Add Module catalog.
+    void showNodePalette(std::optional<fx::FxPoint> at,std::optional<nodes::ControlEndpoint> dangling={});
+    NodePalette& nodePalette() noexcept { return palette_; }
+    std::vector<NodePalette::Entry> paletteEntries(std::optional<nodes::ControlEndpoint> dangling) const;
+    void addFromCatalog(int itemId,std::optional<fx::FxPoint> at); // one dispatch for every Add entry point
+    // Clipboard: user-created processing nodes and the connections BETWEEN
+    // them (never external connections, never canonical sources/parameters).
+    std::size_t copySelectedControlNodes();
+    std::vector<std::uint32_t> pasteControlNodes(std::optional<fx::FxPoint> at={});
+    std::size_t clipboardSize() const noexcept { return clipboard_.operators.size(); }
+    // Graph-authoring feedback (Origami-native, transient; never an OS alert).
+    void showGraphFeedback(const juce::String&);
+    juce::String graphFeedback() const { return feedback_; }
+    // Developer inspector: ids, slots, ports, domains, revisions, telemetry and
+    // the graph validator. Hidden by default (Cmd/Ctrl+Shift+D).
+    void setDebugInspectorVisible(bool);
+    bool debugInspectorVisible() const noexcept;
+    juce::StringArray debugInspectorLines() const;
+    juce::StringArray validateControlGraphReport() const;
     // The canonical sequence (SequencerSettings), edited from the SEQUENCER
     // node's inspector: one undo step per edit or per slider drag.
     bool setSequencerSettings(const SequencerSettings&);
@@ -560,7 +663,7 @@ private:
     class ConfirmPanel;
     void refresh(bool force=false);
     void refreshToolbar();
-    void refreshSidebar();
+    void refreshSidebar(bool includeControl=true);
     void refreshControl();
     nodes::ControlLayout& controlLayout() noexcept { return host_.controlLayout!=nullptr ? *host_.controlLayout : localControlLayout_; }
     void sampleControlMonitor();
@@ -577,6 +680,19 @@ private:
         SequencerSettings sequencer{};
     };
     ControlSnapshot captureControl(bool withSequencer=false) const;
+    struct Clipboard {
+        std::vector<ControlOperator> operators;  // original ids (remapped on paste)
+        std::vector<juce::Point<float>> offsets; // positions relative to the group's top-left
+    };
+    Clipboard clipboard_;
+    std::vector<nodes::ControlNodeKey> controlMulti_;
+    NodePalette palette_;
+    juce::String feedback_;
+    double feedbackUntil_=0.0;
+    class DebugInspector;
+    std::unique_ptr<DebugInspector> debugInspector_;
+    juce::TextButton autoLayout_{"AUTO LAYOUT"};
+    void paintOverChildren(juce::Graphics&) override;
     bool applyControl(const ControlSnapshot&);
     void pushControlUndo(bool withSequencer=false);
     bool commitControl(const ModulationState&); // records undo, then commits atomically
@@ -584,7 +700,7 @@ private:
     bool redoControl();
     void placeOperatorBetween(std::uint32_t id,const nodes::ControlNodeKey& from,const nodes::ControlNodeKey& to);
     void storeView();
-    void timerCallback() override { updateMeters(); sampleControlMonitor(); }
+    void timerCallback() override;
     fx::FxPoint viewCentre() const;
 
     fx::FxWorkspace& workspace_;
@@ -619,6 +735,9 @@ private:
     std::vector<ModulationDestinationEntry> destinationCatalog_;
     std::vector<bool> controlNodeShown_,controlLinkShown_;
     ControlSelection controlSelection_;
+    UiDiagnostics uiDiagnostics_{};
+    std::uint64_t lastModelRevision_=0,lastSidebarGraphRevision_=0;
+    bool modelDirty_=true;
     ModulationState controlModulation_{}; // as of the last refreshControl()
     std::array<std::uint32_t,ModulationState::maxControlOperators> lastEventCounts_{};
     std::array<float,ModulationState::maxControlOperators> eventActivity_{};

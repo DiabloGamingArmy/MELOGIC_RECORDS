@@ -15,6 +15,7 @@
 // mct-origami-v33.1.2-osc-blend-engine
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 #include "StateCodec.h"
+#include "core/nodes/ControlGraph.h"
 #include <cstring>
 #include <string>
 #include <stdexcept>
@@ -222,6 +223,9 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
+    return decodeInstrumentState(data,size,output,nullptr);
+}
+bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output,DecodeReport* report) noexcept {
     if(!data || size<12 || size>65536) return false;
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
@@ -464,7 +468,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
                 in.op=r.word();
                 if(version>=30) {
                     const auto port=r.word();
-                    if(port>=maxControlOutputs) return false;
+                    if(port>0xffu) return false; // structural; an unknown port is repaired below
                     in.port=static_cast<std::uint8_t>(port);
                 }
             }
@@ -474,6 +478,10 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     // written before that rule may repeat a pair; merge them deterministically
     // (summed amount, as the compiler always did) instead of rejecting the load.
     mergeDuplicateRoutes(s.modulation);
+    // N07: never execute (or reject wholesale) a malformed NODES graph: keep
+    // its valid parts, deterministically drop the rest. Valid graphs: no-op.
+    const auto repairs=r.ok ? nodes::repairControlGraph(s.modulation) : 0u;
+    if(report!=nullptr) report->graphRepairs=repairs;
     // Older states: the default BusState plus every oscillator's default
     // BUS 1 @ unity reproduce the pre-bus signal path exactly.
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;

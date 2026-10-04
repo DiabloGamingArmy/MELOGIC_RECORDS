@@ -140,6 +140,41 @@ int controlAutoOutputPort(const ControlOpInfo&,ControlSignal wanted) noexcept;
 // routes removed.
 bool deleteControlOperator(const ModulationState&,std::uint32_t op,ModulationState& out) noexcept;
 
+// ---- N07: graph validation and deterministic recovery ----------------------
+// The ONE description of what a CONTROL graph must satisfy, with a reason per
+// violation (validModulation is its boolean, realtime-safe twin). Off the
+// audio thread only (allocates the result).
+enum class ControlIssueKind : std::uint8_t {
+    DuplicateId,        // two operators share an id (the later one is invalid)
+    UnknownType,        // operator type not in the catalog
+    IdOutOfRange,       // id >= nextOperatorId (a later add would collide)
+    BadParameter,       // non-finite or outside the declared range
+    UnusedInput,        // a connection on an input the node does not have
+    DanglingInput,      // input references a missing operator (or itself)
+    InvalidPort,        // upstream output port does not exist / source port set
+    TypeMismatch,       // CONTROL / GATE / EVENT mismatch
+    InvalidSource,      // unknown canonical source on an input
+    Cycle,              // the input would close a feedback loop
+    DomainViolation,    // per-voice input into a GLOBAL-only node (SEQUENCER)
+    MultipleSequencers, // a second canonical SEQUENCER
+    RouteMissingOperator,
+    RouteInvalidSource, // unknown canonical source
+    RouteInvalidPort,
+    RouteNotControl     // an EVENT / GATE output drives a parameter
+};
+struct ControlIssue {
+    ControlIssueKind kind=ControlIssueKind::DuplicateId;
+    std::uint32_t op=0;      // operator id (0: not an operator issue)
+    std::uint8_t input=0;    // input index where relevant
+    std::uint32_t route=0;   // route id (0: not a route issue)
+};
+const char* toString(ControlIssueKind) noexcept;
+std::vector<ControlIssue> validateControlGraph(const ModulationState&);
+// Malformed state recovery: removes or disconnects exactly the invalid parts
+// in a fixed (slot) order, keeps everything valid, and returns how many
+// repairs were made. A valid graph is returned unchanged (0).
+std::size_t repairControlGraph(ModulationState&) noexcept;
+
 // ---- View metadata (the only persisted CONTROL-layer data) ----------------
 struct ControlLayoutEntry {
     ControlNodeKey key;
@@ -191,5 +226,9 @@ struct ControlGraph {
 // placed layout entries add unlinked nodes. Positions: layout entry, else a
 // deterministic default (stable across refreshes).
 ControlGraph deriveControlGraph(const ModulationState&,const ControlLayout&);
+// N07 AUTO LAYOUT (explicit command only): re-places every node with the
+// layered layout, ignoring stored positions, and stores the result. Layout is
+// view metadata: it never touches the DSP state. Returns the node count.
+std::size_t autoLayoutControlGraph(const ModulationState&,ControlLayout&);
 
 }

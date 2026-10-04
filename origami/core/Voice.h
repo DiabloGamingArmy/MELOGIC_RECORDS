@@ -65,6 +65,8 @@ public:
                         float pitchBendSemitones,float pitchBendNormalized,
                         float modWheel,float aftertouch,const OscillatorRenderPlan&,const OscillatorProcessPlans&,bool observe=true) noexcept;
     VoiceInfo info() const noexcept;
+    void setSlot(std::uint32_t slot) noexcept { slot_=slot; }
+    void restartLifecycles() noexcept { lifecycle_=0; } // engine reset: renders repeat
     bool active() const noexcept { return active_; }
     std::uint64_t order() const noexcept { return order_; }
     std::uint8_t channel() const noexcept { return address_.channel; }
@@ -142,6 +144,15 @@ private:
     double sampleRate_ = 48000, frequency_ = 440, targetFrequency_ = 440, glideRatio_ = 1;
     std::size_t glideRemaining_ = 0;
     float velocity_ = 0;
+    // N07 per-voice RNG: slot index (engine-assigned) and the number of note
+    // lifecycles started on this slot since the engine reset. A stolen or
+    // retriggered voice starts a NEW stream; identical renders repeat exactly.
+    std::uint32_t slot_=0,lifecycle_=0;
+    std::uint32_t voiceSeed() const noexcept { return (slot_+1u)*0x27d4eb2fu ^ (lifecycle_*0x165667b1u+0x5bd1e995u); }
+    // N07: velocity / note curve values are constant for a note: cached and
+    // recomputed only when the note, velocity or modulation state changes.
+    struct CurveCache { float input=-1.0f,value=0.0f; std::uint64_t revision=~std::uint64_t{0}; };
+    CurveCache velocityCurve_{},noteCurve_{};
     bool active_ = false, releasing_ = false;
     // Reuse storage; default construction of this large editable-state snapshot
     // must not run for every voice/sample when no voice modulation is present.

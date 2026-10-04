@@ -80,7 +80,21 @@ juce::String sourceName(ModSource s) {
     case S::ModWheel:return "MOD WHEEL"; case S::Velocity:return "VELOCITY"; case S::Keytrack:return "KEYTRACK";
     case S::Aftertouch:return "AFTERTOUCH"; case S::PitchBend:return "PITCH BEND"; case S::NoteGate:return "NOTE GATE";
     }
-    return "MODULATOR";
+    // N07: a processed route's source is a NODES output, never an anonymous "MODULATOR".
+    return isOperatorSource(s) ? "NODES" : "UNKNOWN SOURCE";
+}
+
+// N07: the label of any route source, with the graph when it is processed
+// ("NODES: SCALE / OFFSET", "NODES: SEQUENCER STEP"), as the Matrix names it.
+juce::String routeSourceLabel(const ModulationState& m,ModSource s) {
+    if(!isOperatorSource(s)) return sourceName(s);
+    juce::String label="NODES";
+    if(const auto* op=findControlOperator(m,operatorIdOf(s)))
+        if(const auto* info=controlOpInfo(op->type)) {
+            label+=": "+juce::String(info->label);
+            if(info->outputCount>1) label+=" "+juce::String(controlOutputName(*info,operatorPortOf(s)));
+        }
+    return label;
 }
 
 struct SourceEntry { ModSource source; const char* group; };
@@ -651,6 +665,165 @@ void FxNodeComponent::showMenu() {
 
 // ================================================================ canvas
 
+// ================================================================ N07 node palette
+
+class NodePalette::Field final : public juce::TextEditor {
+public:
+    explicit Field(NodePalette& owner):owner_(owner) {
+        setName("NODE PALETTE SEARCH");
+        setTextToShowWhenEmpty("Search nodes...",Palette::muted());
+        setColour(juce::TextEditor::backgroundColourId,Palette::inset());
+        setColour(juce::TextEditor::outlineColourId,Palette::borderSoft());
+        setColour(juce::TextEditor::focusedOutlineColourId,signalSourceColour());
+        setColour(juce::TextEditor::textColourId,Palette::text());
+        setFont(juce::FontOptions(13.0f));
+        onTextChange=[this]{ owner_.filter(); };
+        onReturnKey=[this]{ owner_.chooseSelected(); };
+        onEscapeKey=[this]{ owner_.dismiss(); };
+    }
+    bool keyPressed(const juce::KeyPress& key) override {
+        if(key==juce::KeyPress::upKey) { owner_.moveSelection(-1); return true; }
+        if(key==juce::KeyPress::downKey) { owner_.moveSelection(1); return true; }
+        if(key==juce::KeyPress::tabKey) { owner_.moveSelection(key.getModifiers().isShiftDown() ? -1 : 1); return true; }
+        return juce::TextEditor::keyPressed(key);
+    }
+private:
+    NodePalette& owner_;
+};
+
+NodePalette::NodePalette():field_(std::make_unique<Field>(*this)) {
+    setName("NODE PALETTE");
+    addAndMakeVisible(*field_);
+    setVisible(false);
+    setWantsKeyboardFocus(false);
+}
+
+juce::String NodePalette::aliasesFor(const juce::String& label) {
+    // Short names people type. Matched by prefix / substring like the label.
+    static const std::pair<const char*,const char*> table[]{
+        {"PROBABILITY","prob chance percent maybe"},{"SAMPLE & HOLD","s&h sh sample hold snapshot"},{"TRACK & HOLD","t&h th track"},
+        {"SEQUENCER","seq step steps"},{"RANDOM","rand rnd random trigger"},{"RANDOM WALK","walk drunk brownian drift"},
+        {"EUCLIDEAN","euclid bjorklund rhythm"},{"CLOCK DIVIDER","div divide divider"},{"EVENT DELAY","delay later offset"},
+        {"EVENT MERGE","merge or join"},{"CHANCE SPLIT","split branch coin"},{"PATTERN","pattern mask gate steps"},
+        {"COUNTER","count index"},{"SCALE / OFFSET","scale offset gain mul add"},{"SMOOTH","slew lag glide"},
+        {"CLOCK","clock tick tempo metro"},{"THRESHOLD","thresh compare gate"},{"ENV TRIGGER","env retrigger envelope"},
+        {"TOGGLE","flip flop latch"},{"SWITCH","select mux"},{"QUANTIZE","quant steps"},{"REMAP","map range"},
+        {"CURVE","shape exp log"},{"CLAMP","limit"},{"CONSTANT","value fixed"},{"Delay","echo"},{"Reverb","verb room hall"},
+        {"Compressor","comp dyn dynamics"},{"Drive","dist distortion saturation"},{"Parameter...","param destination target"}};
+    for(const auto& [name,aliases]:table) if(label.equalsIgnoreCase(name)) return aliases;
+    return {};
+}
+
+void NodePalette::open(std::vector<Entry> entries,juce::Point<int> at,const juce::String& title) {
+    all_=std::move(entries);
+    title_=title;
+    field_->setText({},juce::dontSendNotification);
+    selected_=0; scroll_=0;
+    filter();
+    const int height=30+8+rowHeight*visibleRows+10;
+    if(auto* parent=getParentComponent()) {
+        auto bounds=juce::Rectangle<int>(at.x,at.y,width,height);
+        bounds=bounds.constrainedWithin(parent->getLocalBounds().reduced(6));
+        setBounds(bounds);
+    } else setBounds(at.x,at.y,width,height);
+    setVisible(true);
+    toFront(false);
+    field_->grabKeyboardFocus();
+}
+
+void NodePalette::dismiss() {
+    if(!isVisible()) return;
+    setVisible(false);
+    if(auto* parent=getParentComponent()) parent->grabKeyboardFocus();
+}
+
+void NodePalette::setQuery(const juce::String& q) { field_->setText(q,false); filter(); } // TextEditor notifies asynchronously
+juce::String NodePalette::query() const { return field_->getText(); }
+std::vector<NodePalette::Entry> NodePalette::results() const { return shown_; }
+
+void NodePalette::filter() {
+    const auto q=field_->getText().trim().toLowerCase();
+    shown_.clear();
+    if(q.isEmpty()) shown_=all_;
+    else {
+        // Rank: label prefix < word prefix in label < alias prefix < substring
+        // (label / alias) < category. Stable within a rank (catalog order).
+        std::vector<std::pair<int,std::size_t>> ranked;
+        for(std::size_t i=0;i<all_.size();++i) {
+            const auto label=all_[i].label.toLowerCase(),group=all_[i].group.toLowerCase();
+            const auto aliases=aliasesFor(all_[i].label).toLowerCase();
+            juce::StringArray words; words.addTokens(label+" "+aliases," /&()-.",""); 
+            int rank=-1;
+            if(label.startsWith(q)) rank=0;
+            else if(std::any_of(words.begin(),words.end(),[&](const juce::String& w){ return w.startsWith(q); })) rank=1;
+            else if((" "+aliases+" ").contains(" "+q)) rank=2;
+            else if(label.contains(q) || aliases.contains(q)) rank=3;
+            else if(group.contains(q)) rank=4;
+            if(rank>=0) ranked.push_back({rank,i});
+        }
+        std::stable_sort(ranked.begin(),ranked.end(),[](auto a,auto b){ return a.first<b.first; });
+        for(const auto& r:ranked) shown_.push_back(all_[r.second]);
+    }
+    selected_=0;
+    for(std::size_t i=0;i<shown_.size();++i) if(shown_[i].enabled) { selected_=int(i); break; }
+    scroll_=0;
+    repaint();
+}
+
+void NodePalette::moveSelection(int delta) {
+    if(shown_.empty()) return;
+    int next=selected_;
+    for(std::size_t step=0;step<shown_.size();++step) {
+        next=(next+delta+int(shown_.size()))%int(shown_.size());
+        if(shown_[std::size_t(next)].enabled) break;
+    }
+    selected_=next;
+    if(selected_<scroll_) scroll_=selected_;
+    if(selected_>=scroll_+visibleRows) scroll_=selected_-visibleRows+1;
+    repaint();
+}
+
+bool NodePalette::chooseSelected() {
+    if(selected_<0 || selected_>=int(shown_.size()) || !shown_[std::size_t(selected_)].enabled) return false;
+    const int id=shown_[std::size_t(selected_)].id;
+    dismiss();
+    if(onChoose) onChoose(id);
+    return true;
+}
+
+void NodePalette::resized() { field_->setBounds(getLocalBounds().reduced(8).removeFromTop(30).withTrimmedTop(0)); }
+
+void NodePalette::paint(juce::Graphics& g) {
+    auto b=getLocalBounds().toFloat();
+    g.setColour(Palette::panel()); g.fillRoundedRectangle(b,5.0f);
+    g.setColour(Palette::borderStrong()); g.drawRoundedRectangle(b.reduced(0.5f),5.0f,1.0f);
+    auto list=getLocalBounds().reduced(8).withTrimmedTop(38);
+    if(shown_.empty()) { text(g,"No matching node",list.removeFromTop(rowHeight),10.5f,Palette::muted()); return; }
+    for(int r=0;r<visibleRows && scroll_+r<int(shown_.size());++r) {
+        const auto& e=shown_[std::size_t(scroll_+r)];
+        auto row=list.removeFromTop(rowHeight);
+        if(scroll_+r==selected_) { g.setColour(signalSourceColour().withAlpha(0.22f)); g.fillRoundedRectangle(row.toFloat(),3.0f); }
+        const auto colour=e.enabled ? Palette::text() : Palette::muted();
+        text(g,e.label,row.reduced(8,0).withTrimmedRight(110),11.0f,colour);
+        text(g,e.enabled ? e.group : e.reason,row.reduced(8,0),8.5f,Palette::muted(),juce::Justification::centredRight);
+    }
+    if(int(shown_.size())>visibleRows)
+        text(g,juce::String(shown_.size())+" results",getLocalBounds().reduced(10,4).removeFromBottom(12),8.0f,Palette::muted(),juce::Justification::centredRight);
+}
+
+void NodePalette::mouseDown(const juce::MouseEvent& e) {
+    const auto list=getLocalBounds().reduced(8).withTrimmedTop(38);
+    if(!list.contains(e.getPosition())) return;
+    const int row=scroll_+(e.getPosition().y-list.getY())/rowHeight;
+    if(row>=0 && row<int(shown_.size()) && shown_[std::size_t(row)].enabled) { selected_=row; chooseSelected(); }
+}
+
+void NodePalette::mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails& wheel) {
+    const int maxScroll=std::max(0,int(shown_.size())-visibleRows);
+    scroll_=juce::jlimit(0,maxScroll,scroll_+(wheel.deltaY<0 ? 1 : -1));
+    repaint();
+}
+
 // ================================================================ CONTROL node
 
 namespace {
@@ -668,14 +841,6 @@ void paintSocket(juce::Graphics& g,ControlSignal signal,juce::Point<float> c,flo
                                                : juce::Rectangle<float>(r*1.5f,r*1.5f).withCentre(c);
     g.setColour(filled ? Palette::text() : Palette::inset()); g.fillRect(box);
     g.setColour(outline); g.drawRect(box,stroke);
-}
-void paintDiamond(juce::Graphics& g,juce::Point<float> c,float r,bool filled,juce::Colour outline,float stroke) {
-    juce::Path d;
-    d.startNewSubPath(c.x,c.y-r); d.lineTo(c.x+r,c.y); d.lineTo(c.x,c.y+r); d.lineTo(c.x-r,c.y); d.closeSubPath();
-    g.setColour(filled ? Palette::text() : Palette::inset());
-    g.fillPath(d);
-    g.setColour(outline);
-    g.strokePath(d,juce::PathStrokeType(stroke));
 }
 }
 
@@ -719,12 +884,28 @@ namespace {
 // node has several outputs; a single output stays centred on the inputs).
 int controlRows(const ControlNodeView& v) noexcept { return std::max({1,int(v.inputs),v.outputs>1 ? int(v.outputs) : 1}); }
 constexpr float controlFirstRow=45.0f,controlRowPitch=22.0f;
-constexpr int controlPreviewHeight=30;
+// N07: preview cells keep a usable size. Up to 16 cells per row; a longer
+// PATTERN wraps to a second row on a wider node (16 px cells at most 32 steps).
+constexpr int previewCellsPerRow=16,previewRowHeight=22;
+int previewRows(const ControlNodeView& v) noexcept { return v.cellCount>previewCellsPerRow ? 2 : 1; }
+int controlPreviewHeight(const ControlNodeView& v) noexcept { return 8+previewRowHeight*previewRows(v); }
+}
+
+int ControlNodeComponent::widthFor(const ControlNodeView& v) noexcept {
+    return v.preview!=ControlNodeView::Preview::None && v.cellCount>previewCellsPerRow ? 300 : width;
+}
+
+void ControlNodeComponent::setDetail(Detail d) {
+    if(d==detail_) return;
+    detail_=d;
+    primary_.setVisible(view_.primaryParameter>=0 && detail_==Detail::Full);
+    resized();
+    repaint();
 }
 
 int ControlNodeComponent::heightFor(const ControlNodeView& v) noexcept {
     if(v.key.kind!=nodes::ControlNodeKind::Operator) return 64;
-    return 34+controlRows(v)*22+(v.preview!=ControlNodeView::Preview::None ? controlPreviewHeight : 0)+(v.primaryParameter>=0 ? 26 : 0)+8;
+    return 34+controlRows(v)*22+(v.preview!=ControlNodeView::Preview::None ? controlPreviewHeight(v) : 0)+(v.primaryParameter>=0 ? 26 : 0)+8;
 }
 
 void ControlNodeComponent::setSequencerStep(int step) {
@@ -736,13 +917,17 @@ void ControlNodeComponent::setSequencerStep(int step) {
 juce::Rectangle<float> ControlNodeComponent::previewBounds() const noexcept {
     if(view_.preview==ControlNodeView::Preview::None) return {};
     const float top=34.0f+float(controlRows(view_))*22.0f+2.0f;
-    return {22.0f,top,float(getWidth())-44.0f,float(controlPreviewHeight)-6.0f};
+    return {22.0f,top,float(getWidth())-44.0f,float(controlPreviewHeight(view_))-6.0f};
 }
 
 std::optional<int> ControlNodeComponent::previewCellAt(juce::Point<float> p) const noexcept {
     const auto area=previewBounds();
-    if(view_.cellCount<=0 || !area.contains(p)) return std::nullopt;
-    return juce::jlimit(0,view_.cellCount-1,int((p.x-area.getX())/area.getWidth()*float(view_.cellCount)));
+    if(view_.cellCount<=0 || !area.contains(p) || detail_!=Detail::Full) return std::nullopt;
+    const int perRow=std::min(view_.cellCount,previewCellsPerRow);
+    const int row=juce::jlimit(0,previewRows(view_)-1,int((p.y-area.getY())/area.getHeight()*float(previewRows(view_))));
+    const int column=juce::jlimit(0,perRow-1,int((p.x-area.getX())/area.getWidth()*float(perRow)));
+    const int cell=row*previewCellsPerRow+column;
+    return cell<view_.cellCount ? std::optional<int>(cell) : std::nullopt;
 }
 
 void ControlNodeComponent::setActivity(float activity,bool gateOpen) {
@@ -752,10 +937,10 @@ void ControlNodeComponent::setActivity(float activity,bool gateOpen) {
 }
 
 void ControlNodeComponent::update(const ControlNodeView& view) {
-    const bool resize=heightFor(view)!=getHeight();
+    const bool resize=heightFor(view)!=getHeight() || widthFor(view)!=getWidth();
     view_=view;
     remove_.setVisible(view.removable);
-    primary_.setVisible(view.primaryParameter>=0);
+    primary_.setVisible(view.primaryParameter>=0 && detail_==Detail::Full);
     if(view.primaryParameter>=0) {
         primaryInitialised_=false;
         primary_.setRange(view.primaryMinimum,view.primaryMaximum,view.primaryInteger ? 1.0 : 0.0);
@@ -763,7 +948,7 @@ void ControlNodeComponent::update(const ControlNodeView& view) {
         primaryInitialised_=true;
     }
     setName("CONTROL "+view.title+" "+view.detail);
-    if(resize) setSize(width,heightFor(view)); else resized();
+    if(resize) setSize(widthFor(view),heightFor(view)); else resized();
     repaint();
 }
 
@@ -801,7 +986,7 @@ std::optional<nodes::ControlEndpoint> ControlNodeComponent::endpoint(nodes::Port
 }
 
 void ControlNodeComponent::resized() {
-    remove_.setBounds(getWidth()-(hasOutput() ? 50 : 30),6,22,20);
+    remove_.setBounds(getWidth()-(hasOutput() ? 52 : 32),5,24,22);
     if(view_.primaryParameter>=0) primary_.setBounds(getLocalBounds().reduced(22,0).withTrimmedTop(getHeight()-30).withHeight(18));
 }
 
@@ -826,29 +1011,43 @@ void ControlNodeComponent::paint(juce::Graphics& g) {
     }
     const int left=kind==nodes::ControlNodeKind::Source ? 12 : 22;
     auto top=getLocalBounds().withTrimmedLeft(left).withTrimmedRight(hasOutput() ? 26 : 12).removeFromTop(26).withTrimmedTop(6);
-    text(g,view_.title,top.withTrimmedRight(view_.removable ? 26 : 0),10.5f,Palette::text());
-    text(g,nodes::toString(view_.domain),top.withTrimmedRight(view_.removable ? 30 : 0),7.5f,Palette::muted(),juce::Justification::centredRight);
+    if(detail_==Detail::Minimal) {
+        // Fit view: identity + ports only. The title keeps a readable on-screen
+        // size (>= 9 px) by growing in graph units as the zoom falls.
+        const float zoom=std::max(0.1f,page_.graphZoom());
+        const float size=juce::jlimit(10.5f,30.0f,9.0f/zoom);
+        g.setColour(Palette::text());
+        g.setFont(juce::FontOptions(size,juce::Font::bold));
+        g.drawFittedText(view_.title,getLocalBounds().reduced(20,4),juce::Justification::centred,2,0.7f);
+    } else {
+        text(g,view_.title,top.withTrimmedRight(view_.removable ? 26 : 0),detail_==Detail::Full ? 10.5f : 12.0f,Palette::text());
+        if(detail_==Detail::Full) text(g,nodes::toString(view_.domain),top.withTrimmedRight(view_.removable ? 30 : 0),7.5f,Palette::muted(),juce::Justification::centredRight);
+    }
     g.setColour(Palette::muted());
     g.setFont(juce::FontOptions(8.5f));
-    if(op) {
-        g.drawText(view_.detail,juce::Rectangle<int>(left,18,getWidth()-left-30,12),juce::Justification::centredLeft);
-        for(std::uint8_t i=0;i<inputCount();++i) {
+    if(detail_==Detail::Minimal) {
+        // no secondary text at fit zoom
+    } else if(op) {
+        if(detail_==Detail::Full) g.drawText(view_.detail,juce::Rectangle<int>(left,18,getWidth()-left-30,12),juce::Justification::centredLeft);
+        // Port labels are unreadable below full detail (sockets keep the type shape).
+        if(detail_==Detail::Full) for(std::uint8_t i=0;i<inputCount();++i) {
             const auto c=portCentre(nodes::PortDirection::Input,i);
             g.drawText(view_.inputNames[i],juce::Rectangle<float>(c.x+10.0f,c.y-7.0f,40.0f,14.0f),juce::Justification::centredLeft);
         }
-        for(std::uint8_t p=0;p<outputCount();++p) {
+        if(detail_==Detail::Full) for(std::uint8_t p=0;p<outputCount();++p) {
             const auto out=portCentre(nodes::PortDirection::Output,p);
             const auto name=view_.outputNames[p].isNotEmpty() ? view_.outputNames[p] : juce::String("OUT");
             g.drawText(name,juce::Rectangle<float>(out.x-78.0f,out.y-7.0f,68.0f,14.0f),juce::Justification::centredRight);
         }
         // N06 previews: the canonical sequence with its current step, or the
         // PATTERN / EUCLIDEAN cells (PATTERN cells toggle on click).
-        if(view_.preview!=ControlNodeView::Preview::None && view_.cellCount>0) {
+        if(view_.preview!=ControlNodeView::Preview::None && view_.cellCount>0 && detail_==Detail::Full) {
             const auto area=previewBounds();
-            const float w=area.getWidth()/float(view_.cellCount);
+            const int perRow=std::min(view_.cellCount,previewCellsPerRow);
+            const float w=area.getWidth()/float(perRow),h=area.getHeight()/float(previewRows(view_));
             g.setColour(Palette::inset()); g.fillRect(area);
             for(int i=0;i<view_.cellCount;++i) {
-                auto cell=juce::Rectangle<float>(area.getX()+w*float(i),area.getY(),w,area.getHeight()).reduced(1.0f,1.0f);
+                auto cell=juce::Rectangle<float>(area.getX()+w*float(i%previewCellsPerRow),area.getY()+h*float(i/previewCellsPerRow),w,h).reduced(1.0f,1.0f);
                 const bool current=view_.preview==ControlNodeView::Preview::Sequencer && i==sequencerStep_;
                 if(view_.preview==ControlNodeView::Preview::Sequencer) {
                     const float v=juce::jlimit(-1.0f,1.0f,view_.cells[std::size_t(i)]);
@@ -864,8 +1063,9 @@ void ControlNodeComponent::paint(juce::Graphics& g) {
             }
         }
     } else {
-        g.drawFittedText(view_.detail,getLocalBounds().withTrimmedLeft(left).withTrimmedRight(hasOutput() ? 26 : 12).withTrimmedTop(28),
-                         juce::Justification::topLeft,2,0.9f);
+        if(detail_==Detail::Full)
+            g.drawFittedText(view_.detail,getLocalBounds().withTrimmedLeft(left).withTrimmedRight(hasOutput() ? 26 : 12).withTrimmedTop(28),
+                             juce::Justification::topLeft,2,0.9f);
     }
     // While a CONTROL cable is dragged, inputs it could reach light up.
     const auto wire=page_.canvas().controlWireSource();
@@ -936,7 +1136,11 @@ void ControlNodeComponent::mouseDown(const juce::MouseEvent& e) {
     // N06: a PATTERN cell toggles its step (one undo step).
     if(view_.preview==ControlNodeView::Preview::Pattern)
         if(const auto cell=previewCellAt(e.position)) { page_.togglePatternStep(view_.key.op,*cell); drag_=Drag::None; return; }
-    page_.selectControlNode(view_.key);
+    // N07: Shift-click toggles membership in the selection; dragging a node of
+    // a multi-selection moves the whole group (one undo step).
+    if(e.mods.isShiftDown() && !portAt(e.position)) { page_.toggleControlNodeSelection(view_.key); drag_=Drag::None; return; }
+    const bool inGroup=page_.selectedControlNodes().size()>1 && page_.controlNodeSelected(view_.key);
+    if(!inGroup) page_.selectControlNode(view_.key);
     toFront(false);
     if(const auto port=portAt(e.position); port && port->first==nodes::PortDirection::Output) {
         if(const auto from=endpoint(port->first,port->second)) {
@@ -954,13 +1158,21 @@ void ControlNodeComponent::mouseDown(const juce::MouseEvent& e) {
             return;
         }
     }
-    drag_=Drag::Move;
+    drag_=inGroup ? Drag::Group : Drag::Move;
     dragOrigin_=getPosition();
+    if(inGroup)
+        for(auto* node:page_.canvas().controlNodes())
+            if(page_.controlNodeSelected(node->key())) node->groupDragOrigin_=node->getPosition();
 }
 
 void ControlNodeComponent::mouseDrag(const juce::MouseEvent& e) {
     if(e.mods.isMiddleButtonDown()) { page_.canvas().mouseDrag(e.getEventRelativeTo(&page_.canvas())); return; }
     if(drag_==Drag::Wire) { page_.canvas().dragControlWire(e.getEventRelativeTo(&page_.canvas()).getPosition()); return; }
+    if(drag_==Drag::Group) {
+        for(auto* node:page_.canvas().controlNodes())
+            if(page_.controlNodeSelected(node->key())) { node->setTopLeftPosition(node->groupDragOrigin_+e.getOffsetFromDragStart()); page_.canvas().controlNodeMoved(node->key()); }
+        return;
+    }
     if(drag_!=Drag::Move) return;
     setTopLeftPosition(dragOrigin_+e.getOffsetFromDragStart());
     page_.canvas().controlNodeMoved(view_.key);
@@ -971,6 +1183,8 @@ void ControlNodeComponent::mouseUp(const juce::MouseEvent& e) {
     if(drag_==Drag::Wire) page_.canvas().endControlWire(e.getEventRelativeTo(&page_.canvas()).getPosition());
     else if(drag_==Drag::Move && getPosition()!=dragOrigin_)
         page_.moveControlNode(view_.key,{float(getX()),float(getY())},true);
+    else if(drag_==Drag::Group && getPosition()!=dragOrigin_)
+        page_.moveControlNodes(page_.selectedControlNodes(),(getPosition()-dragOrigin_).toFloat());
     drag_=Drag::None;
 }
 
@@ -984,6 +1198,37 @@ void FxCanvas::updateExtent() {
     for(const auto& node:controlNodes_) content=content.getUnion(node->getBounds());
     // Graph space extends well beyond the content so large graphs can grow.
     setSize(juce::jmax(minWidth_,content.getRight()+900),juce::jmax(minHeight_,content.getBottom()+600));
+}
+
+std::vector<ControlNodeComponent*> FxCanvas::controlNodes() const {
+    std::vector<ControlNodeComponent*> out;
+    for(const auto& node:controlNodes_) out.push_back(node.get());
+    return out;
+}
+
+void FxCanvas::setControlDetail(ControlNodeComponent::Detail detail) {
+    for(auto& node:controlNodes_) node->setDetail(detail);
+}
+
+void FxCanvas::beginMarquee(juce::Point<float> p,bool additive) {
+    marqueeActive_=true; marqueeAdditive_=additive; marqueeStart_=p; marquee_={p,p};
+}
+
+void FxCanvas::dragMarquee(juce::Point<float> p) {
+    if(!marqueeActive_) return;
+    repaint(marquee_.getSmallestIntegerContainer().expanded(2));
+    marquee_=juce::Rectangle<float>(marqueeStart_,p);
+    repaint(marquee_.getSmallestIntegerContainer().expanded(2));
+}
+
+void FxCanvas::endMarquee() {
+    if(!marqueeActive_) return;
+    marqueeActive_=false;
+    repaint(marquee_.getSmallestIntegerContainer().expanded(2));
+    std::vector<nodes::ControlNodeKey> keys=marqueeAdditive_ ? page_.selectedControlNodes() : std::vector<nodes::ControlNodeKey>{};
+    for(const auto& node:controlNodes_)
+        if(marquee_.intersects(node->getBounds().toFloat()) && std::find(keys.begin(),keys.end(),node->key())==keys.end()) keys.push_back(node->key());
+    page_.setControlNodeSelection(std::move(keys));
 }
 
 ControlNodeComponent* FxCanvas::controlNode(const nodes::ControlNodeKey& key) const noexcept {
@@ -1001,6 +1246,7 @@ void FxCanvas::rebuildControl(const std::vector<ControlNodeView>& views,const st
         if(node==nullptr) {
             controlNodes_.push_back(std::make_unique<ControlNodeComponent>(page_,v.key));
             node=controlNodes_.back().get();
+            node->setDetail(ControlNodeComponent::detailFor(page_.graphZoom()));
             addAndMakeVisible(*node);
         }
         if(!node->isMouseButtonDown()) node->setTopLeftPosition(juce::roundToInt(v.x),juce::roundToInt(v.y));
@@ -1289,6 +1535,7 @@ void FxCanvas::endWire(juce::Point<int> p) {
 }
 
 void FxCanvas::paint(juce::Graphics& g) {
+    ++paints_;
     g.fillAll(juce::Colour(0xff0a0a0a));
     const auto clip=g.getClipBounds();
     const int grid=page_.graphZoom()<0.6f ? 48 : 24;
@@ -1343,6 +1590,10 @@ void FxCanvas::paint(juce::Graphics& g) {
             g.setColour(Palette::text().withAlpha(.72f));
             g.strokePath(wire.path,juce::PathStrokeType(1.2f));
         }
+    }
+    if(marqueeActive_) {
+        g.setColour(signalSourceColour().withAlpha(0.12f)); g.fillRect(marquee_);
+        g.setColour(signalSourceColour().withAlpha(0.7f)); g.drawRect(marquee_,1.0f/std::max(0.1f,page_.graphZoom()));
     }
     if(controlWireActive_) {
         // A cable picked up from an input is drawn output-to-input as well.
@@ -1448,6 +1699,13 @@ void FxCanvas::mouseDown(const juce::MouseEvent& e) {
         return;
     }
     page_.selectNode(invalidFxNodeId);
+    // N07: left-drag on empty canvas draws a selection marquee (Shift adds);
+    // Option/Alt-drag, middle-drag and the trackpad pan.
+    if(!e.mods.isAltDown()) {
+        if(!e.mods.isShiftDown()) page_.setControlNodeSelection({});
+        beginMarquee(position,e.mods.isShiftDown());
+        return;
+    }
     panning_=true;
     panMouseStart_=e.getEventRelativeTo(&page_.graphView()).position;
     panViewStart_=page_.graphView().pan();
@@ -1458,6 +1716,7 @@ void FxCanvas::mouseDrag(const juce::MouseEvent& e) {
         page_.moveLayoutPoint(dragPoint_->first,dragPoint_->second,toGraph(e.position),true);
         return;
     }
+    if(marqueeActive_) { dragMarquee(e.position); return; }
     if(panning_) {
         auto& view=page_.graphView();
         const auto now=e.getEventRelativeTo(&view).position;
@@ -1471,6 +1730,7 @@ void FxCanvas::mouseUp(const juce::MouseEvent& e) {
         dragPoint_.reset();
         repaint();
     }
+    endMarquee();
     panning_=false;
 }
 
@@ -2427,7 +2687,7 @@ private:
         }
         if(tab_==1) {
             for(const auto& route:targeting) {
-                ModRow row{route,std::make_unique<juce::Slider>(),std::make_unique<juce::TextButton>(sourceName(route.source)),
+                ModRow row{route,std::make_unique<juce::Slider>(),std::make_unique<juce::TextButton>(routeSourceLabel(page_.controlState(),route.source)),
                            std::make_unique<juce::TextButton>("X")};
                 auto* amount=row.amount.get();
                 amount->setSliderStyle(juce::Slider::LinearHorizontal);
@@ -2595,11 +2855,12 @@ public:
             kind_="CONTROL CONNECTION";
             if(op!=nullptr) {
                 const auto& in=op->inputs[selection.input];
+                // N07: named ports on both ends (TRIG, RESET, WRAP...), never A / B guesses.
                 const auto from=in.kind==ControlInput::Kind::Source ? page_.controlNodeTitle(nodes::sourceKey(in.source))
-                                                                    : page_.controlNodeTitle(nodes::operatorKey(in.op));
+                                                                    : routeSourceLabel(state.modulation,operatorSource(in.op,in.port)).fromFirstOccurrenceOf("NODES: ",false,false);
                 const auto* info=controlOpInfo(op->type);
                 title_=from+"  >  "+page_.controlNodeTitle(nodes::operatorKey(op->id))+" "
-                      +(info!=nullptr && info->inputs==1 ? juce::String("IN") : selection.input==0 ? juce::String("A") : juce::String("B"));
+                      +(info!=nullptr ? juce::String(controlInputName(*info,selection.input)) : juce::String("IN"));
                 lines_.add("A processing connection: it feeds an operator input (one connection per input).");
             }
             for(auto* c:std::initializer_list<juce::Component*>{&enabled_,&polarity_,&amount_,&remove_,&monitor_}) c->setVisible(false);
@@ -2837,7 +3098,7 @@ private:
         lines_.add(juce::String(info->category).toUpperCase()+"  -  "+(voice ? "VOICE: evaluated per voice" : "GLOBAL: evaluated per sample")
                    +"  -  output "+output);
         juce::StringArray ports;
-        const auto signalName=[](ControlSignal s){ return s==ControlSignal::Gate ? "GATE" : s==ControlSignal::Event ? "EVENT" : s==ControlSignal::None ? "none (acts on the voice)" : "CONTROL"; };
+        const auto signalName=[](ControlSignal s){ return s==ControlSignal::None ? "none (acts on the voice)" : controlSignalName(s); };
         for(std::uint8_t k=0;k<info->inputs;++k) ports.add(juce::String(controlInputName(*info,k))+" ("+signalName(info->inputSignals[k])+")");
         juce::StringArray outs;
         for(std::size_t p=0;p<info->outputCount;++p) outs.add(juce::String(controlOutputName(*info,p))+" ("+signalName(controlOutputSignalOf(*info,p))+")");
@@ -3046,6 +3307,26 @@ private:
 
 // ================================================================ page
 
+// ---- N07 developer inspector (defined before the page owns one) ----------
+class FxPage::DebugInspector final : public juce::Component {
+public:
+    explicit DebugInspector(FxPage& page):page_(page) { setName("NODES DEBUG INSPECTOR"); setInterceptsMouseClicks(false,false); }
+    void paint(juce::Graphics& g) override {
+        g.setColour(juce::Colours::black.withAlpha(0.82f)); g.fillRoundedRectangle(getLocalBounds().toFloat(),4.0f);
+        g.setColour(Palette::borderStrong()); g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f),4.0f,1.0f);
+        auto area=getLocalBounds().reduced(10,8);
+        g.setFont(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(),10.0f,juce::Font::plain));
+        for(const auto& line:page_.debugInspectorLines()) {
+            if(area.getHeight()<12) break;
+            g.setColour(line.startsWith("#") ? signalSourceColour() : Palette::text().withAlpha(0.9f));
+            g.drawText(line.startsWith("#") ? line.substring(1) : line,area.removeFromTop(13),juce::Justification::centredLeft,true);
+        }
+    }
+private:
+    FxPage& page_;
+};
+
+
 FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings host)
     : workspace_(workspace),document_(&workspace.document(mainBusId)),bindings_(std::move(bindings)),
       peaks_(host.peaks),host_(host),viewState_(host.view),canvas_(*this),view_(canvas_) {
@@ -3068,12 +3349,15 @@ FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings h
     clear_.setColour(juce::TextButton::textColourOffId,signalShade(.95f,.9f));
     templates_.onClick=[this]{showTemplatesMenu(templates_);};
     add_.setName("FX toolbar add module");
-    add_.onClick=[this]{showAddEffectMenu(add_);};
+    add_.onClick=[this]{showNodePalette(std::nullopt);}; // N07: searchable palette
+    autoLayout_.setName("NODES AUTO LAYOUT");
+    autoLayout_.setTooltip("Arrange the CONTROL graph left to right (layout only; undoable)");
+    autoLayout_.onClick=[this]{autoLayoutControl();};
     zoomOut_.onClick=[this]{zoomOut();};
     zoomIn_.onClick=[this]{zoomIn();};
     zoomReset_.onClick=[this]{zoomReset();};
     zoomFit_.onClick=[this]{zoomToFit();};
-    for(auto* b:{&undo_,&redo_,&clear_,&templates_,&add_,&zoomOut_,&zoomReset_,&zoomIn_,&zoomFit_}) addAndMakeVisible(b);
+    for(auto* b:{&undo_,&redo_,&clear_,&templates_,&add_,&zoomOut_,&zoomReset_,&zoomIn_,&zoomFit_,&autoLayout_}) addAndMakeVisible(b);
     addAndMakeVisible(sidebar_);
     sidebar_.onTabChanged=[this](FxSidebar::Tab){storeView();};
     sidebar_.routeLabel=[this](std::uint32_t id) {
@@ -3085,6 +3369,10 @@ FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings h
     view_.onViewChanged=[this] {
         zoomReset_.setButtonText(juce::String(juce::roundToInt(view_.zoom()*100.0f))+"%");
         storeView();
+        // N07 semantic zoom: level of detail follows the zoom (view only).
+        const auto detail=ControlNodeComponent::detailFor(view_.zoom());
+        canvas_.setControlDetail(detail);
+        if(detail==ControlNodeComponent::Detail::Minimal) for(auto* node:canvas_.controlNodes()) node->repaint();
     };
     selectedPanel_=std::make_unique<SelectedPanel>(*this);
     parametersPanel_=std::make_unique<ParametersPanel>(*this,bindings_);
@@ -3098,6 +3386,7 @@ FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings h
     matrix_=std::make_unique<ModulationMatrix>(bindings_,ModulationMatrix::Layout::Sidebar);
     sidebar_.setMatrixView(matrix_.get());
     addChildComponent(overlay_);
+    addChildComponent(palette_);
     if(viewState_!=nullptr && viewState_->valid)
         sidebar_.setTab(static_cast<FxSidebar::Tab>(juce::jlimit(0,FxSidebar::tabCount-1,viewState_->sidebarTab)));
     refresh(true);
@@ -3110,7 +3399,7 @@ juce::Component& FxPage::moduleParametersPanel() noexcept { return *modulePanel_
 juce::Component& FxPage::macrosPanel() noexcept { return *macrosPanel_; }
 
 void FxPage::visibilityChanged() {
-    if(isVisible()) startTimerHz(30); else stopTimer();
+    if(isVisible()) { startTimerHz(30); if(modelDirty_ && document_!=nullptr) syncFromModel(); } else stopTimer();
 }
 
 void FxPage::storeView() {
@@ -3132,6 +3421,8 @@ void FxPage::resized() {
     zoomReset_.setBounds(toolbar.removeFromLeft(62).reduced(2,0));
     zoomIn_.setBounds(toolbar.removeFromLeft(34).reduced(2,0));
     zoomFit_.setBounds(toolbar.removeFromLeft(52).reduced(2,0));
+    toolbar.removeFromLeft(12);
+    autoLayout_.setBounds(toolbar.removeFromLeft(110).reduced(2,0));
     add_.setBounds(toolbar.removeFromRight(140).reduced(2,0));
     toolbar.removeFromRight(10);
     templates_.setBounds(toolbar.removeFromRight(104).reduced(2,0));
@@ -3148,6 +3439,7 @@ void FxPage::resized() {
     macrosPanel_->setBounds(inspector.removeFromRight(juce::jlimit(200,300,inspector.getWidth()/5)));
     modulePanel_->setBounds(inspector);
     overlay_.setBounds(getLocalBounds());
+    if(debugInspector_) debugInspector_->setBounds(view_.getBounds().removeFromRight(400).removeFromTop(330).reduced(8));
     refresh(true);
     if(firstLayout && viewState_!=nullptr && viewState_->valid)
         view_.setView(viewState_->zoom,{viewState_->panX,viewState_->panY});
@@ -3163,13 +3455,55 @@ void FxPage::paint(juce::Graphics& g) {
     text(g,"NODE GRAPH",toolbar.reduced(14,0).withWidth(128),11.5f,Palette::secondary());
 }
 
+namespace { juce::Rectangle<float> nodeRect(FxCanvas&,const nodes::ControlNodeKey&); }
+
+void FxPage::timerCallback() {
+    updateMeters();
+    sampleControlMonitor();
+    if(feedback_.isNotEmpty() && juce::Time::getMillisecondCounterHiRes()>feedbackUntil_) { feedback_.clear(); repaint(view_.getBounds()); }
+    if(debugInspectorVisible()) debugInspector_->repaint();
+}
+
 bool FxPage::keyPressed(const juce::KeyPress& key) {
     const auto mods=key.getModifiers();
     const bool command=mods.isCommandDown() || mods.isCtrlDown();
     if(key==juce::KeyPress::escapeKey) {
+        if(palette_.isOpen()) { palette_.dismiss(); return true; }
         if(overlay_.isShowing()) overlay_.dismiss();
         canvas_.cancelWire();
+        if(controlMulti_.size()>1) setControlNodeSelection({});
         return true;
+    }
+    const auto ch=juce::CharacterFunctions::toLowerCase(key.getTextCharacter()!=0 ? key.getTextCharacter() : juce::juce_wchar(key.getKeyCode()));
+    // N07 shortcuts (the palette's search field has focus while it is open,
+    // so these never steal typing).
+    if((key==juce::KeyPress::deleteKey || key==juce::KeyPress::backspaceKey) && !command && controlMulti_.size()>1) return deleteSelectedControlNodes();
+    if(command && mods.isShiftDown() && ch=='d') { setDebugInspectorVisible(!debugInspectorVisible()); return true; }
+    if(command && !mods.isShiftDown() && ch=='d') {
+        auto keys=controlMulti_;
+        if(keys.empty() && controlSelection_.kind==ControlSelection::Kind::Node) keys.push_back(controlSelection_.key);
+        if(keys.size()==1 && keys[0].kind==nodes::ControlNodeKind::Operator) return duplicateControlOperator(keys[0].op).has_value();
+        if(copySelectedControlNodes()>0) { const auto r=nodeRect(canvas_,keys.front()); return !pasteControlNodes(FxPoint{r.getX()+40.0f,r.getBottom()+30.0f}).empty(); }
+        return false;
+    }
+    if(command && ch=='c') return copySelectedControlNodes()>0;
+    if(command && ch=='v') {
+        const auto mouse=view_.getMouseXYRelative().toFloat();
+        const auto at=view_.getLocalBounds().toFloat().contains(mouse) ? std::optional<FxPoint>(view_.viewToGraph(mouse)) : std::nullopt;
+        return !pasteControlNodes(at).empty();
+    }
+    if(command && ch=='a') { std::vector<nodes::ControlNodeKey> all; for(auto* n:canvas_.controlNodes()) all.push_back(n->key()); setControlNodeSelection(all); return true; }
+    if(command && mods.isShiftDown() && ch=='l') { autoLayoutControl(); return true; }
+    if(!command && (ch=='a' || key==juce::KeyPress::tabKey)) {
+        const auto mouse=view_.getMouseXYRelative().toFloat();
+        showNodePalette(view_.getLocalBounds().toFloat().contains(mouse) ? view_.viewToGraph(mouse) : viewCentre());
+        return true;
+    }
+    if(!command && ch=='f' && (controlMulti_.size()>1 || controlSelection_.kind==ControlSelection::Kind::Node)) {
+        juce::Rectangle<int> bounds;
+        auto keys=controlMulti_; if(keys.empty()) keys.push_back(controlSelection_.key);
+        for(const auto& k:keys) bounds=bounds.getUnion(nodeRect(canvas_,k).toNearestInt());
+        if(!bounds.isEmpty()) { view_.fitTo(bounds); return true; }
     }
     if((key==juce::KeyPress::deleteKey || key==juce::KeyPress::backspaceKey) && !command) {
         if(controlSelection_.kind==ControlSelection::Kind::Link) return deleteControlLink(controlSelection_.route);
@@ -3199,17 +3533,46 @@ void FxPage::zoomOut() { view_.zoomAround(view_.zoom()/1.25f,view_.viewport().to
 void FxPage::zoomReset() { view_.zoomAround(1.0f,view_.viewport().toFloat().getCentre()); }
 void FxPage::zoomToFit() { view_.fitTo(canvas_.contentBounds()); }
 
+// N07 synchronization model. syncFromModel (editor timer while NODES is
+// shown, explicit callers) rebuilds the sidebar / CONTROL view only when the
+// processor's model revision or the bus graph revision changed; the page's
+// own edits refresh directly. modelChanged (model-change notifications)
+// does no visual work while the page is hidden: the page is marked stale and
+// catches up when shown. Telemetry (meters, monitors, activity) runs on the
+// page timer (stopped while hidden) and touches only what it updates.
 void FxPage::syncFromModel() {
+    if(document_==nullptr) return;
     refresh(false);
+    const std::uint64_t revision=bindings_.modelRevision ? bindings_.modelRevision() : 0;
+    if(!modelDirty_ && revision!=0 && revision==lastModelRevision_ && lastSidebarGraphRevision_==document_->revision()) {
+        ++uiDiagnostics_.skippedSyncs;
+        return;
+    }
+    lastModelRevision_=revision; lastSidebarGraphRevision_=document_->revision(); modelDirty_=false;
+    ++uiDiagnostics_.modelSyncs;
     refreshSidebar();
 }
+
+void FxPage::modelChanged() {
+    if(getParentComponent()!=nullptr && !isVisible()) {
+        // Hidden: the sidebar's modulator cards are the SYNTH rail's own rows
+        // and must follow every route change; the CONTROL graph, its node
+        // components and cable geometry wait until the page is shown.
+        modelDirty_=true; ++uiDiagnostics_.hiddenSyncs;
+        refreshSidebar(false);
+        return;
+    }
+    syncFromModel();
+}
+
+std::uint32_t FxPage::canvasPaintCount() const noexcept { return canvas_.paintCount(); }
 
 juce::String FxPage::busName(BusId bus) const {
     for(const auto& [id,name]:busNames_) if(id==bus) return name;
     return bus==mainBusId ? juce::String("MAIN") : "BUS "+juce::String(bus);
 }
 
-void FxPage::refreshSidebar() {
+void FxPage::refreshSidebar(bool includeControl) {
     InstrumentState state;
     if(bindings_.snapshot) state=bindings_.snapshot();
     busNames_.clear();
@@ -3280,6 +3643,7 @@ void FxPage::refreshSidebar() {
     buses.push_back({"+ ADD BUS",{},busNames_.size()>=maxRenderBuses ? "Maximum of 8 buses" : "",{},
                      busNames_.size()<maxRenderBuses && bool(host_.addBus),false,false,[safe]{if(safe!=nullptr) safe->addBus();}});
     sidebar_.setRows(FxSidebar::Tab::Buses,std::move(buses));
+    if(!includeControl) return;
     if(matrix_!=nullptr) matrix_->syncFromModel();
     refreshControl();
 }
@@ -3397,6 +3761,7 @@ void FxPage::selectNode(FxNodeId id) {
     if(graph().findNode(id)==nullptr) id=invalidFxNodeId;
     if(id!=invalidFxNodeId && controlSelection_.kind!=ControlSelection::Kind::None) {
         controlSelection_={};
+        controlMulti_.clear();
         modulePanel_->setControlMode(false);
         refreshControl();
     }
@@ -3754,6 +4119,7 @@ bool FxPage::connectableControl(ModSource source,const ModAddress& address) cons
 }
 
 void FxPage::refreshControl() {
+    ++uiDiagnostics_.controlRebuilds;
     InstrumentState state;
     if(bindings_.snapshot) state=bindings_.snapshot();
     controlModulation_=state.modulation;
@@ -3786,6 +4152,7 @@ void FxPage::refreshControl() {
     // A selection whose relationship vanished (deleted in any view) clears.
     if(controlSelection_.kind==ControlSelection::Kind::Link && !controlLinkShown(controlSelection_.route)) controlSelection_={};
     if(controlSelection_.kind==ControlSelection::Kind::Node && !controlNodeShown(controlSelection_.key)) controlSelection_={};
+    controlMulti_.erase(std::remove_if(controlMulti_.begin(),controlMulti_.end(),[this](const nodes::ControlNodeKey& k){ return !controlNodeShown(k); }),controlMulti_.end());
     if(controlSelection_.kind==ControlSelection::Kind::Edge) {
         const auto* op=findControlOperator(state.modulation,controlSelection_.op);
         if(op==nullptr || op->inputs[controlSelection_.input].kind==ControlInput::Kind::None) controlSelection_={};
@@ -3821,7 +4188,7 @@ void FxPage::refreshControl() {
         v.title=controlNodeTitle(n.key);
         v.detail=controlNodeDetail(n.key);
         v.domain=n.domain;
-        v.selected=controlSelection_.kind==ControlSelection::Kind::Node && controlSelection_.key==n.key;
+        v.selected=controlNodeSelected(n.key);
         v.linked=linkedNode[i];
         v.removable=n.key.kind==nodes::ControlNodeKind::Operator || !linkedNode[i];
         if(n.key.kind==nodes::ControlNodeKind::Operator)
@@ -3992,7 +4359,13 @@ bool FxPage::applyControl(const ControlSnapshot& snapshot) {
     m.routes=snapshot.routes; m.nextRouteId=std::max(m.nextRouteId,snapshot.nextRouteId);
     m.operators=snapshot.operators; m.nextOperatorId=std::max(m.nextOperatorId,snapshot.nextOperatorId);
     if(snapshot.hasSequencer) m.sequencer=snapshot.sequencer; // sequence edits only
-    if(!bindings_.modulation(m)) return false;
+    // N07: a layout-only step (move, align, auto layout) never republishes the
+    // model, so it can never reach the engine or the compiler.
+    const auto current=bindings_.snapshot().modulation;
+    const auto sameRoutes=[&]{ for(std::size_t i=0;i<m.routes.size();++i) { const auto& a=m.routes[i]; const auto& b=current.routes[i]; if(a.id!=b.id || a.enabled!=b.enabled || a.source!=b.source || !(a.destination==b.destination) || a.amount!=b.amount || a.bipolar!=b.bipolar) return false; } return true; };
+    const bool modelChanged=!sameRoutes() || m.operators!=current.operators || m.nextOperatorId!=current.nextOperatorId
+                         || m.nextRouteId!=current.nextRouteId || (snapshot.hasSequencer && std::memcmp(&m.sequencer,&current.sequencer,sizeof(SequencerSettings))!=0);
+    if(modelChanged && !bindings_.modulation(m)) return false;
     controlLayout()=snapshot.layout;
     refreshControl();
     refreshToolbar();
@@ -4063,13 +4436,46 @@ bool FxPage::canConnectControlEdge(const nodes::ControlEndpoint& from,const node
     return check.creatable() || check.result==nodes::ControlLinkResult::Exists;
 }
 
+namespace {
+// N07: concise, specific reasons for a refused connection (graph feedback).
+juce::String connectionReason(const nodes::ControlLinkCheck& check,const ModulationState& m,const nodes::ControlEndpoint& from,const nodes::ControlEndpoint& to) {
+    using R=nodes::ControlLinkResult;
+    const auto name=[](ControlSignal s){ return juce::String(controlSignalName(s)); };
+    switch(check.result) {
+    case R::TypeMismatch: {
+        const auto into=name(nodes::controlInputSignal(m,to));
+        return name(nodes::controlOutputSignal(m,from))+" output cannot feed "+(into.startsWithChar('E') ? "an " : "a ")+into+" input";
+    }
+    case R::DomainCrossing: return "Per-voice output cannot drive a global parameter or node";
+    case R::InputOccupied: return "Input already connected";
+    case R::WouldCreateCycle: return "That connection would create a feedback loop";
+    case R::DestinationUnavailable: return "Parameter not available in this instrument";
+    case R::CapacityExceeded: return "Modulation is full (32 routes)";
+    case R::SourceInactive: return "Source not active: add it on SYNTH first";
+    case R::SourceNotExposed: return "That source is not available in NODES";
+    default: return "Not a valid connection";
+    }
+}
+}
+
 nodes::ControlLinkCheck FxPage::connectControlEdge(const nodes::ControlEndpoint& from,const nodes::ControlEndpoint& to) {
     nodes::ControlLinkCheck check;
     if(!bindings_.snapshot) return check;
-    if(to.kind==nodes::ControlEndpoint::Kind::Parameter) return connectControl(from.outputSource(),to.destination);
+    if(to.kind==nodes::ControlEndpoint::Kind::Parameter) {
+        check=connectControl(from.outputSource(),to.destination);
+        if(!check.creatable() && check.result!=nodes::ControlLinkResult::Exists) {
+            ++uiDiagnostics_.rejectedConnections;
+            showGraphFeedback(connectionReason(check,controlModulation_,from,to));
+        }
+        return check;
+    }
     const auto state=bindings_.snapshot();
     check=nodes::checkControlEdge(state,from,to);
-    if(!check.creatable()) return check;
+    if(!check.creatable()) {
+        ++uiDiagnostics_.rejectedConnections;
+        showGraphFeedback(connectionReason(check,state.modulation,from,to));
+        return check;
+    }
     ModulationState next;
     if(!nodes::connectControlInput(state,from,to.op,to.input,next) || !commitControl(next)) {
         check.result=nodes::ControlLinkResult::InvalidPort;
@@ -4139,9 +4545,10 @@ std::optional<std::uint32_t> FxPage::duplicateControlOperator(std::uint32_t op) 
     ModulationState next; std::uint32_t id=0;
     if(!nodes::addControlOperator(m,original->type,next,id)) return std::nullopt;
     next.operators[controlOperatorSlot(next,id)].params=original->params; // settings, never connections
+    // N07: placed just below the original (never on top of it), then selected.
+    const auto original_=nodeRect(canvas_,nodes::operatorKey(op));
     if(!commitControl(next)) return std::nullopt;
-    if(const auto* e=controlLayout().find(nodes::operatorKey(op)); e!=nullptr && e->positioned)
-        controlLayout().setPosition(nodes::operatorKey(id),e->x+30.0f,e->y+30.0f);
+    if(!original_.isEmpty()) controlLayout().setPosition(nodes::operatorKey(id),original_.getX(),original_.getBottom()+20.0f);
     selectControlNode(nodes::operatorKey(id));
     return id;
 }
@@ -4213,6 +4620,8 @@ std::vector<NativeChoiceItem> FxPage::controlCreateItems(const nodes::ControlEnd
 }
 
 void FxPage::showControlCreateMenu(juce::Component& anchor,const nodes::ControlEndpoint& dangling,FxPoint at) {
+    // N07: the searchable palette, filtered for the dangling cable.
+    if(!paletteEntries(dangling).empty()) { showNodePalette(at,dangling); return; }
     const auto items=controlCreateItems(dangling);
     if(items.empty()) return;
     juce::Component::SafePointer<FxPage> safe(this);
@@ -4320,18 +4729,21 @@ bool FxPage::setOperatorParameter(std::uint32_t op,std::size_t index,float value
 
 void FxPage::selectControlEdge(std::uint32_t op,std::uint8_t input) {
     if(selected_!=invalidFxNodeId) { selected_=invalidFxNodeId; refresh(true); }
+    controlMulti_.clear();
     controlSelection_={ControlSelection::Kind::Edge,{},0,op,input};
     refreshControl();
 }
 
 void FxPage::selectControlNode(const nodes::ControlNodeKey& key) {
     if(selected_!=invalidFxNodeId) { selected_=invalidFxNodeId; refresh(true); }
+    controlMulti_={key};
     controlSelection_={ControlSelection::Kind::Node,key,0};
     refreshControl();
 }
 
 void FxPage::selectControlLink(std::uint32_t route) {
     if(selected_!=invalidFxNodeId) { selected_=invalidFxNodeId; refresh(true); }
+    controlMulti_.clear();
     controlSelection_={ControlSelection::Kind::Link,{},route};
     refreshControl();
 }
@@ -4445,5 +4857,323 @@ juce::String FxPage::parameterTabName() const {
 void FxPage::selectParameterTab(int index) { parametersPanel_->selectTab(index); }
 
 std::size_t FxPage::modulationRowCount() const { return parametersPanel_->modulationRows(); }
+
+
+// ================================================================ N07 selection / layout / palette / clipboard / diagnostics
+
+bool FxPage::controlNodeSelected(const nodes::ControlNodeKey& key) const noexcept {
+    if(std::find(controlMulti_.begin(),controlMulti_.end(),key)!=controlMulti_.end()) return true;
+    return controlSelection_.kind==ControlSelection::Kind::Node && controlSelection_.key==key;
+}
+
+void FxPage::setControlNodeSelection(std::vector<nodes::ControlNodeKey> keys) {
+    if(keys.size()==1) { selectControlNode(keys.front()); return; }
+    if(selected_!=invalidFxNodeId) { selected_=invalidFxNodeId; refresh(true); }
+    controlMulti_=std::move(keys);
+    // The inspector follows the most recently added node of a group.
+    if(controlMulti_.empty()) { if(controlSelection_.kind==ControlSelection::Kind::Node) controlSelection_={}; }
+    else controlSelection_={ControlSelection::Kind::Node,controlMulti_.back(),0};
+    refreshControl();
+}
+
+void FxPage::toggleControlNodeSelection(const nodes::ControlNodeKey& key) {
+    auto keys=controlMulti_;
+    if(keys.empty() && controlSelection_.kind==ControlSelection::Kind::Node) keys.push_back(controlSelection_.key);
+    const auto it=std::find(keys.begin(),keys.end(),key);
+    if(it!=keys.end()) keys.erase(it); else keys.push_back(key);
+    if(keys.size()==1) { selectControlNode(keys.front()); return; }
+    setControlNodeSelection(std::move(keys));
+}
+
+namespace {
+juce::Rectangle<float> nodeRect(FxCanvas& canvas,const nodes::ControlNodeKey& key) {
+    if(auto* node=canvas.controlNode(key)) return node->getBounds().toFloat();
+    return {};
+}
+}
+
+bool FxPage::deleteSelectedControlNodes() {
+    if(!bindings_.snapshot || !bindings_.modulation) return false;
+    auto keys=controlMulti_;
+    if(keys.empty() && controlSelection_.kind==ControlSelection::Kind::Node) keys.push_back(controlSelection_.key);
+    if(keys.empty()) return false;
+    auto next=bindings_.snapshot().modulation;
+    bool modelChanged=false,layoutChanged=false;
+    for(const auto& key:keys)
+        if(key.kind==nodes::ControlNodeKind::Operator) {
+            ModulationState out;
+            if(nodes::deleteControlOperator(next,key.op,out)) { next=out; modelChanged=true; }
+        }
+    std::size_t kept=0;
+    pushControlUndo(); // nodes, their connections and the layout: one step
+    for(const auto& key:keys) {
+        if(key.kind==nodes::ControlNodeKind::Operator) { layoutChanged|=controlLayout().remove(key); continue; }
+        // Canonical SOURCE / PARAMETER nodes: views of instrument state. They
+        // leave the canvas only when nothing connects to them.
+        bool linked=false;
+        for(const auto& r:next.routes)
+            if(r.id && routeComplete(r) && (key.kind==nodes::ControlNodeKind::Source ? r.source==key.source : r.destination==key.destination)) linked=true;
+        for(const auto& op:next.operators)
+            for(const auto& in:op.inputs) linked|=key.kind==nodes::ControlNodeKind::Source && in.kind==ControlInput::Kind::Source && in.source==key.source;
+        if(linked) { ++kept; continue; }
+        layoutChanged|=controlLayout().remove(key);
+    }
+    if(!modelChanged && !layoutChanged) { controlUndo_.pop_back(); refreshToolbar(); if(kept) showGraphFeedback("Linked sources and parameters stay: delete their connections first"); return false; }
+    if(modelChanged && !bindings_.modulation(next)) { applyControl(controlUndo_.back()); controlUndo_.pop_back(); return false; }
+    controlMulti_.clear(); controlSelection_={};
+    refreshControl();
+    if(kept) showGraphFeedback("Linked sources and parameters stay: delete their connections first");
+    return true;
+}
+
+void FxPage::moveControlNodes(const std::vector<nodes::ControlNodeKey>& keys,juce::Point<float> delta) {
+    if(keys.empty()) return;
+    pushControlUndo(); // the whole group move is one undo step (layout only)
+    for(const auto& key:keys) {
+        juce::Point<float> at;
+        if(const auto* e=controlLayout().find(key); e!=nullptr && e->positioned) at={e->x,e->y};
+        else if(const auto i=controlGraph_.find(key)) at={controlGraph_.nodes[*i].x,controlGraph_.nodes[*i].y};
+        controlLayout().setPosition(key,at.x+delta.x,at.y+delta.y);
+    }
+    refreshControl();
+}
+
+bool FxPage::alignControlNodes(Align mode) {
+    auto keys=controlMulti_;
+    const bool distribute=mode==Align::DistributeHorizontally || mode==Align::DistributeVertically;
+    if(keys.size()<(distribute ? 3u : 2u)) return false;
+    std::vector<juce::Rectangle<float>> rects;
+    for(const auto& k:keys) rects.push_back(nodeRect(canvas_,k));
+    float left=1e9f,right=-1e9f,top=1e9f,centre=0.0f;
+    for(const auto& r:rects) { left=std::min(left,r.getX()); right=std::max(right,r.getRight()); top=std::min(top,r.getY()); centre+=r.getCentreX(); }
+    centre/=float(rects.size());
+    pushControlUndo();
+    if(distribute) {
+        std::vector<std::size_t> order(keys.size());
+        for(std::size_t i=0;i<order.size();++i) order[i]=i;
+        const bool horizontal=mode==Align::DistributeHorizontally;
+        std::sort(order.begin(),order.end(),[&](std::size_t a,std::size_t b){ return horizontal ? rects[a].getCentreX()<rects[b].getCentreX() : rects[a].getCentreY()<rects[b].getCentreY(); });
+        const auto first=rects[order.front()],last=rects[order.back()];
+        const float from=horizontal ? first.getCentreX() : first.getCentreY(),to=horizontal ? last.getCentreX() : last.getCentreY();
+        for(std::size_t i=0;i<order.size();++i) {
+            const auto& r=rects[order[i]];
+            const float c=from+(to-from)*float(i)/float(order.size()-1);
+            controlLayout().setPosition(keys[order[i]],horizontal ? c-r.getWidth()*0.5f : r.getX(),horizontal ? r.getY() : c-r.getHeight()*0.5f);
+        }
+    } else
+        for(std::size_t i=0;i<keys.size();++i) {
+            const auto& r=rects[i];
+            float x=r.getX(),y=r.getY();
+            if(mode==Align::Left) x=left;
+            if(mode==Align::Center) x=centre-r.getWidth()*0.5f;
+            if(mode==Align::Right) x=right-r.getWidth();
+            if(mode==Align::Top) y=top;
+            controlLayout().setPosition(keys[i],x,y);
+        }
+    refreshControl();
+    return true;
+}
+
+std::size_t FxPage::autoLayoutControl() {
+    pushControlUndo(); // layout only: one undo step, no DSP change
+    const auto count=nodes::autoLayoutControlGraph(controlModulation_,controlLayout());
+    refreshControl();
+    return count;
+}
+
+std::vector<NodePalette::Entry> FxPage::paletteEntries(std::optional<nodes::ControlEndpoint> dangling) const {
+    std::vector<NodePalette::Entry> entries;
+    const auto items=dangling ? controlCreateItems(*dangling) : moduleMenuItems(true);
+    for(const auto& item:items) entries.push_back({item.id,item.text,item.group,item.tooltip.isNotEmpty() ? item.tooltip : juce::String("Unavailable"),item.enabled});
+    return entries;
+}
+
+void FxPage::addFromCatalog(int choice,std::optional<FxPoint> at) {
+    if(choice>=FxModuleMenu::controlOperatorBase) { addControlOperator(static_cast<ControlOpType>(choice-FxModuleMenu::controlOperatorBase),at); return; }
+    if(choice>=FxModuleMenu::controlSourceBase) { addControlSource(static_cast<ModSource>(choice-FxModuleMenu::controlSourceBase),at); return; }
+    if(choice==FxModuleMenu::parameterPickerId) { showParameterPicker(*this,std::nullopt,at); return; }
+    if(const auto spec=FxModuleMenu::decode(choice)) { if(at) addModuleAt(*spec,*at); else addModule(*spec); }
+}
+
+void FxPage::showNodePalette(std::optional<FxPoint> at,std::optional<nodes::ControlEndpoint> dangling) {
+    const auto entries=paletteEntries(dangling);
+    if(entries.empty()) return;
+    juce::Point<int> where;
+    if(at) where=(view_.graphToView(*at)+view_.getPosition().toFloat()).toInt();
+    else where={add_.getRight()-NodePalette::width,add_.getBottom()+4};
+    juce::Component::SafePointer<FxPage> safe(this);
+    palette_.onChoose=[safe,at,dangling](int id) {
+        if(safe==nullptr) return;
+        if(!dangling) { safe->addFromCatalog(id,at); return; }
+        const auto point=at.value_or(safe->viewCentre());
+        if(id==FxModuleMenu::parameterPickerId) { safe->showParameterPicker(*safe,dangling->outputSource(),point); return; }
+        if(id>=FxModuleMenu::controlOperatorBase) { safe->createConnectedControlOperator(static_cast<ControlOpType>(id-FxModuleMenu::controlOperatorBase),*dangling,point); return; }
+        if(id>=FxModuleMenu::controlSourceBase) {
+            const auto source=static_cast<ModSource>(id-FxModuleMenu::controlSourceBase);
+            safe->addControlSource(source,point);
+            safe->connectControlEdge(nodes::ControlEndpoint::fromSource(source),*dangling);
+        }
+    };
+    palette_.open(entries,where,dangling ? juce::String(dangling->isOutput() ? "CONNECT TO" : "FEED FROM") : juce::String("ADD MODULE"));
+}
+
+std::size_t FxPage::copySelectedControlNodes() {
+    auto keys=controlMulti_;
+    if(keys.empty() && controlSelection_.kind==ControlSelection::Kind::Node) keys.push_back(controlSelection_.key);
+    Clipboard clip;
+    float left=1e9f,top=1e9f;
+    std::vector<juce::Point<float>> positions;
+    for(const auto& key:keys) {
+        if(key.kind!=nodes::ControlNodeKind::Operator) continue; // canonical nodes are never copied
+        const auto* op=findControlOperator(controlModulation_,key.op);
+        if(op==nullptr) continue;
+        clip.operators.push_back(*op);
+        const auto r=nodeRect(canvas_,key);
+        positions.push_back(r.getPosition());
+        left=std::min(left,r.getX()); top=std::min(top,r.getY());
+    }
+    for(const auto& p:positions) clip.offsets.push_back({p.x-left,p.y-top});
+    if(clip.operators.empty()) return 0;
+    clipboard_=std::move(clip);
+    return clipboard_.operators.size();
+}
+
+std::vector<std::uint32_t> FxPage::pasteControlNodes(std::optional<FxPoint> at) {
+    std::vector<std::uint32_t> created;
+    if(clipboard_.operators.empty() || !bindings_.snapshot || !bindings_.modulation) return created;
+    auto next=bindings_.snapshot().modulation;
+    std::vector<std::pair<std::uint32_t,std::uint32_t>> ids; // old -> new
+    bool skippedSequencer=false;
+    for(const auto& op:clipboard_.operators) {
+        if(!nodes::controlOperatorCreatable(next,op.type)) { skippedSequencer|=op.type==ControlOpType::Sequencer; continue; }
+        ModulationState out; std::uint32_t id=0;
+        if(!nodes::addControlOperator(next,op.type,out,id)) break; // capacity
+        out.operators[controlOperatorSlot(out,id)].params=op.params;
+        next=out;
+        ids.push_back({op.id,id});
+    }
+    const auto mapped=[&](std::uint32_t old)->std::uint32_t { for(const auto& [o,n]:ids) if(o==old) return n; return 0; };
+    // Only connections BETWEEN copied nodes are recreated (fresh ids, same ports).
+    for(const auto& op:clipboard_.operators) {
+        const auto self=mapped(op.id);
+        if(self==0) continue;
+        auto& target=next.operators[controlOperatorSlot(next,self)];
+        for(std::size_t k=0;k<op.inputs.size();++k)
+            if(op.inputs[k].kind==ControlInput::Kind::Operator)
+                if(const auto from=mapped(op.inputs[k].op)) target.inputs[k]={ControlInput::Kind::Operator,ModSource::None,from,op.inputs[k].port};
+    }
+    if(ids.empty()) { if(skippedSequencer) showGraphFeedback("The instrument has one sequencer: it was not pasted"); return created; }
+    InstrumentState probe=bindings_.snapshot(); probe.modulation=next;
+    if(!validModulation(next,probe.oscillators)) { showGraphFeedback("Paste failed: the copied nodes no longer fit this graph"); return created; }
+    if(!commitControl(next)) return created;
+    const auto base=at.value_or(FxPoint{viewCentre().x-110.0f,viewCentre().y-60.0f});
+    std::vector<nodes::ControlNodeKey> keys;
+    for(std::size_t i=0;i<clipboard_.operators.size();++i)
+        if(const auto id=mapped(clipboard_.operators[i].id)) {
+            const auto offset=i<clipboard_.offsets.size() ? clipboard_.offsets[i] : juce::Point<float>{};
+            controlLayout().setPosition(nodes::operatorKey(id),base.x+offset.x,base.y+offset.y);
+            created.push_back(id); keys.push_back(nodes::operatorKey(id));
+        }
+    if(skippedSequencer) showGraphFeedback("The instrument has one sequencer: it was not pasted");
+    setControlNodeSelection(keys);
+    return created;
+}
+
+void FxPage::showGraphFeedback(const juce::String& message) {
+    feedback_=message;
+    feedbackUntil_=juce::Time::getMillisecondCounterHiRes()+2600.0;
+    repaint(view_.getBounds());
+}
+
+void FxPage::paintOverChildren(juce::Graphics& g) {
+    if(feedback_.isEmpty()) return;
+    // Concise, Origami-native, transient: bottom centre of the graph.
+    const auto area=view_.getBounds();
+    const int width=juce::jmin(area.getWidth()-40,juce::GlyphArrangement::getStringWidthInt(juce::FontOptions(11.0f),feedback_)+40);
+    auto toast=juce::Rectangle<int>(width,30).withCentre({area.getCentreX(),area.getBottom()-32});
+    g.setColour(Palette::panel().withAlpha(0.96f)); g.fillRoundedRectangle(toast.toFloat(),4.0f);
+    g.setColour(signalSourceColour().withAlpha(0.8f)); g.drawRoundedRectangle(toast.toFloat().reduced(0.5f),4.0f,1.0f);
+    text(g,feedback_,toast,11.0f,Palette::text(),juce::Justification::centred);
+}
+
+// ---- developer inspector ----------------------------------------------------
+
+void FxPage::setDebugInspectorVisible(bool visible) {
+    if(!debugInspector_) { debugInspector_=std::make_unique<DebugInspector>(*this); addChildComponent(*debugInspector_); }
+    debugInspector_->setVisible(visible);
+    if(visible) { resized(); debugInspector_->toFront(false); }
+}
+
+bool FxPage::debugInspectorVisible() const noexcept { return debugInspector_!=nullptr && debugInspector_->isVisible(); }
+
+juce::StringArray FxPage::validateControlGraphReport() const {
+    juce::StringArray lines;
+    for(const auto& issue:nodes::validateControlGraph(controlModulation_))
+        lines.add(juce::String(nodes::toString(issue.kind))+(issue.op ? "  op "+juce::String(issue.op)+" in "+juce::String(int(issue.input)) : juce::String())
+                  +(issue.route ? "  route "+juce::String(issue.route) : juce::String()));
+    return lines;
+}
+
+juce::StringArray FxPage::debugInspectorLines() const {
+    juce::StringArray lines;
+    const auto signal=[](ControlSignal s){ return controlSignalName(s); };
+    lines.add("#NODES DEBUG");
+    if(bindings_.modelRevision) lines.add("model revision   "+juce::String((juce::int64)bindings_.modelRevision()));
+    if(bindings_.nodesDiagnostics) {
+        const auto d=bindings_.nodesDiagnostics();
+        lines.add("plan  compiles "+juce::String(d.compiles)+"  param updates "+juce::String(d.parameterUpdates)+"  skips "+juce::String(d.compileSkips));
+        lines.add("state revision "+juce::String((juce::int64)d.stateRevision)+"  delay overflow "+juce::String(d.eventDelayOverflows)+"  QoS suppressed "+juce::String(d.suppressedBlocks));
+    }
+    const auto& u=uiDiagnostics_;
+    lines.add("ui    syncs "+juce::String(u.modelSyncs)+" skipped "+juce::String(u.skippedSyncs)+" hidden "+juce::String(u.hiddenSyncs)
+              +" rebuilds "+juce::String(u.controlRebuilds)+" paints "+juce::String(canvasPaintCount())+" rejected "+juce::String(u.rejectedConnections));
+    const auto issues=validateControlGraphReport();
+    lines.add("validator  "+(issues.isEmpty() ? juce::String("graph valid") : juce::String(issues.size())+" issue(s)"));
+    for(const auto& issue:issues) lines.add("  ! "+issue);
+    const auto& m=controlModulation_;
+    ModulationSourceSlots slots{};
+    if(bindings_.visualization) slots=bindings_.visualization().routeSources;
+    const auto& sel=controlSelection_;
+    if(sel.kind==ControlSelection::Kind::Node && sel.key.kind==nodes::ControlNodeKind::Operator) {
+        const auto slot=controlOperatorSlot(m,sel.key.op);
+        const auto* op=findControlOperator(m,sel.key.op);
+        const auto* info=op ? controlOpInfo(op->type) : nullptr;
+        if(info!=nullptr) {
+            const bool voice=sourceIsVoice(operatorSource(op->id),m);
+            lines.add("#OPERATOR "+juce::String(info->label));
+            lines.add("id "+juce::String(op->id)+"  type "+juce::String(int(op->type))+"  slot "+juce::String(slot)+"  domain "+(voice ? "VOICE" : "GLOBAL"));
+            lines.add(juce::String("state  ")+(voice ? "per voice: voice.state["+juce::String(slot)+"]" : "global state["+juce::String(slot)+"]"));
+            for(std::size_t k=0;k<info->inputs;++k) {
+                const auto& in=op->inputs[k];
+                juce::String from=in.kind==ControlInput::Kind::None ? "-" : in.kind==ControlInput::Kind::Source ? "source "+juce::String(int(in.source))
+                                 : "op "+juce::String(in.op)+" port "+juce::String(int(in.port));
+                lines.add("in "+juce::String(int(k))+" "+controlInputName(*info,k)+" ("+signal(info->inputSignals[k])+") <- "+from);
+            }
+            for(std::size_t p=0;p<info->outputCount;++p) {
+                const auto index=CompiledModulation::sourceSlotCount+operatorOutputIndex(slot,p);
+                lines.add("out "+juce::String(int(p))+" "+controlOutputName(*info,p)+" ("+signal(controlOutputSignalOf(*info,p))+")  monitor "
+                          +juce::String(int(index))+" = "+juce::String(index<slots.size() ? slots[index] : 0.0f,4));
+            }
+        }
+    } else if(sel.kind==ControlSelection::Kind::Link) {
+        for(const auto& r:m.routes) if(r.id==sel.route) {
+            lines.add("#ROUTE "+juce::String(r.id));
+            lines.add(juce::String("source ")+(isOperatorSource(r.source) ? "op "+juce::String(operatorIdOf(r.source))+" port "+juce::String(int(operatorPortOf(r.source)))
+                                                                         : "canonical "+juce::String(int(r.source))));
+            lines.add("destination "+juce::String(int(r.destination.parameter))+" osc "+juce::String(r.destination.oscillator)+" item "+juce::String(r.destination.itemId));
+            lines.add("amount "+juce::String(r.amount,3)+(r.bipolar ? "  BIPOLAR" : "  UNIPOLAR")+(r.enabled ? "" : "  OFF"));
+            const auto index=modulationSourceSlot(r.source,m);
+            lines.add("monitor slot "+juce::String(int(index))+" = "+juce::String(index<slots.size() ? slots[index] : 0.0f,4));
+        }
+    } else if(sel.kind==ControlSelection::Kind::Edge) {
+        if(const auto* op=findControlOperator(m,sel.op)) {
+            const auto& in=op->inputs[sel.input];
+            lines.add("#CONNECTION -> op "+juce::String(sel.op)+" input "+juce::String(int(sel.input)));
+            lines.add(in.kind==ControlInput::Kind::Operator ? "from op "+juce::String(in.op)+" output "+juce::String(int(in.port))
+                                                            : "from source "+juce::String(int(in.source)));
+        }
+    } else if(!controlMulti_.empty()) lines.add("#SELECTION "+juce::String(controlMulti_.size())+" nodes");
+    return lines;
+}
 
 }

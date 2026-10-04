@@ -21,7 +21,7 @@ namespace mct::origami {
 void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset(); }
 void Voice::reset() noexcept { topologyGeneration_=0; for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();operatorState_={};active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
-    reset();address_=address;velocity_=velocity;order_=order;
+    reset();address_=address;velocity_=velocity;order_=order;++lifecycle_;
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
     active_=true;envelope_.noteOn(settings);env2_.noteOn(env2);env3_.noteOn(env3);
     // A fresh (or stolen) voice: NOTE ON, never RETRIGGER; state was reset.
@@ -39,7 +39,7 @@ void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,cons
         glideRemaining_=samples;
         glideRatio_=std::exp(std::log(targetFrequency_/frequency_)/static_cast<double>(samples));
     }
-    if(retriggerEnvelope) {envelope_.noteOn(settings);env2_.noteOn(env2);env3_.noteOn(env3);for(auto& lfo:noteLfos_)lfo.reset();operatorState_={};}
+    if(retriggerEnvelope) {envelope_.noteOn(settings);env2_.noteOn(env2);env3_.noteOn(env3);for(auto& lfo:noteLfos_)lfo.reset();operatorState_={};++lifecycle_;}
 }
 void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     if(active_){releasing_=true;envelope_.noteOff(settings);env2_.noteOff(env2);env3_.noteOff(env3);pendingNoteOff_=true;}
@@ -61,11 +61,16 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     const float sourceLfoScale=std::clamp(global.lfoScaling,0.0f,2.0f);
     voiceSources[0]=envelope*sourceEnvelopeScale;voiceSources[1]=env2*sourceEnvelopeScale;voiceSources[2]=env3*sourceEnvelopeScale;
     for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode!=LfoMode::Free?noteLfos_[i].next(l,sampleRate_)*sourceLfoScale:0.0f;if(observe) visualization_.lfoPhases[i]=static_cast<float>(noteLfos_[i].phase());}
-    voiceSources[7]=performanceSourceCurveValue(modulation.velocityCurve,velocity_);
+    const auto cachedCurve=[&](CurveCache& cache,const PerformanceSourceCurve& curve,float input) {
+        if(cache.input!=input || cache.revision!=compiled.stateRevision()) {
+            cache.input=input; cache.revision=compiled.stateRevision(); cache.value=performanceSourceCurveValue(curve,input);
+        }
+        return cache.value;
+    };
+    if(compiled.usesVoiceSource(7) || observe) voiceSources[7]=cachedCurve(velocityCurve_,modulation.velocityCurve,velocity_);
     voiceSources[8]=modWheel;
-    voiceSources[9]=performanceSourceCurveValue(
-        modulation.noteCurve,
-        std::clamp(static_cast<float>(address_.note)/127.0f,0.0f,1.0f));
+    if(compiled.usesVoiceSource(9) || observe)
+        voiceSources[9]=cachedCurve(noteCurve_,modulation.noteCurve,std::clamp(static_cast<float>(address_.note)/127.0f,0.0f,1.0f));
     voiceSources[10]=aftertouch;
     voiceSources[11]=std::clamp(pitchBendNormalized,-1.0f,1.0f);
     voiceSources[12]=releasing_ ? 0.0f : 1.0f;
@@ -76,12 +81,15 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     const bool noteOn=pendingNoteOn_,noteOff=pendingNoteOff_,retrigger=pendingRetrigger_;
     pendingNoteOn_=pendingNoteOff_=pendingRetrigger_=false;
     if(compiled.hasVoiceRoutes() || voiceOperators) {
-        local=global;
+        // N07: only the active modules are copied per sample (full copy on the
+        // decimated observation ticks, which publish every module slot).
+        if(observe) local=global; else local.copyForVoice(global,topology.active,topology.activeCount,compiled.voiceModuleMask());
         // N04 per-voice CONTROL operators: this voice's sources, this voice's state.
         if(voiceOperators) {
             local.events.noteOn=noteOn;local.events.noteOff=noteOff;
             local.events.retrigger=retrigger;local.events.gate=!releasing_;
-            compiled.evaluateVoiceOperators(local,voiceSources,operatorState_,&operatorEventCounts_);
+            local.events.voiceSeed=voiceSeed();
+            compiled.evaluateVoiceOperators(local,voiceSources,operatorState_,&operatorEventCounts_,&global);
         }
         if(compiled.hasVoiceRoutes()) compiled.voiceFrame(local,voiceSources,sampleRate_);
         effective=&local;
@@ -94,6 +102,8 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     }
     if(observe && voiceOperators) visualization_.operators=effective->operatorOutputs;
     const auto& modules=effective->modules;
+    // Modules no voice route writes are read from the global frame (N07).
+    const std::uint16_t localModules=effective==&local && !observe ? compiled.voiceModuleMask() : (effective==&local ? 0xffffu : 0u);
     const float envelopeValue=envelope*velocity_*std::clamp(effective->envelopeScaling,0.0f,2.0f);
     if(observe) visualization_.modules=modules;
     bool filtersQuiet=true;
@@ -111,7 +121,7 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     }
     for(std::size_t active=0;active<topology.activeCount;++active) {
         const auto m=topology.active[active];
-        const auto& module=modules[m];
+        const auto& module=((localModules>>m)&1u) ? local.modules[m] : global.modules[m];
         const auto& modulePlan=topology.modules[m];
         const auto* tablePtr=tables[m];
         // Engine::prepare/installWavetable/installWavetableForOscillator validate

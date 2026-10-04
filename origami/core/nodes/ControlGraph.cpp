@@ -242,18 +242,37 @@ std::optional<std::size_t> ControlGraph::find(const ControlNodeKey& key) const n
     return std::nullopt;
 }
 
-ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& layout) {
-    ControlGraph graph;
-    // Unpositioned nodes stack below the ones already laid out, in a compact
-    // column per kind (sources | operators | parameters). The UI pins these
-    // positions as soon as the nodes are shown, so nothing moves later.
-    int sourceRow=0,parameterRow=0;
-    for(const auto& e:layout.entries())
-        if(e.positioned) { if(e.key.kind==ControlNodeKind::Source) ++sourceRow; else if(e.key.kind==ControlNodeKind::Parameter) ++parameterRow; }
-    // Operators default to one column per chain depth (longest path from the
-    // sources), so chains read left to right instead of snaking down.
+namespace {
+// N07 layered placement: sources | operators by chain depth | parameters, left
+// to right. Within a column, nodes are ordered by the barycenter of their
+// neighbours (a few sweeps: fewer crossings) with a stable key tie-break, then
+// stacked by their drawn height. Deterministic for a given graph.
+float nodeExtent(const ModulationState& m,const ControlNodeKey& key) noexcept {
+    if(key.kind!=ControlNodeKind::Operator) return rowPitch;
+    const auto* op=findControlOperator(m,key.op);
+    const auto* info=op ? controlOpInfo(op->type) : nullptr;
+    if(info==nullptr) return operatorPitch;
+    const int rows=std::max({1,int(info->inputs),info->outputCount>1 ? int(info->outputCount) : 1});
+    const bool preview=op->type==ControlOpType::Sequencer || op->type==ControlOpType::Pattern || op->type==ControlOpType::Euclidean;
+    // ControlNodeComponent::heightFor (header, socket rows, preview, inline control) + a gap.
+    return 34.0f+22.0f*float(rows)+(preview ? 30.0f : 0.0f)+26.0f+8.0f+24.0f;
+}
+std::uint64_t stableOrder(const ControlNodeKey& k) noexcept {
+    switch(k.kind) {
+    case ControlNodeKind::Source: return std::uint64_t(static_cast<std::uint32_t>(k.source));
+    case ControlNodeKind::Operator: return (std::uint64_t(1)<<40)+k.op;
+    case ControlNodeKind::Parameter:
+        return (std::uint64_t(2)<<40)+(std::uint64_t(static_cast<std::uint32_t>(k.destination.parameter))<<24)
+              +(std::uint64_t(k.destination.oscillator&0xffffu)<<8)+(k.destination.itemId&0xffu);
+    }
+    return 0;
+}
+void placeLayered(ControlGraph& graph,const ModulationState& m,const ControlLayout& layout,bool ignorePinned) {
+    const auto n=graph.nodes.size();
+    if(n==0) return;
+    // Columns.
     std::array<int,ModulationState::maxControlOperators> depth{};
-    depth.fill(-1);
+    depth.fill(0);
     for(int pass=0;pass<int(ModulationState::maxControlOperators);++pass)
         for(std::size_t i=0;i<m.operators.size();++i) {
             const auto& op=m.operators[i];
@@ -267,20 +286,86 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
             depth[i]=d;
         }
     int maxDepth=-1;
-    for(const auto d:depth) maxDepth=std::max(maxDepth,d);
-    // Default stacking advances by each node's drawn height (N06: multi-output
-    // rows and previews make nodes taller), so default positions never overlap.
-    std::array<float,ModulationState::maxControlOperators> nextYAtDepth{};
-    nextYAtDepth.fill(firstRowY);
-    const auto operatorExtent=[&m](std::uint32_t id) {
-        const auto* op=findControlOperator(m,id);
-        const auto* info=op ? controlOpInfo(op->type) : nullptr;
-        if(info==nullptr) return operatorPitch;
-        const int rows=std::max({1,int(info->inputs),info->outputCount>1 ? int(info->outputCount) : 1});
-        const bool preview=op->type==ControlOpType::Sequencer || op->type==ControlOpType::Pattern || op->type==ControlOpType::Euclidean;
-        return std::max(operatorPitch,34.0f+22.0f*float(rows)+(preview ? 30.0f : 0.0f)+26.0f+8.0f+24.0f);
+    for(const auto& node:graph.nodes)
+        if(node.key.kind==ControlNodeKind::Operator) {
+            const auto slot=controlOperatorSlot(m,node.key.op);
+            if(slot<depth.size()) maxDepth=std::max(maxDepth,depth[slot]);
+        }
+    const int parameterColumn=maxDepth+2; // 0 = sources, 1.. = operator depths
+    std::vector<int> column(n,0);
+    for(std::size_t i=0;i<n;++i) {
+        const auto& key=graph.nodes[i].key;
+        if(key.kind==ControlNodeKind::Source) column[i]=0;
+        else if(key.kind==ControlNodeKind::Parameter) column[i]=parameterColumn;
+        else { const auto slot=controlOperatorSlot(m,key.op); column[i]=1+(slot<depth.size() ? depth[slot] : 0); }
+    }
+    const auto columnX=[&](int c) {
+        if(c==0) return sourceColumnX;
+        if(c==parameterColumn) return std::max(parameterColumnX,operatorColumnX+operatorColumnPitch*float(c-1));
+        return operatorColumnX+operatorColumnPitch*float(c-1);
     };
-    const float parameterX=maxDepth<0 ? parameterColumnX : std::max(parameterColumnX,operatorColumnX+operatorColumnPitch*float(maxDepth+1));
+    // Neighbours (both directions) from the links.
+    std::vector<std::vector<std::size_t>> preds(n),succs(n);
+    for(const auto& l:graph.links) { if(l.source<n && l.parameter<n) { succs[l.source].push_back(l.parameter); preds[l.parameter].push_back(l.source); } }
+    // Order within columns.
+    std::vector<std::vector<std::size_t>> columns(std::size_t(parameterColumn+1));
+    for(std::size_t i=0;i<n;++i) columns[std::size_t(column[i])].push_back(i);
+    std::vector<double> rank(n,0.0);
+    for(auto& col:columns) {
+        std::sort(col.begin(),col.end(),[&](std::size_t a,std::size_t b){ return stableOrder(graph.nodes[a].key)<stableOrder(graph.nodes[b].key); });
+        for(std::size_t r=0;r<col.size();++r) rank[col[r]]=double(r);
+    }
+    const auto sweep=[&](bool forward) {
+        const int count=int(columns.size());
+        for(int k=0;k<count;++k) {
+            auto& col=columns[std::size_t(forward ? k : count-1-k)];
+            std::vector<double> key(col.size());
+            for(std::size_t r=0;r<col.size();++r) {
+                const auto& nb=forward ? preds[col[r]] : succs[col[r]];
+                if(nb.empty()) { key[r]=rank[col[r]]; continue; }
+                double sum=0.0; for(auto x:nb) sum+=rank[x];
+                key[r]=sum/double(nb.size());
+            }
+            std::vector<std::size_t> order(col.size());
+            for(std::size_t r=0;r<order.size();++r) order[r]=r;
+            std::stable_sort(order.begin(),order.end(),[&](std::size_t a,std::size_t b){
+                if(key[a]!=key[b]) return key[a]<key[b];
+                return stableOrder(graph.nodes[col[a]].key)<stableOrder(graph.nodes[col[b]].key); });
+            std::vector<std::size_t> next(col.size());
+            for(std::size_t r=0;r<order.size();++r) next[r]=col[order[r]];
+            col=next;
+            for(std::size_t r=0;r<col.size();++r) rank[col[r]]=double(r);
+        }
+    };
+    for(int i=0;i<3;++i) { sweep(true); sweep(false); }
+    // Stack each column; pinned (positioned) nodes keep their place and are
+    // stepped around.
+    const auto pinned=[&](std::size_t i){ if(ignorePinned) return false; const auto* e=layout.find(graph.nodes[i].key); return e!=nullptr && e->positioned; };
+    for(std::size_t c=0;c<columns.size();++c) {
+        const float x=columnX(int(c));
+        std::vector<std::pair<float,float>> occupied; // pinned nodes overlapping this column band
+        if(!ignorePinned)
+            for(std::size_t i=0;i<n;++i) if(pinned(i)) {
+                const auto* e=layout.find(graph.nodes[i].key);
+                if(std::abs(e->x-x)<220.0f) occupied.push_back({e->y,e->y+nodeExtent(m,graph.nodes[i].key)});
+            }
+        float y=firstRowY;
+        for(const auto i:columns[c]) {
+            if(pinned(i)) continue;
+            const float h=nodeExtent(m,graph.nodes[i].key);
+            for(bool moved=true;moved;) {
+                moved=false;
+                for(const auto& o:occupied) if(y<o.second && y+h>o.first) { y=o.second; moved=true; }
+            }
+            graph.nodes[i].x=x; graph.nodes[i].y=y;
+            y+=h;
+        }
+    }
+}
+}
+
+ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& layout) {
+    ControlGraph graph;
     const auto nodeFor=[&](const ControlNodeKey& key)->std::size_t {
         if(const auto existing=graph.find(key)) return *existing;
         ControlGraphNode node;
@@ -288,18 +373,7 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
         node.domain=key.kind==ControlNodeKind::Source ? sourceDomain(key.source,m)
                   : key.kind==ControlNodeKind::Parameter ? destinationDomain(key.destination)
                   : (sourceIsVoice(operatorSource(key.op),m) ? NodeExecutionDomain::Voice : NodeExecutionDomain::Global);
-        const auto* e=layout.find(key);
-        if(e!=nullptr) node.placed=e->placed;
-        if(e!=nullptr && e->positioned) { node.x=e->x; node.y=e->y; }
-        else if(key.kind==ControlNodeKind::Source) { node.x=sourceColumnX; node.y=firstRowY+rowPitch*float(sourceRow++); }
-        else if(key.kind==ControlNodeKind::Operator) {
-            const auto slot=controlOperatorSlot(m,key.op);
-            const int d=slot<depth.size() ? std::max(0,depth[slot]) : 0;
-            node.x=operatorColumnX+operatorColumnPitch*float(d);
-            node.y=nextYAtDepth[std::size_t(d)];
-            nextYAtDepth[std::size_t(d)]+=operatorExtent(key.op);
-        }
-        else { node.x=parameterX; node.y=firstRowY+rowPitch*float(parameterRow++); }
+        if(const auto* e=layout.find(key)) node.placed=e->placed;
         graph.nodes.push_back(node);
         return graph.nodes.size()-1;
     };
@@ -338,7 +412,18 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
         link.supported=domainCrossingSupported(from,destinationDomain(r.destination));
         graph.links.push_back(link);
     }
+    // Positions: a stored position wins; everything else is placed (layered).
+    placeLayered(graph,m,layout,false);
+    for(auto& node:graph.nodes)
+        if(const auto* e=layout.find(node.key); e!=nullptr && e->positioned) { node.x=e->x; node.y=e->y; }
     return graph;
+}
+
+std::size_t autoLayoutControlGraph(const ModulationState& m,ControlLayout& layout) {
+    auto graph=deriveControlGraph(m,layout);
+    placeLayered(graph,m,layout,true); // every node, ignoring stored positions
+    for(const auto& node:graph.nodes) layout.setPosition(node.key,node.x,node.y);
+    return graph.nodes.size();
 }
 
 // ---------------------------------------------------------------- N04 edges / edits
@@ -540,6 +625,151 @@ bool deleteControlOperator(const ModulationState& m,std::uint32_t id,ModulationS
     next.operators[slot]={};
     out=next;
     return true;
+}
+
+
+// ---------------------------------------------------------------- N07 validation / recovery
+
+const char* toString(ControlIssueKind k) noexcept {
+    switch(k) {
+    case ControlIssueKind::DuplicateId: return "duplicate operator id";
+    case ControlIssueKind::UnknownType: return "unknown operator type";
+    case ControlIssueKind::IdOutOfRange: return "operator id beyond the id counter";
+    case ControlIssueKind::BadParameter: return "parameter out of range";
+    case ControlIssueKind::UnusedInput: return "connection on a missing input";
+    case ControlIssueKind::DanglingInput: return "input references a missing operator";
+    case ControlIssueKind::InvalidPort: return "invalid output port";
+    case ControlIssueKind::TypeMismatch: return "signal types differ";
+    case ControlIssueKind::InvalidSource: return "unknown source";
+    case ControlIssueKind::Cycle: return "feedback loop";
+    case ControlIssueKind::DomainViolation: return "per-voice input into a global-only node";
+    case ControlIssueKind::MultipleSequencers: return "more than one sequencer";
+    case ControlIssueKind::RouteMissingOperator: return "route from a missing operator";
+    case ControlIssueKind::RouteInvalidSource: return "route from an unknown source";
+    case ControlIssueKind::RouteInvalidPort: return "route from an invalid output port";
+    case ControlIssueKind::RouteNotControl: return "an EVENT / GATE output drives a parameter";
+    }
+    return "unknown";
+}
+
+namespace {
+// Shared by the validator (report) and the repair (fix): one rule set.
+template<typename OnOperator,typename OnInput,typename OnRoute>
+void scanControlGraph(const ModulationState& m,OnOperator&& onOperator,OnInput&& onInput,OnRoute&& onRoute) {
+    std::uint32_t maxId=0;
+    bool sequencerSeen=false;
+    for(std::size_t i=0;i<m.operators.size();++i) {
+        const auto& op=m.operators[i];
+        if(!op.id) continue;
+        maxId=std::max(maxId,op.id);
+        for(std::size_t j=0;j<i;++j) if(m.operators[j].id==op.id) { onOperator(i,ControlIssueKind::DuplicateId); break; }
+        const auto* info=controlOpInfo(op.type);
+        if(info==nullptr) { onOperator(i,ControlIssueKind::UnknownType); continue; }
+        if(op.id>=m.nextOperatorId) onOperator(i,ControlIssueKind::IdOutOfRange);
+        if(op.type==ControlOpType::Sequencer) { if(sequencerSeen) onOperator(i,ControlIssueKind::MultipleSequencers); sequencerSeen=true; }
+        for(std::size_t p=0;p<controlOpParameterCount;++p) {
+            const float v=op.params[p];
+            const bool bad=!std::isfinite(v) || (p<info->parameterCount ? (v<info->parameters[p].minimum || v>info->parameters[p].maximum) : v!=0.0f);
+            if(bad) { onOperator(i,ControlIssueKind::BadParameter); break; }
+        }
+        for(std::uint8_t k=0;k<op.inputs.size();++k) {
+            const auto& in=op.inputs[k];
+            if(in.kind==ControlInput::Kind::None) {
+                if(in.source!=ModSource::None || in.op!=0 || in.port!=0) onInput(i,k,ControlIssueKind::UnusedInput);
+                continue;
+            }
+            if(k>=info->inputs) { onInput(i,k,ControlIssueKind::UnusedInput); continue; }
+            if(in.kind==ControlInput::Kind::Source) {
+                if(!knownModSource(in.source) || in.op!=0) onInput(i,k,ControlIssueKind::InvalidSource);
+                else if(in.port!=0) onInput(i,k,ControlIssueKind::InvalidPort);
+                else if(info->inputSignals[k]!=ControlSignal::Control) onInput(i,k,ControlIssueKind::TypeMismatch);
+                continue;
+            }
+            if(in.kind!=ControlInput::Kind::Operator) { onInput(i,k,ControlIssueKind::UnusedInput); continue; }
+            const auto* up=findControlOperator(m,in.op);
+            const auto* upInfo=up ? controlOpInfo(up->type) : nullptr;
+            if(up==nullptr || in.op==op.id || upInfo==nullptr || in.source!=ModSource::None) onInput(i,k,ControlIssueKind::DanglingInput);
+            else if(in.port>=upInfo->outputCount) onInput(i,k,ControlIssueKind::InvalidPort);
+            else if(controlOutputSignalOf(*upInfo,in.port)!=info->inputSignals[k]) onInput(i,k,ControlIssueKind::TypeMismatch);
+            else if(controlOperatorReaches(m,op.id,in.op)) onInput(i,k,ControlIssueKind::Cycle);
+        }
+        if(info->globalOnly && sourceIsVoice(operatorSource(op.id),m)) onOperator(i,ControlIssueKind::DomainViolation);
+    }
+    (void)maxId;
+    for(std::size_t r=0;r<m.routes.size();++r) {
+        const auto& route=m.routes[r];
+        if(!route.id) continue;
+        if(!isOperatorSource(route.source)) {
+            if(route.source!=ModSource::None && !knownModSource(route.source)) onRoute(r,ControlIssueKind::RouteInvalidSource);
+            continue;
+        }
+        const auto* op=findControlOperator(m,operatorIdOf(route.source));
+        const auto* info=op ? controlOpInfo(op->type) : nullptr;
+        const auto port=operatorPortOf(route.source);
+        if(info==nullptr) onRoute(r,ControlIssueKind::RouteMissingOperator);
+        else if(port>=info->outputCount) onRoute(r,ControlIssueKind::RouteInvalidPort);
+        else if(controlOutputSignalOf(*info,port)!=ControlSignal::Control) onRoute(r,ControlIssueKind::RouteNotControl);
+    }
+}
+}
+
+std::vector<ControlIssue> validateControlGraph(const ModulationState& m) {
+    std::vector<ControlIssue> issues;
+    scanControlGraph(m,
+        [&](std::size_t slot,ControlIssueKind k){ issues.push_back({k,m.operators[slot].id,0,0}); },
+        [&](std::size_t slot,std::uint8_t input,ControlIssueKind k){ issues.push_back({k,m.operators[slot].id,input,0}); },
+        [&](std::size_t r,ControlIssueKind k){ issues.push_back({k,0,0,m.routes[r].id}); });
+    return issues;
+}
+
+std::size_t repairControlGraph(ModulationState& m) noexcept {
+    std::size_t repairs=0;
+    // Collect a pass of issues (bounded), then apply them in slot order. Fixing
+    // one problem can expose another (a removed operator dangles its
+    // consumers), so passes repeat until none remain; each pass fixes at least
+    // one, so this is bounded by the graph size.
+    struct Found { ControlIssue issue; std::size_t index; };
+    for(int pass=0;pass<int(ModulationState::maxControlOperators*4+4);++pass) {
+        std::array<Found,ModulationState::maxControlOperators*5+ModulationState::capacity> found{};
+        std::size_t count=0;
+        const auto push=[&](Found f){ if(count<found.size()) found[count++]=f; };
+        scanControlGraph(m,
+            [&](std::size_t slot,ControlIssueKind k){ push({{k,0,0,0},slot}); },
+            [&](std::size_t slot,std::uint8_t input,ControlIssueKind k){ push({{k,0,input,0},slot}); },
+            [&](std::size_t r,ControlIssueKind k){ push({{k,0,0,1},r}); });
+        if(count==0) break;
+        for(std::size_t i=0;i<count;++i) {
+            const auto& f=found[i];
+            const auto k=f.issue.kind;
+            if(f.issue.route!=0) { if(m.routes[f.index].id) { m.routes[f.index].id=0; ++repairs; } continue; }
+            auto& op=m.operators[f.index];
+            if(!op.id) continue; // already removed this pass
+            switch(k) {
+            case ControlIssueKind::IdOutOfRange: m.nextOperatorId=std::max(m.nextOperatorId,op.id+1); break;
+            case ControlIssueKind::BadParameter: {
+                const auto* info=controlOpInfo(op.type);
+                for(std::size_t p=0;p<controlOpParameterCount;++p) {
+                    float& v=op.params[p];
+                    if(info==nullptr || p>=info->parameterCount) { v=0.0f; continue; }
+                    const auto& d=info->parameters[p];
+                    v=std::isfinite(v) ? std::clamp(v,d.minimum,d.maximum) : d.defaultValue;
+                }
+                break;
+            }
+            case ControlIssueKind::DomainViolation: for(auto& in:op.inputs) in={}; break;
+            case ControlIssueKind::UnusedInput: case ControlIssueKind::DanglingInput: case ControlIssueKind::InvalidPort:
+            case ControlIssueKind::TypeMismatch: case ControlIssueKind::InvalidSource: case ControlIssueKind::Cycle:
+                op.inputs[f.issue.input]={};
+                break;
+            default: op={}; break; // duplicate id / unknown type / extra sequencer: removed
+            }
+            ++repairs;
+            if(k==ControlIssueKind::Cycle) break; // re-scan: one cut can resolve several reports
+        }
+    }
+    if(m.nextOperatorId==0) { m.nextOperatorId=1; ++repairs; }
+    compactRoutes(m);
+    return repairs;
 }
 
 }

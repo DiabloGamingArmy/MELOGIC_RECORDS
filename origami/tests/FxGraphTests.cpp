@@ -10,6 +10,9 @@
 #include "core/fx/FxFilter.h"
 #include "core/Engine.h"
 #include "core/preset/StateCodec.h"
+#include "tests/NodesScenarios.h"
+#include <chrono>
+#include <limits>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -2337,6 +2340,293 @@ void sequencingTests() {
     }
 }
 
+// ============================================================ N07 consolidation
+namespace n07 {
+using T=ControlOpType;
+namespace sc=mct::origami::scenarios;
+std::array<OscillatorModuleState,16> engineModules() {
+    auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000.0,512,2);
+    return e->instrumentState().oscillators;
+}
+// One plan, evaluated sample by sample (global domain).
+struct Plan {
+    std::unique_ptr<CompiledModulation> compiled=std::make_unique<CompiledModulation>();
+    std::unique_ptr<ModulationFrame> frame=std::make_unique<ModulationFrame>();
+    std::array<OscillatorModuleState,16> modules{};
+    explicit Plan(const ModulationState& m) { modules[0].id=1; compiled->prepare(48000.0); compiled->compile(m,modules,true); }
+    void sample(const std::array<float,13>& sources) {
+        frame->events.sampleRate=48000.0; frame->events.beatsPerSample=120.0/60.0/48000.0;
+        compiled->evaluateGlobalOperators(*frame,sources);
+    }
+    float out(std::size_t slot,std::size_t port=0) const { return frame->operatorOutputs[operatorOutputIndex(slot,port)]; }
+};
+std::uint32_t xs(std::uint32_t& x) { x^=x<<13; x^=x>>17; x^=x<<5; return x; }
+float unit(std::uint32_t& x) { return float(xs(x)>>8)/float(1u<<24); }
+std::vector<float> render(const ModulationState& m,int block,int total,int voices) {
+    auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000.0,1024,2); e->setModulationState(m);
+    for(int v=0;v<voices;++v) e->noteOn(48+v*4,0.9f);
+    std::vector<float> l(static_cast<std::size_t>(total)),r(static_cast<std::size_t>(total));
+    for(int done=0;done<total;done+=block) { const int n=std::min(block,total-done); float* out[2]{l.data()+done,r.data()+done}; e->process(out,2,std::size_t(n)); }
+    return l;
+}
+}
+
+void consolidationTests() {
+    using namespace n07;
+    using n05::Stepper; using n06::MultiStepper;
+    const auto modules=engineModules();
+    // ---- scenarios are valid; repair is a no-op on valid graphs --------------
+    {
+        bool valid=true,clean=true;
+        for(const auto& m:{sc::directRoutes(32),sc::controlChain(8),sc::mixedControl(),sc::eventHeavy(),sc::sequencing(),sc::maximal(),sc::perVoice()}) {
+            valid&=validModulation(m,modules);
+            clean&=nodes::validateControlGraph(m).empty();
+            auto copy=m; clean&=nodes::repairControlGraph(copy)==0 && copy.operators==m.operators;
+        }
+        check(valid && clean,"N07 scenarios are valid; the validator finds nothing and repair changes nothing");
+        int ops=0; for(const auto& op:sc::maximal().operators) ops+=op.id!=0;
+        check(ops==32,"the stress graph uses all 32 operator slots");
+    }
+    // ---- prepared kernels == the general evaluator (bit for bit) ------------
+    {
+        bool same=true;
+        std::uint32_t rng=0x1234567u;
+        for(T type:{T::Add,T::Subtract,T::Multiply,T::Min,T::Max,T::ScaleOffset,T::Invert,T::Abs,T::Clamp,T::Constant,T::Smooth})
+            for(int connection=0;connection<4;++connection) for(int bipolar=0;bipolar<2;++bipolar) {
+                ModulationState m;
+                auto& op=m.operators[0]; op=makeControlOperator(type,1);
+                if(type==T::ScaleOffset) { op.params[0]=-1.7f; op.params[1]=0.3f; }
+                if(type==T::Clamp) { op.params[0]=0.8f; op.params[1]=-0.2f; }
+                if(type==T::Constant) op.params[0]=-0.6f;
+                const ModSource a=bipolar ? ModSource::Lfo1 : ModSource::Macro1,b=bipolar ? ModSource::Lfo2 : ModSource::Macro2;
+                if(connection&1) op.inputs[0]=sc::src(a);
+                if((connection&2) && controlOpInfo(type)->inputs>1) op.inputs[1]=sc::src(b);
+                m.nextOperatorId=2;
+                Plan plan(m);
+                Stepper reference(type,op.params,true);
+                const auto ia=std::size_t(bipolar ? 0 : 4),ib=std::size_t(bipolar ? 1 : 5);
+                for(int n=0;n<500;++n) {
+                    std::array<float,13> sources{};
+                    sources[ia]=bipolar ? unit(rng)*2.0f-1.0f : unit(rng); sources[ib]=bipolar ? unit(rng)*2.0f-1.0f : unit(rng);
+                    if(n==17) sources[ia]=std::numeric_limits<float>::quiet_NaN();
+                    plan.sample(sources);
+                    const bool ca=op.inputs[0].kind!=ControlInput::Kind::None,cb=op.inputs[1].kind!=ControlInput::Kind::None;
+                    // An unconnected input reads 0 and has no range (the compiler treats it as unipolar).
+                    const float expected=reference.step(ca ? sources[ia] : 0.0f,cb ? sources[ib] : 0.0f,0.0f,{ca,cb,false},bipolar && ca ? ControlRange::Bipolar : ControlRange::Unipolar);
+                    same&=plan.out(0)==expected;
+                }
+            }
+        check(same,"compile-time kernels produce exactly the general evaluator's values (all connections, ranges, NaN input)");
+    }
+    // ---- compile lifecycle ----------------------------------------------------
+    {
+        auto m=sc::mixedControl();
+        auto compiled=std::make_unique<CompiledModulation>(); compiled->prepare(48000.0);
+        std::array<OscillatorModuleState,16> mods{}; mods[0].id=1;
+        compiled->compile(m,mods,true);
+        auto counters=[&]{ return compiled->compileCounters(); };
+        const auto base=counters();
+        compiled->compile(m,mods);                                   // identical republish
+        auto macro=m; macro.macros[0]=0.77f; compiled->compile(macro,mods);   // a macro drag
+        auto lfo=macro; lfo.lfo1.rateHz=7.0f; compiled->compile(lfo,mods);     // an LFO rate
+        auto steps=lfo; steps.sequencer.steps[3]=0.9f; compiled->compile(steps,mods); // a sequence step
+        check(counters().skipped==base.skipped+4 && counters().compiles==base.compiles,
+              "macros, LFO rates and sequence steps never recompile the plan");
+        auto scale=steps; scale.operators[0].params[0]=0.5f; compiled->compile(scale,mods);
+        check(counters().parameterUpdates==base.parameterUpdates+1 && counters().compiles==base.compiles,
+              "SCALE amount: an in-place parameter update (no topology rebuild)");
+        auto remap=scale; remap.operators[3].params[2]=-1.0f; compiled->compile(remap,mods); // Remap output turns bipolar
+        check(counters().compiles==base.compiles+1,"a parameter that changes an output RANGE recompiles (polarity flows downstream)");
+        auto rewired=remap; rewired.operators[1].inputs[0]=sc::src(ModSource::Lfo4); compiled->compile(rewired,mods);
+        auto amount=rewired; amount.routes[0].amount=0.1f; compiled->compile(amount,mods);
+        auto mode=amount; mode.lfo1.mode=LfoMode::Envelope; compiled->compile(mode,mods);
+        check(counters().compiles==base.compiles+4,"connections, route amounts and LFO free/voice modes recompile");
+        // The parameter path is equivalent to a fresh compile of the same state.
+        Plan updated(sc::mixedControl()),fresh(scale);
+        updated.compiled->compile(scale,updated.modules);
+        bool equal=true; std::uint32_t r=99;
+        for(int n=0;n<2000;++n) {
+            std::array<float,13> s{}; s[0]=unit(r)*2-1; s[1]=unit(r)*2-1; s[2]=unit(r)*2-1; s[4]=unit(r);
+            updated.sample(s); fresh.sample(s);
+            for(std::size_t slot=0;slot<24;++slot) equal&=updated.out(slot)==fresh.out(slot);
+        }
+        check(updated.compiled->compileCounters().parameterUpdates==1 && equal,"an updated plan computes exactly what a fresh compile computes");
+        // Engine: the diagnostics see the same lifecycle.
+        auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000.0,512,2);
+        check(e->setModulationState(sc::mixedControl()),"engine accepts the plan");
+        std::vector<float> l(512),rr(512); float* out[2]{l.data(),rr.data()};
+        e->process(out,2,512);
+        const auto d0=e->nodesDiagnostics();
+        auto knob=sc::mixedControl(); knob.macros[1]=0.4f; e->setModulationState(knob); e->process(out,2,512);
+        auto edit=knob; edit.operators[0].params[1]=0.2f; e->setModulationState(edit); e->process(out,2,512);
+        const auto d1=e->nodesDiagnostics();
+        check(d1.compileSkips==d0.compileSkips+1 && d1.parameterUpdates==d0.parameterUpdates+1 && d1.compiles==d0.compiles
+              && d1.stateRevision==d0.stateRevision+2,"engine diagnostics: macro -> skip, SCALE -> parameter update, revision counts both");
+    }
+    // ---- per-voice RNG --------------------------------------------------------
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::NoteOn,1);
+        m.operators[1]=makeControlOperator(T::RandomTrigger,2); m.operators[1].inputs[0]=sc::opIn(1);
+        m.nextOperatorId=3;
+        auto compiled=std::make_unique<CompiledModulation>(); compiled->prepare(48000.0);
+        std::array<OscillatorModuleState,16> mods{}; mods[0].id=1; compiled->compile(m,mods,true);
+        const auto stream=[&](std::uint32_t seed) {
+            CompiledModulation::OperatorState state{}; ModulationFrame f; std::array<float,13> v{};
+            std::vector<float> values;
+            for(int n=0;n<8;++n) { f.events.voiceSeed=seed; f.events.noteOn=true; compiled->evaluateVoiceOperators(f,v,state); values.push_back(f.operatorOutputs[operatorOutputIndex(1,0)]); }
+            return values;
+        };
+        check(stream(11)!=stream(12),"two voices draw distinct random sequences");
+        check(stream(11)==stream(11),"the same voice lifecycle repeats exactly");
+        // Engine: two simultaneous voices, repeated renders, voice stealing.
+        m.routes[0]={1,true,operatorSource(2),{ModDestination::Level,1,0},0.5f,false}; m.nextRouteId=2;
+        check(render(m,256,24000,2)==render(m,64,24000,2),"two-voice generative render: identical across runs and block sizes");
+        auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000.0,512,2); e->setModulationState(m); e->setVoiceAdmissionCeiling(1);
+        std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
+        std::vector<float> perNote;
+        for(int note=0;note<4;++note) {
+            e->noteOn(60+note,0.9f); e->process(out,2,512);
+            perNote.push_back(e->runtimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(1,0)]);
+        }
+        bool fresh=true; for(std::size_t i=1;i<perNote.size();++i) fresh&=perNote[i]!=perNote[i-1];
+        check(fresh,"a stolen voice starts a new stream (never continues the previous note's)");
+        e->reset();
+        std::vector<float> again;
+        for(int note=0;note<4;++note) {
+            e->noteOn(60+note,0.9f); e->process(out,2,512);
+            again.push_back(e->runtimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(1,0)]);
+        }
+        check(again==perNote,"after an engine reset the voice streams repeat exactly");
+        // Global generative nodes keep their N06 sequences (no voice salt).
+        MultiStepper global(T::RandomTrigger); const float first=global.step()[0];
+        MultiStepper global2(T::RandomTrigger); check(global2.step()[0]==first,"global RANDOM is unchanged by per-voice seeding");
+    }
+    // ---- validator / recovery: every issue kind -------------------------------
+    {
+        const auto base=sc::sequencing();
+        struct Case { const char* what; std::function<void(ModulationState&)> mutate; nodes::ControlIssueKind kind; };
+        std::vector<Case> cases{
+            {"duplicate id",[](ModulationState& m){ m.operators[20]=m.operators[1]; },nodes::ControlIssueKind::DuplicateId},
+            {"unknown type",[](ModulationState& m){ m.operators[20]=makeControlOperator(T::Add,40); m.operators[20].type=static_cast<T>(77); m.nextOperatorId=41; },nodes::ControlIssueKind::UnknownType},
+            {"id beyond counter",[](ModulationState& m){ m.operators[20]=makeControlOperator(T::Add,500); },nodes::ControlIssueKind::IdOutOfRange},
+            {"bad parameter",[](ModulationState& m){ m.operators[1].params[0]=999.0f; },nodes::ControlIssueKind::BadParameter},
+            {"missing operator",[](ModulationState& m){ m.operators[2].inputs[0]=sc::opIn(77); },nodes::ControlIssueKind::DanglingInput},
+            {"invalid output index",[](ModulationState& m){ m.operators[4].inputs[0]=sc::opIn(4,3); },nodes::ControlIssueKind::InvalidPort},
+            {"wrong signal type",[](ModulationState& m){ m.operators[7].inputs[0]=sc::opIn(4,0); },nodes::ControlIssueKind::TypeMismatch},
+            {"cycle",[](ModulationState& m){ m.operators[0]=makeControlOperator(T::EventMerge,1); m.operators[0].inputs[0]=sc::opIn(3); },nodes::ControlIssueKind::Cycle},
+            {"second sequencer",[](ModulationState& m){ m.operators[20]=makeControlOperator(T::Sequencer,40); m.nextOperatorId=41; },nodes::ControlIssueKind::MultipleSequencers},
+            {"per-voice into sequencer",[](ModulationState& m){ m.operators[20]=makeControlOperator(T::NoteOn,40); m.nextOperatorId=41; m.operators[3].inputs[1]=sc::opIn(40); },nodes::ControlIssueKind::DomainViolation},
+            {"route from missing operator",[](ModulationState& m){ m.routes[0].source=operatorSource(90); },nodes::ControlIssueKind::RouteMissingOperator},
+            {"route from invalid port",[](ModulationState& m){ m.routes[0].source=operatorSource(4,3); },nodes::ControlIssueKind::RouteInvalidPort},
+            {"route from an EVENT",[](ModulationState& m){ m.routes[0].source=operatorSource(4,2); },nodes::ControlIssueKind::RouteNotControl},
+        };
+        for(const auto& c:cases) {
+            auto m=base; c.mutate(m);
+            const auto issues=nodes::validateControlGraph(m);
+            const bool reported=std::any_of(issues.begin(),issues.end(),[&](const nodes::ControlIssue& i){ return i.kind==c.kind; });
+            auto repaired=m;
+            const auto repairs=nodes::repairControlGraph(repaired);
+            int survivors=0; for(const auto& op:repaired.operators) survivors+=op.id!=0;
+            const bool recovered=repairs>0 && nodes::validateControlGraph(repaired).empty() && validModulation(repaired,modules) && survivors>=9;
+            check(reported && recovered,(std::string("malformed graph (")+c.what+"): reported, repaired, valid parts kept").c_str());
+        }
+        // The engine never runs an invalid graph: it keeps the previous plan.
+        auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000.0,512,2);
+        check(e->setModulationState(base),"valid plan");
+        auto bad=base; bad.operators[2].inputs[0]=sc::opIn(77);
+        check(!e->setModulationState(bad) && e->instrumentState().modulation.operators==base.operators,
+              "an invalid graph is rejected before it reaches the audio thread (previous plan stays)");
+    }
+    // ---- save / load: equivalence and deterministic fuzzing --------------------
+    {
+        auto base=std::make_unique<OrigamiEngine>(); base->prepare(48000.0,512,2);
+        bool equivalent=true;
+        for(const auto& m:{sc::mixedControl(),sc::eventHeavy(),sc::sequencing(),sc::maximal(),sc::perVoice()}) {
+            auto state=base->instrumentState(); state.modulation.routes=m.routes; state.modulation.nextRouteId=m.nextRouteId;
+            state.modulation.operators=m.operators; state.modulation.nextOperatorId=m.nextOperatorId;
+            InstrumentState decoded; DecodeReport report;
+            const auto bytes=encodeInstrumentState(state);
+            equivalent&=decodeInstrumentState(bytes.data(),bytes.size(),decoded,&report) && report.graphRepairs==0
+                     && decoded.modulation.operators==state.modulation.operators && render(decoded.modulation,512,12000,3)==render(m,512,12000,3);
+        }
+        check(equivalent,"N04-N06 graphs: save -> load is semantically identical and renders identical audio");
+        // Mutation fuzzing (bounded, deterministic): never crash, never accept invalid state.
+        auto state=base->instrumentState(); const auto m=sc::maximal();
+        state.modulation.routes=m.routes; state.modulation.nextRouteId=m.nextRouteId; state.modulation.operators=m.operators; state.modulation.nextOperatorId=m.nextOperatorId;
+        const auto bytes=encodeInstrumentState(state);
+        std::uint32_t rng=0xC0FFEEu; int accepted=0,repaired=0,rejected=0; bool safe=true;
+        auto engine=std::make_unique<OrigamiEngine>(); engine->prepare(48000.0,256,2);
+        std::vector<float> l(256),r(256); float* out[2]{l.data(),r.data()};
+        for(int iteration=0;iteration<3000;++iteration) {
+            auto mutated=bytes;
+            const int edits=1+int(xs(rng)%4);
+            for(int k=0;k<edits;++k) {
+                // Bias toward the operator section (tail of the stream): ids, ports, types, counts.
+                const std::size_t at=xs(rng)%3==0 ? xs(rng)%mutated.size() : mutated.size()-1-(xs(rng)%std::min<std::size_t>(mutated.size(),1600));
+                const auto mode=xs(rng)%4;
+                if(mode==0) mutated[at]^=std::uint8_t(1u<<(xs(rng)%8));
+                else if(mode==1) mutated[at]=std::uint8_t(xs(rng));
+                else if(mode==2) mutated[at]=0xff;
+                else mutated[at]=0;
+            }
+            if(iteration%97==0) mutated.resize(mutated.size()-1-xs(rng)%8); // truncation
+            InstrumentState decoded; DecodeReport report;
+            if(!decodeInstrumentState(mutated.data(),mutated.size(),decoded,&report)) { ++rejected; continue; }
+            ++accepted; repaired+=report.graphRepairs!=0;
+            safe&=validInstrumentState(decoded) && nodes::validateControlGraph(decoded.modulation).empty();
+            if(iteration%25==0) {
+                safe&=engine->setModulationState(decoded.modulation);
+                engine->noteOn(60,0.8f); engine->process(out,2,256);
+                for(float v:l) safe&=std::isfinite(v);
+            }
+        }
+        check(safe && rejected>0 && accepted>0,"3000 mutated saves: no crash, accepted states are valid, malformed ones rejected or repaired");
+        check(repaired>0,"some mutated graphs are recovered (valid parts kept) instead of rejected");
+    }
+    // ---- block sizes, determinism, allocation: the 32-node stress graph --------
+    {
+        const auto m=sc::maximal();
+        const auto reference=render(m,32,24000,8);
+        bool same=true; for(int block:{64,128,512,1024}) same&=render(m,block,24000,8)==reference;
+        check(same,"32-node stress graph, 8 voices: bit-identical at blocks 32/64/128/512/1024");
+#ifndef ORIGAMI_SANITIZED
+        auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000.0,512,2); e->setModulationState(m);
+        for(int v=0;v<16;++v) e->noteOn(40+v*2,0.8f);
+        std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
+        e->process(out,2,512);
+        allocations=0;guardAllocations=true;
+        for(int i=0;i<16;++i) { auto knob=m; knob.macros[0]=float(i)/16.0f; e->process(out,2,512); }
+        auto edit=m; edit.operators[14].params[0]=0.3f; e->setModulationState(edit); // parameter update (audio-thread path)
+        guardAllocations=false; // setModulationState itself runs on the caller's thread
+        allocations=0;guardAllocations=true;
+        for(int i=0;i<8;++i) e->process(out,2,512);
+        guardAllocations=false;
+        check(allocations.load()==0,"stress graph at 16 voices (incl. a parameter-update compile) renders without allocating");
+        // Gross CPU regression gate: relative to the same engine without NODES.
+        const auto cost=[&](const ModulationState& s) {
+            auto x=std::make_unique<OrigamiEngine>(); x->prepare(48000.0,512,2); x->setModulationState(s);
+            for(int v=0;v<16;++v) x->noteOn(40+v*2,0.8f);
+            for(int b=0;b<10;++b) x->process(out,2,512);
+            const auto t0=std::chrono::steady_clock::now();
+            for(int b=0;b<60;++b) x->process(out,2,512);
+            return std::chrono::duration<double>(std::chrono::steady_clock::now()-t0).count();
+        };
+        const double ratio=cost(m)/std::max(1e-9,cost(ModulationState{}));
+        std::cout<<"[N07 stress] 32-node x16 voices / empty x16 voices CPU ratio "<<ratio<<"\n";
+        check(ratio<12.0,"CPU gate: the 32-node graph at 16 voices costs < 12x the same engine without NODES");
+#endif
+    }
+    // ---- bounded capacities (memory gate) -------------------------------------
+    static_assert(ModulationState::maxControlOperators==32,"operator slots are a deliberate limit");
+    static_assert(ControlOpRuntime::delayCapacity==8,"EVENT DELAY queue is a deliberate limit");
+    static_assert(sizeof(ControlOpRuntime)<=64,"per-operator runtime state");
+    static_assert(sizeof(CompiledModulation::OperatorState)<=2048,"per-voice operator state");
+    static_assert(sizeof(Voice)<=124*1024,"voice footprint");
+    static_assert(sizeof(OrigamiEngine)<=2200*1024,"engine footprint");
+    check(true,"memory gates hold (compile-time)");
+}
+
 int main() {
     identityTests();
     sourceDomainTests();
@@ -2380,6 +2670,7 @@ int main() {
     controlOperatorTests();
     eventLogicTests();
     sequencingTests();
+    consolidationTests();
     if(failures!=0) {
         std::cerr<<failures<<" of "<<checks<<" FX checks failed\n";
         return 1;

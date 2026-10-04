@@ -172,6 +172,8 @@ struct ControlOperator {
     ControlOpType type=ControlOpType::None;
     std::array<float,controlOpParameterCount> params{};
     std::array<ControlInput,3> inputs{}; // one connection per input, by construction (3rd: N05)
+    bool operator==(const ControlOperator& o) const noexcept { return id==o.id && type==o.type && params==o.params && inputs==o.inputs; }
+    bool operator!=(const ControlOperator& o) const noexcept { return !(*this==o); }
 };
 // Stable source identity of an operator's output.
 // N06: the output PORT lives in bits 20..21, so port 0 is exactly the N04/N05
@@ -212,6 +214,10 @@ struct ControlOpInfo {
     bool globalOnly=false; // N06: never per-voice (the canonical sequencer)
 };
 ControlSignal controlOutputSignalOf(const ControlOpInfo&,std::size_t port) noexcept;
+// N07: the one display name of a signal type ("CONTROL" / "GATE" / "EVENT" / "NONE").
+constexpr const char* controlSignalName(ControlSignal s) noexcept {
+    return s==ControlSignal::Gate ? "GATE" : s==ControlSignal::Event ? "EVENT" : s==ControlSignal::None ? "NONE" : "CONTROL";
+}
 const char* controlOutputName(const ControlOpInfo&,std::size_t port) noexcept;
 const ControlOpInfo* controlOpInfo(ControlOpType) noexcept;
 const std::array<ControlOpType,15>& controlOpCatalog() noexcept; // N04 CONTROL operators (+ None)
@@ -228,6 +234,12 @@ struct ControlEventContext {
     double sampleRate=48000.0;
     bool transportStart=false,transportStop=false;
     bool noteOn=false,noteOff=false,retrigger=false,gate=false; // this voice
+    // N07: per-voice RNG stream salt (0 = global evaluation: unchanged
+    // sequences). Derived from the voice slot and that slot's note lifecycle.
+    std::uint32_t voiceSeed=0;
+    // N07 diagnostics: incremented when an EVENT DELAY drops an event (queue
+    // full). Points at an audio-thread counter; never read during evaluation.
+    std::uint32_t* eventOverflow=nullptr;
     // N06: the canonical sequencer runtime and settings (global evaluation only).
     SequencerGenerator* sequencer=nullptr;
     const SequencerSettings* sequencerSettings=nullptr;
@@ -254,19 +266,26 @@ ControlOperator makeControlOperator(ControlOpType,std::uint32_t id) noexcept;
 // Per-instance runtime state (global: one; per-voice: one per voice). Reset
 // rules are documented in NODES_ARCHITECTURE.md section 15.
 struct ControlOpRuntime {
-    float value=0.0f; bool initialized=false; std::uint32_t id=0;
+    float value=0.0f; std::uint32_t id=0;
     double phase=0.0;          // CLOCK free phase / SWITCH mix
-    std::int64_t index=0;      // CLOCK tempo cell
     std::uint32_t rng=0;       // RANDOM
     std::int32_t counter=0;    // COUNTER position / PULSE remaining samples
+    static constexpr std::size_t delayCapacity=8;
+    // N07: per-type state that is never used together shares storage (one
+    // operator id = one type for its whole life; a new id starts fresh).
+    union {
+        std::int64_t index=0;  // CLOCK tempo cell
+        std::array<std::int32_t,delayCapacity> pending; // N06 EVENT DELAY: samples remaining, oldest first
+    };
+    bool initialized=false;
     bool gate=false;           // THRESHOLD / TOGGLE state
     bool previous=false;       // EDGE previous gate
     bool forward=true;         // N06 COUNTER ping-pong direction
-    // N06 EVENT DELAY: bounded future events (samples remaining), oldest first.
-    static constexpr std::size_t delayCapacity=8;
-    std::array<std::int32_t,delayCapacity> pending{};
     std::uint8_t pendingCount=0;
 };
+// N07 memory gate: per-operator runtime state is held per voice for every
+// operator slot (32 x 16 voices); growing it is a deliberate decision.
+static_assert(sizeof(ControlOpRuntime)<=64,"ControlOpRuntime grew: per-voice state is 32 slots x every voice");
 struct ControlOpInputs {
     std::array<float,3> value{};
     std::array<bool,3> connected{};
@@ -397,6 +416,7 @@ LfoSettings& lfoSettings(ModulationState&,std::size_t index) noexcept;
 
 bool isGlobalDestination(ModDestination) noexcept;
 bool validModulation(const ModulationState&,const std::array<OscillatorModuleState,16>&) noexcept;
+bool knownModSource(ModSource) noexcept; // a canonical (non-operator) source
 float modulationToNormalized(ModDestination,float) noexcept;
 float modulationFromNormalized(ModDestination,float) noexcept;
 
@@ -526,7 +546,26 @@ struct ModulationFrame {
     // False when FX ORDER = PRE MASTER: the renderer applies master gain after the FX graph.
     bool applyMaster=true;
     std::array<float,ModulationState::capacity> normalized{};
+    // N07: copy everything a voice reads or writes, but only the ACTIVE
+    // oscillator modules: the 16 module slots are 8 KB of this 8.9 KB frame,
+    // and a voice renders only the plan's active modules. Inactive slots keep
+    // whatever they held (never rendered). Keep this list in sync with the
+    // fields above (the static_assert below trips when the frame changes).
+    // Operator outputs are NOT copied: per-voice operators read GLOBAL operator
+    // outputs from the global frame and write their own here.
+    void copyForVoice(const ModulationFrame& g,const std::array<std::uint8_t,16>& active,std::size_t activeCount,std::uint16_t moduleMask=0xffffu) noexcept {
+        for(std::size_t i=0;i<activeCount && i<active.size();++i)
+            if((moduleMask>>active[i])&1u) modules[active[i]]=g.modules[active[i]];
+        events=g.events; globalSources=g.globalSources;
+        cutoff=g.cutoff; resonance=g.resonance; master=g.master; mainTuning=g.mainTuning; transpose=g.transpose;
+        portaTime=g.portaTime; envelopeScaling=g.envelopeScaling; lfoScaling=g.lfoScaling; swing=g.swing;
+        filter=g.filter; filterEnabled=g.filterEnabled; applyMaster=g.applyMaster; normalized=g.normalized;
+    }
 };
+
+// Fields copied by ModulationFrame::copyForVoice: the size is pinned so any
+// field change trips here and forces copyForVoice to be updated with it.
+static_assert(sizeof(ModulationFrame)==8880,"ModulationFrame changed: update copyForVoice");
 
 class CompiledModulation {
 public:
@@ -544,8 +583,11 @@ public:
     bool hasGlobalOperators() const noexcept { return globalOpCount_!=0; }
     bool hasVoiceOperators() const noexcept { return voiceOpCount_!=0; }
     void evaluateGlobalOperators(ModulationFrame&,const std::array<float,globalSourceCount>&) noexcept;
+    // `global` (optional): the global frame. Inputs from GLOBAL operators are
+    // read there, so a voice's frame never needs a copy of every operator output.
     void evaluateVoiceOperators(ModulationFrame&,const std::array<float,voiceSourceCount>&,OperatorState&,
-                                std::array<std::uint32_t,operatorSlotCount>* eventCounts=nullptr) const noexcept;
+                                std::array<std::uint32_t,operatorSlotCount>* eventCounts=nullptr,
+                                const ModulationFrame* global=nullptr) const noexcept;
     // N05: ENV 2 / ENV 3 retrigger requests produced this sample (bit 1 / 2).
     std::uint8_t envelopeTriggers(const ModulationFrame&) const noexcept;
     bool hasEnvelopeTriggers() const noexcept { return envelopeTriggerCount_!=0; }
@@ -555,6 +597,17 @@ public:
     bool hasSequencerNode() const noexcept { return sequencerNode_; }
     const std::array<std::uint32_t,operatorSlotCount>& globalEventCounts() const noexcept { return globalEventCounts_; }
     void resetOperatorState() noexcept { globalOpState_={}; }
+    // N07 compile lifecycle. compile() classifies what changed since the plan
+    // it last built:
+    //  - nothing the plan reads (macros, LFO rates/shapes, sequence steps,
+    //    oscillator parameters...)            -> skipped (plan untouched)
+    //  - only operator PARAMETERS, with no output range change
+    //                                          -> parameters updated in place
+    //  - routes, operators, connections, LFO free/voice modes, module topology,
+    //    sample rate                            -> full compile
+    // Monotonic counters (audio thread writes; diagnostics read via the engine).
+    struct CompileCounters { std::uint32_t compiles=0,parameterUpdates=0,skipped=0; };
+    const CompileCounters& compileCounters() const noexcept { return counters_; }
     void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;
     void advance(float smoothing) noexcept;
     void globalFrame(ModulationFrame&,const std::array<float,globalSourceCount>&,double sampleRate) const noexcept;
@@ -567,9 +620,21 @@ public:
                  const std::array<float,voiceSourceCount>* newestVoice,
                  const std::array<float,operatorOutputSlotCount>* globalOperators=nullptr) const noexcept;
     bool hasVoiceProcessRoutes(std::size_t module) const noexcept {return voiceProcessModules_[module];}
+    // N07: oscillator module slots written per voice (voice routes into them).
+    // A voice copies and reads its own copy only of these; every other module
+    // is read from the global frame.
+    std::uint16_t voiceModuleMask() const noexcept {return voiceModuleMask_;}
     bool usesGlobalSource(std::size_t index) const noexcept {
         return index<globalSourceCount && globalSourceUsed_[index];
     }
+    // N07: whether any route or operator reads voice source `index`.
+    bool usesVoiceSource(std::size_t index) const noexcept {
+        return index<voiceSourceCount && voiceSourceUsed_[index];
+    }
+    // N07: bumped by the engine whenever a new ModulationState is consumed,
+    // compiled or not (per-voice caches of state-derived values key on it).
+    std::uint64_t stateRevision() const noexcept { return stateRevision_; }
+    void markStateRevision() noexcept { ++stateRevision_; }
     std::size_t groupCount() const noexcept {return count_;}
 private:
     struct Group {
@@ -580,6 +645,9 @@ private:
         // process-dependent (unipolar 0..1 or bipolar -1..1), so they cannot
         // safely use the generic ModDestination range table.
         float minimum=0.0f,maximum=1.0f;
+        // N07: CUTOFF's log-domain span, prepared once (was two logs per sample).
+        float logSpan=1.0f;     // std::log(maximum/minimum)
+        double log2Span=1.0;    // std::log2(maximum/minimum)
         std::array<float,totalSlotCount> weight{},target{};
         std::array<bool,totalSlotCount> bipolar{};
         std::array<std::uint8_t,globalSourceCount> globalSlots{};
@@ -599,18 +667,33 @@ private:
         bool event=false;                    // an output is an EVENT (counted for monitoring)
         std::uint8_t outputCount=1;
         std::uint8_t eventPorts=0;           // N06: bit p set when output port p is an EVENT
+        // N07: what the operator means, resolved at compile time. Stateless
+        // single-output CONTROL operators (and SMOOTH) run as a prepared
+        // kernel: connection, range and parameter decisions are already made,
+        // so the sample loop executes instead of re-deriving. Everything else
+        // takes the general evaluator (Kernel::General).
+        enum class Kernel : std::uint8_t { General,Constant,Pass,Linear,Sum,Difference,Product,Minimum,Maximum,Absolute,ClampRange,SmoothFollow };
+        Kernel kernel=Kernel::General;
+        std::uint8_t kernelInput=0;          // Pass / Linear: which input
+        float k0=0.0f,k1=0.0f;               // Constant: k0. Linear: a*k0+k1. ClampRange: [k0, k1]
+        std::uint8_t globalOperatorInputs=0; // bit k: input k reads a GLOBAL operator's output
         ControlOpPrepared prepared{};
     };
-    void runOperator(const CompiledOp&,const std::array<float,voiceSourceCount>*,ModulationFrame&,ControlOpRuntime&) const noexcept;
+    void runOperator(const CompiledOp&,const std::array<float,voiceSourceCount>*,ModulationFrame&,ControlOpRuntime&,
+                     const ModulationFrame& globalOperators) const noexcept;
     static bool eventFired(const CompiledOp& c,const std::array<float,operatorOutputSlotCount>& outputs,std::size_t base) noexcept {
         if(c.eventPorts==0) return false;
         for(std::size_t p=0;p<c.outputCount;++p) if(((c.eventPorts>>p)&1u)!=0 && outputs[base+p]!=0.0f) return true;
         return false;
     }
     float operatorRouteValue(std::size_t operatorSlot,float raw,bool bipolar) const noexcept;
-    static float operatorInput(std::int16_t input,const std::array<float,voiceSourceCount>*,const ModulationFrame&) noexcept;
+    static float operatorInput(std::int16_t input,const std::array<float,voiceSourceCount>*,const ModulationFrame&,const ModulationFrame& operators) noexcept;
     std::array<CompiledOp,operatorSlotCount> ops_{};
     std::size_t opCount_=0,globalOpCount_=0,voiceOpCount_=0;
+    // N07: execution order per domain (indices into ops_), so neither loop
+    // tests the domain of every operator every sample.
+    std::array<std::uint8_t,operatorSlotCount> globalOrder_{},voiceOrder_{};
+    static void resolveKernel(CompiledOp&,const std::array<bool,3>& connected) noexcept;
     std::array<ControlRange,operatorOutputSlotCount> outputRange_{}; // per (slot, port)
     std::array<bool,operatorSlotCount> opVoice_{};
     // Routed operator outputs: the (<= 32) distinct outputs that drive routes
@@ -631,12 +714,40 @@ private:
     std::array<Group,ModulationState::capacity> groups_{};
     std::array<std::size_t,ModulationState::capacity> voiceGroups_{};
     std::array<bool,globalSourceCount> globalSourceUsed_{};
+    std::array<bool,voiceSourceCount> voiceSourceUsed_{};
+    std::uint64_t stateRevision_=0;
     std::size_t count_=0,voiceCount_=0;
     std::array<std::size_t,ModulationState::capacity> fxGroups_{};
     std::size_t fxCount_=0;
     bool fxVoice_=false;
     std::uint64_t generation_=0;
     std::array<bool,16> voiceProcessModules_{};
+    std::uint16_t voiceModuleMask_=0;
+    // What the last plan was built from (compared, never hashed: no collisions).
+    struct ModulePlanKey {
+        OscillatorModuleId id=0;
+        dsp::OscProcessType process1=dsp::OscProcessType::Off,process2=dsp::OscProcessType::Off;
+        std::uint8_t processCount=0,routeCount=0;
+        std::array<OscProcessSlotId,maxOscProcesses> processIds{};
+        std::array<dsp::OscProcessType,maxOscProcesses> processTypes{};
+        std::array<OscRouteSlotId,maxOscRoutes> routeIds{};
+        bool operator==(const ModulePlanKey&) const noexcept;
+    };
+    struct PlanKey {
+        bool valid=false;
+        double sampleRate=0.0;
+        std::array<ModRoute,ModulationState::capacity> routes{};
+        std::array<ControlOperator,ModulationState::maxControlOperators> operators{};
+        std::array<LfoMode,4> lfoModes{};
+        bool filterEnabled=true;
+        std::array<ModulePlanKey,16> modules{};
+    };
+    enum class PlanChange : std::uint8_t { None,Parameters,Topology };
+    PlanChange classifyChange(const ModulationState&,const std::array<OscillatorModuleState,16>&) const noexcept;
+    void storePlanKey(const ModulationState&,const std::array<OscillatorModuleState,16>&) noexcept;
+    bool updateParameters(const ModulationState&) noexcept; // false: needs a full compile (nothing changed)
+    PlanKey planKey_{};
+    CompileCounters counters_{};
     bool voiceFilter_=false;
     bool filterEnabled_=true;
     bool smoothingActive_=false;

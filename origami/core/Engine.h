@@ -119,7 +119,30 @@ public:
         suppressVisualization_=suppress;reduceVisualizationRate_=reduceControlRate;
     }
     const RuntimeVisualizationSnapshot& runtimeVisualizationSnapshot() const noexcept { return runtimeVisualization_; }
+    // N07 NODES diagnostics: bounded monotonic counters written by the audio
+    // thread (relaxed atomics, no locks), readable from any thread. They never
+    // influence DSP.
+    struct NodesDiagnostics {
+        std::uint32_t compiles=0,parameterUpdates=0,compileSkips=0;
+        std::uint64_t stateRevision=0;
+        std::uint32_t eventDelayOverflows=0;   // EVENT DELAY events dropped (queue full)
+        std::uint32_t suppressedBlocks=0;      // blocks rendered with observation suppressed (QoS)
+    };
+    NodesDiagnostics nodesDiagnostics() const noexcept {
+        NodesDiagnostics d;
+        d.compiles=diagCompiles_.load(std::memory_order_relaxed);
+        d.parameterUpdates=diagParameterUpdates_.load(std::memory_order_relaxed);
+        d.compileSkips=diagCompileSkips_.load(std::memory_order_relaxed);
+        d.stateRevision=diagStateRevision_.load(std::memory_order_relaxed);
+        d.eventDelayOverflows=diagEventOverflows_.load(std::memory_order_relaxed);
+        d.suppressedBlocks=diagSuppressedBlocks_.load(std::memory_order_relaxed);
+        return d;
+    }
 private:
+    void publishNodesDiagnostics() noexcept;
+    std::atomic<std::uint32_t> diagCompiles_{0},diagParameterUpdates_{0},diagCompileSkips_{0},diagEventOverflows_{0},diagSuppressedBlocks_{0};
+    std::atomic<std::uint64_t> diagStateRevision_{0};
+    std::uint32_t eventOverflows_=0; // audio thread; published with the counters above
     struct Smoothed { float value=0, target=0; double step=0; std::size_t remaining=0; };
     dsp::EnvelopeSettings envelopeSettings() const noexcept;
     dsp::EnvelopeSettings modulationEnvelopeSettings(unsigned index) const noexcept;

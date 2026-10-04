@@ -1,10 +1,352 @@
 # NODES architecture
 
-Status: **N05**. Read this before adding anything graph-, routing- or
-modulation-shaped to Origami. Sections are marked **LOCKED** (decided; change
-only by revising this document) or **OPEN** (undecided; do not silently pick an
-answer in code). §11 (N01) through §15 (N05) list exactly what exists today;
-everything else here is direction, not implementation.
+Status: **N07**. Read this before adding anything graph-, routing- or
+modulation-shaped to Origami.
+
+- **§0 is the authoritative description of the current system.**
+- §1–§10 hold the locked principles.
+- §11–§16 keep each phase's reasoning (N01–N06) as history.
+
+Sections are marked **LOCKED** (decided; change only by revising this
+document) or **OPEN** (undecided; do not silently pick an answer in code).
+
+---
+
+## 0. Current architecture (authoritative, N07)
+
+### 0.1 Canonical state and ownership
+
+| State | Owner | Notes |
+|---|---|---|
+| Modulation relationships | `ModulationState::routes` | One `ModRoute` per (source, destination). The Matrix, SYNTH rings and NODES links are views of it. |
+| Processing nodes | `ModulationState::operators` | 32 fixed slots; slot indices are stable. The type, parameters and inputs (each with its source port) are canonical. |
+| Sequence | `ModulationState::sequencer` (`SequencerSettings`) | Edited from SYNTH and from the NODES inspector; there is no copy. |
+| Node positions | `ControlLayout` (`MCVL`, processor-owned, `NCL1` trailer) | View metadata, never DSP. |
+| Zoom / pan / sidebar tab | `FxViewState` (processor-owned) | View only. Selection is never persisted. |
+
+- **Direct route:** a canonical source drives a parameter.
+- **Processed route:** its source is an operator OUTPUT, `operatorSource(id, port)`.
+  The port sits in bits 20–21; port 0 equals the N04/N05 encoding.
+- **Operator input:** stores `{kind, source | op, port}`.
+- **A connection's identity includes the output port.** Every authoring path
+  (NODES, SYNTH drag-and-drop, Matrix) mutates this one state through the same
+  bindings.
+
+### 0.2 Signals and domains
+
+**Signals** are typed per port and typing is strict (validation, authoring,
+compile):
+
+- **CONTROL:** continuous value.
+- **GATE:** exactly 0 / 1.
+- **EVENT:** non-zero only at its sample.
+
+**Domains:**
+
+- An operator is **VOICE** when it is a voice-only node (NOTE ON, NOTE OFF,
+  GATE, RETRIGGER, ENV TRIGGER) or anything upstream is VOICE. Otherwise it is
+  **GLOBAL**.
+- GLOBAL → VOICE is a broadcast. VOICE → GLOBAL is rejected; such a route is
+  inert if it arises elsewhere.
+- The SEQUENCER is GLOBAL-only.
+
+### 0.3 Compiler and plan lifecycle
+
+`CompiledModulation::compile` runs on the audio thread, at a block start,
+when the engine consumes a new state from its lock-free mailbox. It uses fixed
+arrays and never allocates. It classifies the change against what the current
+plan was built from (`PlanKey`, compared field by field, never hashed):
+
+| Change | Result | Counter |
+|---|---|---|
+| Nothing the plan reads: macros, LFO rate / shape, sequence steps, oscillator parameters | **skipped**; the plan is untouched | `compileSkips` |
+| Only operator parameters, with no output-range change | **in-place parameter update**; runtime state kept | `parameterUpdates` |
+| Routes, amounts, operators, connections, LFO free / voice mode, module topology, sample rate | **full compile** (route weights still crossfade) | `compiles` |
+
+- **Range changes** force a full compile, because polarity flows into
+  downstream inputs and route transforms. Examples: REMAP turning bipolar, or
+  CLAMP / CONSTANT / RANDOM / RANDOM WALK bounds crossing 0. ENV TRIGGER targets
+  also force a full compile.
+- **Transactional:** `setModulationState` validates before publishing. An
+  invalid graph is rejected on the calling thread, and the previous plan keeps
+  running. Compilation itself cannot fail; it is never visible half-built,
+  because the audio thread builds it between blocks.
+- **Layout never reaches the engine.** Moving, aligning or auto-laying-out
+  nodes, panning, zooming and selecting change no model state. Undoing a
+  layout-only step republishes nothing. (Tested: 100 moves plus pan, zoom,
+  selection, auto layout and a layout undo leave the compile counters and the
+  state revision unchanged.)
+
+### 0.4 Runtime plan
+
+The plan is prepared at compile time, so the sample loop executes decisions
+instead of re-deriving them:
+
+- **Execution order:** per-domain topological orders (`globalOrder_`,
+  `voiceOrder_`). Neither loop tests every operator's domain.
+- **Prepared kernels:**
+  - **Which operators:** stateless single-output CONTROL operators and SMOOTH
+    (ADD, SUB, MUL, MIN, MAX, SCALE / OFFSET, INVERT, ABS, CLAMP, CONSTANT,
+    SMOOTH).
+  - **What compile resolves:** connection cases (a one-input ADD is a pass),
+    the INVERT range and the CLAMP bounds.
+  - **Equivalence:** a test proves the kernels equal the general evaluator bit
+    for bit, NaN inputs included.
+  - **Everything else** runs through `evaluateControlOpOutputs`.
+- **Input resolution:** an input is resolved to a slot index at compile time.
+  A per-voice operator reads GLOBAL operator outputs straight from the global
+  frame (a per-input bit), so a voice never copies the operator table.
+- **Outputs:** operator outputs live at `slot*4+port`. Routes use compact
+  routed slots, so groups stay 26 + 32 wide.
+- **Prepared constants:** CUTOFF's log spans are computed per group at compile
+  (previously two logs per sample).
+- **Frames:**
+  - A voice copies only the oscillator modules a per-voice route writes
+    (`voiceModuleMask`). Every other module is read from the global frame.
+  - The full frame is copied only on the 1 kHz observation tick.
+  - The engine refreshes only the active module slots after a block's first
+    sample.
+- **Velocity and note curves:** constant per note, so they are cached per
+  voice and recomputed only when the note, velocity or state revision changes
+  (and only when used or observed).
+
+**Same-sample order:**
+
+```
+sample N: sources -> global operators (topological) -> per-voice operators (topological)
+          -> destination frames (global, then per voice) -> targets (ENV TRIGGER: N+1)
+```
+
+Every port of a node is computed in one evaluation, so consumers of VALUE and
+WRAP see one consistent state at N.
+
+**Reference table: one rule for every stateful node.**
+
+| Step (within one node, one sample) | Order |
+|---|---|
+| RESET | 1: applied first (counter 0, toggle off, reseed, scheduler kept) |
+| ADVANCE / TRIGGER / CLOCK | 2: acts on the post-reset state |
+| VALUE read (inputs) | the same-sample values of upstream nodes (topological) |
+| OUTPUT write | every port at once, after 1–2 |
+| WRAP / STEP EVENT | the same sample as the value change |
+
+- COUNTER: RESET + ADVANCE gives position 1.
+- SEQUENCER (EXTERNAL): RESET arms it; the same-sample ADVANCE plays the start
+  step.
+
+### 0.5 Randomness (who owns which stream)
+
+| Generator | Stream |
+|---|---|
+| RANDOM source | `RandomGenerator` (engine, one) |
+| CHAOS / DRIFT | their own engine generators |
+| SEQUENCER probability / humanize | `SequencerGenerator::rng_` (LCG) |
+| PROBABILITY, CHANCE SPLIT, RANDOM, RANDOM WALK | One xorshift32 **per node instance**, seeded from `hash(SEED, operator id)` at first evaluation and on RESET. Advanced once per incoming event, never per sample. |
+
+No two systems share state. Evaluation order or block size can never change
+another node's sequence (tested bit-identical at blocks 32–1024).
+
+**Per-voice streams (N07):**
+
+- A per-voice node's seed also mixes the voice slot and that slot's **note
+  lifecycle** count (`ControlEventContext::voiceSeed`).
+- Simultaneous voices therefore draw distinct sequences, and repeated renders
+  are identical.
+- A stolen or retriggered voice starts a new stream; it never continues the
+  previous note's.
+- An engine reset restarts the lifecycle counts, so renders repeat.
+- GLOBAL nodes keep their N06 sequences exactly (salt 0).
+
+### 0.6 Smoothing (audit)
+
+| Path | Smoothing |
+|---|---|
+| Route amount / topology changes | Group weights crossfade across recompiles (`advance`). Kept by the parameter-update and skip paths. |
+| Direct and processed routes | No per-sample smoothing of values (unchanged). |
+| SMOOTH node | Its own rise / fall coefficients (the only intentional value slew). |
+| SWITCH | GLIDE > 0 crossfades; GLIDE 0 is deliberately instant. |
+| SEQUENCER outputs | Stepped by design (use SMOOTH to slew). |
+| FX destinations | Smoothed by the FX renderer's parameter path (unchanged). |
+
+There is no double smoothing: route-weight crossfades apply only to amount
+changes, never to signal values.
+
+### 0.7 UI synchronization (revision model)
+
+- **Model revision:** the processor bumps `uiModelRevision` on every UI-state
+  write (19 write sites).
+- **Graph revision:** each bus document has its own revision.
+- **Layout:** the page's own; changes refresh directly.
+- **Telemetry:** the published engine snapshot, polled at 30 Hz by the page
+  timer only while the page is visible.
+- **`FxPage::syncFromModel`** (editor timer while NODES is shown) rebuilds
+  the sidebar and CONTROL view only when the model or graph revision changed.
+  The page's own edits refresh directly.
+- **`FxPage::modelChanged`** (change notifications): while NODES is hidden it
+  updates only the sidebar modulator cards (they are the SYNTH rail's rows)
+  and marks the CONTROL view stale. There is no graph derivation, node update,
+  cable geometry or paint. The page catches up once when shown.
+
+| Measured (32-node graph, Release) | N06 behaviour | N07 |
+|---|---|---|
+| Editor timer tick, model unchanged | full rebuild ≈ 117 µs | revision check ≈ 0.004 µs |
+| Model change while NODES is hidden | full rebuild ≈ 117 µs | sidebar only ≈ 16 µs |
+| Model change while visible | rebuild ≈ 117 µs | rebuild ≈ 117 µs (needed) |
+
+Cable geometry is computed when topology changes or a node moves, never per
+paint. Telemetry repaints only the node (activity) or its preview region
+(sequencer step). Rendering is identical with NODES visible or hidden (tested).
+
+### 0.8 Telemetry and QoS
+
+All monitoring uses the one bounded publication path: the engine's
+`RuntimeVisualizationSnapshot` (operator outputs per port, event counters,
+sequencer step), copied at the existing 1 kHz observation tick through the
+lock-free mailbox.
+
+- Under QoS suppression the observation work itself is skipped (no copies),
+  not just the publication. `suppressedBlocks` counts it.
+- DSP never reads telemetry.
+- Per-operator event counters are monotonic integers (UI activity only).
+
+### 0.9 Authoring UX (N07)
+
+**Layout:**
+
+- **Default placement** is a layered, deterministic layout: sources | operators
+  by chain depth | parameters, left to right. Columns are ordered by neighbour
+  barycenter sweeps (fewer crossings) with stable tie-breaks, and nodes are
+  stacked by their drawn height. Pinned positions are respected and stepped
+  around.
+- **AUTO LAYOUT** (toolbar, Cmd/Ctrl+Shift+L) applies the same layout to every
+  node as one undo step. It is never automatic and never changes DSP.
+
+**Zoom:**
+
+- **Semantic zoom:**
+  - **≥ 60%:** full node.
+  - **45–60%:** no secondary text, previews, inline controls or port labels.
+  - **< 45%:** identity and sockets only, with titles drawn at
+    ≥ 9 px on screen.
+- **Floor:** 30%, so a 13-column graph fits readably.
+- **Hit targets:** keep their graph size, at least 9 screen px. Overlaps
+  resolve to the nearest socket.
+
+**Selection:**
+
+- **Multi-selection:** Shift-click toggles; a left-drag on empty canvas draws a
+  marquee (Shift adds). Panning moves to Option/Alt-drag, middle-drag and the
+  trackpad.
+- **Group move:** one undo step.
+- **Delete selection:** removes user nodes. Linked canonical sources /
+  parameters stay.
+- **Align left / centre / right / top and distribute horizontally / vertically:**
+  one undo step each.
+
+**Adding and editing:**
+
+- **Searchable palette** (Origami-native): + ADD MODULE, A or Tab at the
+  cursor, and cable drops.
+  - Search covers name, category and aliases ("prob", "s&h", "seq", "walk",
+    "eucl").
+  - Arrows and Return choose; Escape dismisses.
+  - Disabled entries show their reason.
+- **Clipboard:** Cmd/Ctrl+C / V copies user nodes and the connections between
+  them. Ids are regenerated; external connections and canonical nodes are
+  never copied; a second sequencer is refused with a message.
+- **Duplicate:** Cmd/Ctrl+D places the copy below the original, without
+  overlap, and selects it.
+
+**Feedback and diagnostics:**
+
+- **Refused connections** show a transient Origami-native message, for example
+  "CONTROL output cannot feed an EVENT input", "Input already connected" or
+  "Per-voice output cannot drive a global parameter or node".
+- **Developer inspector:** Cmd/Ctrl+Shift+D (hidden by default). It shows ids,
+  type, slot, state slot, domain, input / output ports with signals and
+  monitor values, route encodings, the model revision, the engine's plan
+  counters, UI counters and the validator.
+
+**Unchanged:** the right-click menus stay native (simple lists that work).
+The PATTERN editor uses two rows of 16 cells (≥ 15 × 20 px) on a wider node
+for LENGTH > 16.
+
+### 0.10 Validation, recovery, debugging
+
+- **`nodes::validateControlGraph`** is the one reasoned rule set
+  (`validModulation` is its realtime-safe boolean twin). It reports:
+  - duplicate ids, unknown types, ids beyond the counter, bad parameters;
+  - connections on missing inputs, dangling inputs, invalid ports, type
+    mismatches, unknown sources, cycles;
+  - per-voice inputs into GLOBAL-only nodes, extra sequencers;
+  - routes from missing operators, invalid ports, EVENT / GATE outputs or
+    unknown sources.
+- **`nodes::repairControlGraph`** removes or disconnects exactly the invalid
+  parts, in slot order. A valid graph is untouched.
+- **`decodeInstrumentState`** repairs a malformed NODES graph instead of
+  executing or wholly rejecting it; `DecodeReport::graphRepairs` reports the
+  count. Structural corruption (counts, kinds, truncation) is still rejected.
+  3,000 deterministic mutations of a 32-node save produced no crash, and every
+  accepted state was valid.
+- **Engine diagnostics** (`OrigamiEngine::nodesDiagnostics`, relaxed atomics):
+  `compiles`, `parameterUpdates`, `compileSkips`, `stateRevision`,
+  `eventDelayOverflows` and `suppressedBlocks`.
+- **UI diagnostics** (`FxPage::uiDiagnostics`): model syncs, skipped syncs,
+  hidden syncs, CONTROL rebuilds, canvas paints and rejected connections.
+
+### 0.11 Limits and memory (gated in tests)
+
+- **Limits:** 32 operators, 32 routes, 4 outputs per node, 3 inputs, an
+  8-event EVENT DELAY queue, 8 sequencer steps.
+- **Compile-time memory gates:**
+  - `sizeof(ControlOpRuntime) ≤ 64`;
+  - per-voice operator state ≤ 2 KB;
+  - `Voice` ≤ 124 KB;
+  - engine ≤ 2,200 KB.
+
+| `sizeof` (arm64) | N06 | N07 |
+|---|---|---|
+| `OrigamiEngine` | 2,126,096 | 2,124,992 |
+| `Voice` | 121,992 | 121,544 |
+| per-voice operator state | 2,560 | 2,048 |
+| `ControlOpRuntime` | 80 | 64 |
+| `CompiledModulation` | 62,112 | 68,144 (+6 KB `PlanKey` for change classification) |
+
+- **Per-operator state:** CLOCK's cell index and EVENT DELAY's queue share
+  storage (a union), because one operator id has one type for life.
+- **The engine's 2 MB:** 16 voices × ~119 KB of oscillator state (16 modules ×
+  16 unison oscillators). NODES state is under 2.5 KB per voice.
+
+**Sequencer step count (audit):** 8 steps are enforced by the
+`SequencerSettings` arrays (steps, probability, ratchets), the codec (fixed
+8-entry fields since v20), the SYNTH editor and the DSP clamp. Expanding needs
+a codec version and editor redesign, so it is deferred to a dedicated phase.
+
+### 0.12 Performance (tools/nodes_bench.cpp, Release, arm64)
+
+One held note with modules 2–4 off, except the ×16 rows. "Render" is µs per
+512-sample block; "eval" is ns per sample for the global plan alone.
+
+| Scenario | Render N06 | Render N07 | Eval N06 | Eval N07 |
+|---|---|---|---|---|
+| A empty | 67.7 | 31.7 | 4.2 | 4.0 |
+| B 1 direct route | 70.4 | 33.8 | 13.2 | 13.3 |
+| C 8 direct routes | 97.1 | 62.1 | 51.6 | 54.7 |
+| D 16 direct routes | 101.8 | 67.7 | 68.6 | 62.4 |
+| E 32 direct routes | 162.7 | 93.6 | 74.6 | 76.2 |
+| F 8 control operators | 126.5 | 86.6 | 101.4 | 78.4 |
+| G 24 mixed control | 255.9 | 130.9 | 341.1 | 165.3 |
+| H event-heavy | 123.2 | 85.3 | 111.4 | 108.4 |
+| I sequencing / generative | 106.6 | 73.5 | 87.0 | 87.0 |
+| J 32-node mixed | 253.4 | 160.8 | 203.1 | 181.4 |
+| K per-voice, 16 voices | 2072.9 | 1125.0 | — | — |
+| K0 empty, 16 voices | 310.7 | 239.2 | — | — |
+| J 32-node, 16 voices | 1837.6 | 875.0 | — | — |
+
+- **Full compile:** 0.7–1.8 µs, unchanged. **Republishing an unchanged state:**
+  ≈ 0.18 µs (classified and skipped).
+- **Regression gate (FX tests):** the 32-node graph at 16 voices must cost
+  < 12× the same engine without NODES. It measures ≈ 3.6×.
 
 ---
 
