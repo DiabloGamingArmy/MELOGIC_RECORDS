@@ -67,7 +67,7 @@ public:
     enum class RateUnit { Beats=0,Seconds=1,Hz=2 };
     static constexpr int minGrid=1,maxGrid=64;
     static constexpr int defaultGridColumns=16,defaultGridRows=8;
-    static constexpr int preferredHeight=54;
+    static constexpr int preferredHeight=62;
 
     struct Callbacks {
         std::function<void(LfoMode)> mode;           // sound: LfoSettings::mode

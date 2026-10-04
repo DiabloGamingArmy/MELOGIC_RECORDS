@@ -6,18 +6,24 @@
 namespace mct::origami::ui {
 namespace {
 constexpr float rateMinHz=.01f,rateMaxHz=40.0f;
-// Shared geometry (design units). One control row: groups are 46 tall in a
-// 54-tall strip; with a horizontal scrollbar the groups top-align and the
-// bar takes the remaining gutter instead of covering them.
-constexpr int groupHeight=46,groupGap=6,pageWidth=44,scrollThickness=6;
-constexpr int iconCell=32,unitWidth=52,knobWidth=34,fieldWidth=56;
-constexpr int gridIconWidth=26,gridFieldWidth=34,directionWidth=32;
-constexpr int funcCell=54;
-constexpr int timeWidth=4+unitWidth+4+knobWidth+4+fieldWidth+4;
-constexpr int behaviourDivider=9;
-constexpr int behaviourWidth=3+3*iconCell+behaviourDivider+2*iconCell+3;
-constexpr int gridWidth=4+gridIconWidth+2+gridFieldWidth+4+iconCell+3;
-constexpr int directionGroupWidth=3+directionWidth+3;
+// SECONDS knob: the same canonical range expressed as a period.
+constexpr double periodMinSeconds=1.0/rateMaxHz,periodMaxSeconds=1.0/rateMinHz;
+// Shared geometry (design units == px at the 1440 x 900 default editor).
+// mct-origami-lfo-editor-polish: controls fill their groups. Groups are 58
+// tall in a 62-tall strip with 4-5 px padding, 4 px between groups; the
+// complete TOOLS row is exactly the 636-unit strip, so it is one row at
+// every editor size (the editor scales uniformly). Narrower hosts scroll,
+// the bar in its own gutter; controls are never shrunk to fit.
+constexpr int groupHeight=58,groupGap=4,maxGroupGap=8,pageWidth=64,scrollThickness=6;
+constexpr int padX=5,padY=4;
+constexpr int iconCell=38,unitWidth=60,knobWidth=44,fieldWidth=72;
+constexpr int gridIconWidth=24,gridFieldWidth=36,directionWidth=36;
+constexpr int funcCell=60;
+constexpr int timeWidth=padX+unitWidth+4+knobWidth+4+fieldWidth+padX;
+constexpr int behaviourDivider=6;
+constexpr int behaviourWidth=4+3*iconCell+behaviourDivider+2*iconCell+4;
+constexpr int gridWidth=padX+gridIconWidth+3+gridFieldWidth+4+iconCell+4;
+constexpr int directionGroupWidth=4+directionWidth+4;
 
 void styleKnob(juce::Slider& s,const juce::String& name) {
     s.setName(name);
@@ -30,7 +36,7 @@ void styleKnob(juce::Slider& s,const juce::String& name) {
 void styleCaption(juce::Label& l,const juce::String& text) {
     l.setText(text,juce::dontSendNotification);
     l.setJustificationType(juce::Justification::centred);
-    l.setFont(juce::FontOptions(8.0f));
+    l.setFont(juce::FontOptions(9.0f));
     l.setColour(juce::Label::textColourId,Palette::text().withAlpha(.82f));
     l.setInterceptsMouseClicks(false,false);
 }
@@ -60,14 +66,14 @@ void StackSelector::paint(juce::Graphics& g) {
     const auto box=getLocalBounds().toFloat().reduced(.5f);
     g.setColour(Palette::inset()); g.fillRoundedRectangle(box,2.0f);
     g.setColour(Palette::borderSoft()); g.drawRoundedRectangle(box,2.0f,1.0f);
-    const float size=juce::jlimit(7.5f,9.0f,static_cast<float>(optionBounds(0).getHeight())*.62f);
+    const float size=juce::jlimit(8.0f,11.5f,static_cast<float>(optionBounds(0).getHeight())*.52f);
     for(int i=0;i<options_.size();++i) {
         const auto r=optionBounds(i);
         const bool on=i==selected_;
         if(on && !accentText_) {
             // Restrained: a dark red wash and a thin red edge, white text.
             g.setColour(signalShade(.30f,.32f)); g.fillRect(r.reduced(1,1));
-            g.setColour(signalSourceColour()); g.fillRect(r.getX()+1,r.getY()+2,2,r.getHeight()-4);
+            g.setColour(signalSourceColour()); g.fillRect(r.getX()+1,r.getY()+3,2,r.getHeight()-6);
         } else if(i==hover_) {
             g.setColour(Palette::raised().brighter(.06f)); g.fillRect(r.reduced(1,1));
         }
@@ -91,7 +97,7 @@ StepField::StepField(const juce::String& name,int minimum,int maximum,int value)
     setName(name);
     setEditable(false,true,false);
     setJustificationType(juce::Justification::centred);
-    setFont(juce::FontOptions(9.5f));
+    setFont(juce::FontOptions(12.0f));
     setColour(juce::Label::textColourId,Palette::text());
     setColour(juce::Label::textWhenEditingColourId,Palette::text());
     setColour(juce::Label::backgroundWhenEditingColourId,Palette::inset());
@@ -239,7 +245,7 @@ LfoControlStrip::LfoControlStrip() {
     rateField_.setName("LFO RATE VALUE");
     rateField_.setEditable(false,true,false);
     rateField_.setJustificationType(juce::Justification::centred);
-    rateField_.setFont(juce::FontOptions(10.0f));
+    rateField_.setFont(juce::FontOptions(12.5f));
     rateField_.setColour(juce::Label::textColourId,Palette::text());
     rateField_.setColour(juce::Label::backgroundColourId,Palette::inset());
     rateField_.setColour(juce::Label::outlineColourId,Palette::borderSoft());
@@ -265,12 +271,12 @@ LfoControlStrip::LfoControlStrip() {
     for(auto* b:{&retrigger_,&envelope_,&free_,&pingPong_,&customPath_}) tools_.addAndMakeVisible(*b);
     // Optical corrections: the retrigger arrow and the free wave carry their
     // weight off-centre / small in the 600x600 art.
-    free_.setOpticalAdjust(1.06f);
-    pingPong_.setOpticalAdjust(.96f);
+    free_.setOpticalAdjust(1.04f);
+    pingPong_.setOpticalAdjust(.94f);
 
     // ---- grid ----
     gridIcon_.setTooltip("Grid Alignment: horizontal (time) and vertical (level) editor grid divisions");
-    gridIcon_.setGlyphFraction(.66f);
+    gridIcon_.setGlyphFraction(.62f);
     gridRows_.setTooltip("Horizontal grid lines: level divisions across the full range (1-64)");
     gridColumns_.setTooltip("Vertical grid lines: time divisions per LFO cycle (1-64)");
     for(auto* f:{&gridColumns_,&gridRows_}) f->onValueChange=[this](int){ if(callbacks_.gridChanged) callbacks_.gridChanged(); };
@@ -284,7 +290,8 @@ LfoControlStrip::LfoControlStrip() {
     reverse_.setTooltip("Reverse: not available yet. LFO playback has no direction setting");
     forward_.setToggleState(true,juce::dontSendNotification);
     reverse_.setEnabled(false);
-    for(auto* b:{&forward_,&reverse_}) { b->setActiveMarker(false); b->setGlyphFraction(.60f); tools_.addAndMakeVisible(*b); }
+    // The arrows are long, thin silhouettes: let them use the cell width.
+    for(auto* b:{&forward_,&reverse_}) { b->setActiveMarker(false); b->setGlyphFraction(.62f); b->setMaxGlyphAspect(5.0f); tools_.addAndMakeVisible(*b); }
 
     // ---- FUNC ----
     for(std::size_t i=0;i<funcCount;++i) {
@@ -330,7 +337,8 @@ void LfoControlStrip::setLfo(std::size_t index,const LfoSettings& lfo) {
                 if(e<bestError) { bestError=e; best=i; }
             }
             rate_.setValue(static_cast<double>(best),juce::dontSendNotification);
-        } else rate_.setValue(lfo.rateHz,juce::dontSendNotification);
+        } else if(rateUnit()==RateUnit::Seconds) rate_.setValue(1.0/double(lfo.rateHz),juce::dontSendNotification);
+        else rate_.setValue(lfo.rateHz,juce::dontSendNotification);
     }
     refreshRateField();
 }
@@ -359,7 +367,14 @@ void LfoControlStrip::configureRateKnob() {
             if(e<bestError) { bestError=e; best=i; }
         }
         rate_.setValue(double(best),juce::dontSendNotification);
+    } else if(rateUnit()==RateUnit::Seconds) {
+        // SECONDS shows TIME: clockwise = longer period = slower LFO.
+        juce::NormalisableRange<double> range(periodMinSeconds,periodMaxSeconds);
+        range.setSkewForCentre(1.0);
+        rate_.setNormalisableRange(range);
+        rate_.setValue(1.0/double(lfo_.rateHz),juce::dontSendNotification);
     } else {
+        // HZ: clockwise = faster (unchanged).
         juce::NormalisableRange<double> range(rateMinHz,rateMaxHz);
         range.setSkewForCentre(2.0);
         rate_.setNormalisableRange(range);
@@ -374,6 +389,7 @@ void LfoControlStrip::refreshRateField() {
 
 void LfoControlStrip::rateKnobMoved() {
     float hz=static_cast<float>(rate_.getValue());
+    if(rateUnit()==RateUnit::Seconds) hz=static_cast<float>(1.0/juce::jmax(periodMinSeconds,rate_.getValue()));
     if(rateUnit()==RateUnit::Beats) {
         if(beatChoices_.empty()) return;
         const auto i=static_cast<std::size_t>(juce::jlimit(0,int(beatChoices_.size())-1,juce::roundToInt(rate_.getValue())));
@@ -405,7 +421,8 @@ void LfoControlStrip::Content::paint(juce::Graphics& g) {
 
 void LfoControlStrip::resized() {
     auto b=getLocalBounds();
-    page_.setBounds(b.removeFromLeft(pageWidth).withSizeKeepingCentre(pageWidth,groupHeight));
+    const int gh=juce::jmin(groupHeight,b.getHeight());
+    page_.setBounds(b.removeFromLeft(pageWidth).withSizeKeepingCentre(pageWidth,gh));
     b.removeFromLeft(groupGap);
     const bool tools=page()==Page::Tools;
     toolsViewport_.setVisible(tools); funcViewport_.setVisible(!tools);
@@ -414,66 +431,77 @@ void LfoControlStrip::resized() {
     const int need=tools ? minimumToolsWidth() : minimumFuncWidth();
     const bool scrolls=need>b.getWidth();
     const int width=juce::jmax(need,b.getWidth());
-    // Scroll gutter: the content keeps its full group height above the bar.
-    const int height=scrolls ? juce::jmax(groupHeight,b.getHeight()-scrollThickness-1) : b.getHeight();
+    // Scroll gutter: content stops above the bar instead of being covered.
+    const int height=scrolls ? b.getHeight()-scrollThickness-1 : b.getHeight();
     (tools ? tools_ : funcBank_).setSize(width,height);
     if(tools) layoutTools(width); else layoutFunc(width);
 }
 
 void LfoControlStrip::layoutTools(int width) {
     const int h=tools_.getHeight();
-    const int y=h>groupHeight+scrollThickness ? (h-groupHeight)/2 : 0;
-    const int spare=width-minimumToolsWidth();
-    const int gap=groupGap+spare/3;
+    const int gh=juce::jmin(groupHeight,h);
+    // Same top edge as the TOOLS/FUNC selector (centred in the strip), or
+    // top-aligned above a scrollbar.
+    const int y=h>=groupHeight ? (h-gh)/2 : 0;
+    // Dense: extra width only opens the gaps a little; the rest trails.
+    const int gap=juce::jmin(maxGroupGap,groupGap+(width-minimumToolsWidth())/3);
     int x=0;
-    auto group=[&](int w) { juce::Rectangle<int> r{x,y,w,groupHeight}; x+=w+gap; return r; };
+    auto group=[&](int w) { juce::Rectangle<int> r{x,y,w,gh}; x+=w+gap; return r; };
 
     auto time=group(timeWidth);
     auto behaviour=group(behaviourWidth);
     auto grid=group(gridWidth);
-    auto direction=juce::Rectangle<int>{width-directionGroupWidth,y,directionGroupWidth,groupHeight};
+    auto direction=group(directionGroupWidth);
     tools_.groups={time,behaviour,grid,direction};
 
-    auto t=time.reduced(4,3);
+    auto t=time.reduced(padX,padY);
     unit_.setBounds(t.removeFromLeft(unitWidth));
     t.removeFromLeft(4);
-    auto knob=t.removeFromLeft(knobWidth);
-    rateLabel_.setBounds(knob.removeFromBottom(9).translated(0,1));
-    rate_.setBounds(knob);
+    // The knob owns the full group height; its RATE caption sits above the value.
+    rate_.setBounds(t.removeFromLeft(knobWidth));
     t.removeFromLeft(4);
-    rateField_.setBounds(t.withSizeKeepingCentre(fieldWidth,20));
+    auto valueColumn=t.removeFromLeft(fieldWidth);
+    const int fieldHeight=26,captionHeight=12;
+    auto stack=valueColumn.withSizeKeepingCentre(fieldWidth,captionHeight+2+fieldHeight);
+    rateLabel_.setBounds(stack.removeFromTop(captionHeight));
+    stack.removeFromTop(2);
+    rateField_.setBounds(stack);
 
-    auto bh=behaviour.reduced(3,3);
+    auto bh=behaviour.reduced(4,padY);
     for(auto* button:{&retrigger_,&envelope_,&free_}) button->setBounds(bh.removeFromLeft(iconCell));
     auto div=bh.removeFromLeft(behaviourDivider);
-    tools_.divider={div.getCentreX(),div.getY()+5,1,div.getHeight()-10};
+    tools_.divider={div.getCentreX(),div.getY()+8,1,div.getHeight()-16};
     for(auto* button:{&pingPong_,&customPath_}) button->setBounds(bh.removeFromLeft(iconCell));
 
-    auto gr=grid.reduced(4,3);
+    auto gr=grid.withTrimmedLeft(padX).withTrimmedRight(4).reduced(0,padY);
     gridIcon_.setBounds(gr.removeFromLeft(gridIconWidth));
-    gr.removeFromLeft(2);
+    gr.removeFromLeft(3);
     auto fields=gr.removeFromLeft(gridFieldWidth);
-    const int fh=(fields.getHeight()-2)/2;
+    const int fh=(fields.getHeight()-4)/2;
     gridRows_.setBounds(fields.removeFromTop(fh));
     gridColumns_.setBounds(fields.removeFromBottom(fh));
     gr.removeFromLeft(4);
     snap_.setBounds(gr.removeFromLeft(iconCell));
 
-    auto d=direction.reduced(3,2);
-    forward_.setBounds(d.removeFromTop(d.getHeight()/2));
-    reverse_.setBounds(d);
+    auto d=direction.reduced(4,padY);
+    const int half=(d.getHeight()-2)/2;
+    forward_.setBounds(d.removeFromTop(half));
+    reverse_.setBounds(d.removeFromBottom(half));
 }
 
 void LfoControlStrip::layoutFunc(int width) {
     const int h=funcBank_.getHeight();
-    const int y=h>groupHeight+scrollThickness ? (h-groupHeight)/2 : 0;
-    const juce::Rectangle<int> group{0,y,width,groupHeight};
+    const int gh=juce::jmin(groupHeight,h);
+    const int y=h>=groupHeight ? (h-gh)/2 : 0;
+    // Knobs keep one cell size; a wide strip does not spread them apart.
+    const int w=juce::jmin(width,minimumFuncWidth()+static_cast<int>(funcCount)*16);
+    const juce::Rectangle<int> group{0,y,w,gh};
     funcBank_.groups={group,{},{},{}};
-    auto r=group.reduced(4,3);
+    auto r=group.reduced(4,2);
     const int cell=r.getWidth()/static_cast<int>(funcCount);
     for(std::size_t i=0;i<funcCount;++i) {
         auto c=r.removeFromLeft(i+1==funcCount ? r.getWidth() : cell);
-        funcLabels_[i].setBounds(c.removeFromBottom(9).translated(0,1));
+        funcLabels_[i].setBounds(c.removeFromBottom(11));
         func_[i].setBounds(c.withSizeKeepingCentre(knobWidth,c.getHeight()));
     }
 }

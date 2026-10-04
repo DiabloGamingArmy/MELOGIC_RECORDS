@@ -65,6 +65,8 @@ public:
     // Show the base marker for the active state (off inside stacked selectors,
     // where the cell background already reads as the selection).
     void setActiveMarker(bool on) noexcept { activeMarker_=on; repaint(); }
+    // Widest glyph box relative to its height (long arrows may use more width).
+    void setMaxGlyphAspect(float a) noexcept { maxAspect_=a; repaint(); }
     // Status indicators (on/off facts rather than a selected choice) can show
     // "active" in a neutral tint so red stays reserved for selections.
     void setActiveTint(std::optional<juce::Colour> c) noexcept { activeTint_=c; repaint(); }
@@ -78,7 +80,7 @@ protected:
 
 private:
     IconId icon_;
-    float glyphFraction_=0.62f,opticalScale_=1.0f;
+    float glyphFraction_=0.62f,opticalScale_=1.0f,maxAspect_=1.6f;
     juce::Point<float> opticalOffset_{};
     bool activeMarker_=true;
     std::optional<juce::Colour> activeTint_;

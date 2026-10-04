@@ -4143,6 +4143,42 @@ void lfoEditorControlsAudit() {
           ui::LfoControlStrip::parseRate("250ms",ui::LfoControlStrip::RateUnit::Seconds,120.0).value_or(0.0f)==4.0f &&
           !ui::LfoControlStrip::parseRate("1/5",ui::LfoControlStrip::RateUnit::Beats,120.0).has_value(),"rate parser");
     check(ui::LfoControlStrip::formatRate(2.3f,ui::LfoControlStrip::RateUnit::Beats,120.0).startsWith("~"),"an off-division rate is marked approximate in BEATS");
+    // ---- knob direction per unit (polish pass: SECONDS shows time) --------
+    {
+        auto& knob=strip.rateKnob();
+        const auto setKnob=[&](double v){ knob.setValue(v,juce::sendNotificationSync); return lfo2().rateHz; };
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Seconds);
+        const float fastest=setKnob(knob.getMinimum());
+        check(std::abs(fastest-40.0f)<1e-3f && strip.rateText()=="0.025 s","SECONDS knob minimum = shortest period (0.025 s) = highest rate (40 Hz)");
+        const float slowest=setKnob(knob.getMaximum());
+        check(std::abs(slowest-.01f)<1e-5f && strip.rateText()=="100.0 s","SECONDS knob maximum = longest period (100 s) = lowest rate (0.01 Hz)");
+        const float s1=1.0f/setKnob(1.0), s2=1.0f/setKnob(1.5), s3=1.0f/setKnob(.8);
+        check(std::abs(s1-1.0f)<1e-4f && s2>s1 && s3<s1,"SECONDS: clockwise lengthens the period, counter-clockwise shortens it");
+        check(knob.getValue()>knob.getMinimum() && std::abs(knob.getValue()-1.0/double(lfo2().rateHz))<1e-6,"SECONDS knob position is the displayed period");
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);
+        const float h0=setKnob(knob.getMinimum()), h1=setKnob(knob.getMaximum());
+        const float a=setKnob(2.0), b=setKnob(3.0);
+        check(std::abs(h0-.01f)<1e-5f && std::abs(h1-40.0f)<1e-3f && b>a,"HZ unchanged: minimum = 0.01 Hz, maximum = 40 Hz, clockwise = faster");
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Beats);
+        const float b0=setKnob(knob.getMinimum()), bMax=setKnob(knob.getMaximum());
+        const float b4=setKnob(4.0), b5=setKnob(5.0);
+        check(std::abs(b0-120.0f/60.0f/64.0f)<1e-5f && bMax>20.0f && b5>b4 && strip.rateText()!="","BEATS unchanged: minimum = 16/1 (slowest), clockwise = faster divisions");
+        // Unit switching at 2 Hz: display and knob change, the canonical rate never does.
+        { auto m=mod(); m.lfo2.rateHz=2.0f; p.setUiModulationState(m); sync(); }
+        const auto at2=bytes(); const auto rev=p.getUiModelRevision();
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);      const bool hzOk=strip.rateText()=="2.00 Hz" && std::abs(knob.getValue()-2.0)<1e-6;
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Seconds); const bool sOk=strip.rateText()=="0.500 s" && std::abs(knob.getValue()-.5)<1e-6;
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Beats);   const bool bOk=strip.rateText()=="1/4";
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);
+        check(hzOk && sOk && bOk && strip.rateText()=="2.00 Hz" && bytes()==at2 && p.getUiModelRevision()==rev && lfo2().rateHz==2.0f,
+              "2 Hz -> 0.500 s -> 1/4 -> 2 Hz: knob/display follow the unit, canonical Hz untouched (no state write)");
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Seconds);
+        for(const auto& [text,hz]:std::initializer_list<std::pair<const char*,float>>{{"2.5",.4f},{"2.5s",.4f},{"250ms",4.0f},{"0.25 s",4.0f}}) {
+            strip.rateField().setText(text,juce::sendNotificationSync);
+            check(std::abs(lfo2().rateHz-hz)<1e-5f && std::abs(knob.getValue()-1.0/double(hz))<1e-4,(std::string("typed seconds '")+text+"' -> canonical Hz, knob at that period").c_str());
+        }
+        strip.setRateUnit(ui::LfoControlStrip::RateUnit::Hz);
+    }
     { auto m=mod(); m.lfo2.rateHz=0.37f; p.setUiModulationState(m); sync(); }
     for(auto unit:{ui::LfoControlStrip::RateUnit::Beats,ui::LfoControlStrip::RateUnit::Seconds,ui::LfoControlStrip::RateUnit::Hz}) strip.setRateUnit(unit);
     check(lfo2().rateHz==0.37f,"an existing (non-division) rate survives every unit view untouched");
@@ -4319,7 +4355,21 @@ void lfoEditorControlsAudit() {
         ok&=g[3].getRight()==strip.toolsViewport().getViewedComponent()->getWidth();   // direction at the far right
         const auto glyph=strip.modeButton(LfoMode::Free).glyphArea();
         const float frac=glyph.getHeight()/static_cast<float>(strip.modeButton(LfoMode::Free).getHeight());
-        ok&=frac>=.55f && frac<=.72f && strip.modeButton(LfoMode::Free).getHeight()>=28 && strip.funcKnob(0).getWidth()>=30;
+        ok&=frac>=.55f && frac<=.72f && glyph.getHeight()>=28.0f;
+        // Polish-pass density (design units): substantial controls, tight groups.
+        const auto knobCircle=[](const juce::Component& k){ return juce::jmin(k.getWidth(),k.getHeight())-6; };
+        ok&=knobCircle(strip.rateKnob())>=34 && strip.modeButton(LfoMode::Free).getWidth()>=38 && strip.modeButton(LfoMode::Free).getHeight()>=46;
+        ok&=strip.snapButton().getBounds().getHeight()==strip.modeButton(LfoMode::Free).getHeight() && strip.snapButton().getWidth()>=37;
+        ok&=strip.gridRowsField().getHeight()>=22 && strip.rateField().getWidth()>=70 && strip.unitSelector().getWidth()>=60 && strip.pageSelector().getWidth()>=64;
+        for(std::size_t i=0;i+1<g.size();++i) ok&=g[i+1].getX()-g[i].getRight()>=4 && g[i+1].getX()-g[i].getRight()<=8;
+        for(const auto& gr:g) ok&=gr.getY()==g[0].getY() && gr.getHeight()==g[0].getHeight();
+        ok&=strip.pageSelector().getY()==g[0].getY()+strip.toolsViewport().getY() && strip.pageSelector().getHeight()==g[0].getHeight();
+        ok&=g[1].getRight()-strip.customPathButton().getRight()<=6 && strip.modeButton(LfoMode::Loop).getX()-g[1].getX()<=6;
+        ok&=!strip.toolsViewport().getHorizontalScrollBar().isVisible(); // one row at every editor size
+        strip.setPage(ui::LfoControlStrip::Page::Func);
+        ok&=knobCircle(strip.funcKnob(0))>=34 && !strip.funcViewport().getHorizontalScrollBar().isVisible();
+        for(std::size_t i=0;i+1<ui::LfoControlStrip::funcCount;++i) ok&=!strip.funcLabel(i).getBounds().intersects(strip.funcLabel(i+1).getBounds()) && strip.funcLabel(i).getY()==strip.funcLabel(i+1).getY();
+        strip.setPage(ui::LfoControlStrip::Page::Tools);
         check(ok,("LFO strip layout: "+label).c_str());
     };
     layoutOk("normal 1500x920");
@@ -4332,11 +4382,11 @@ void lfoEditorControlsAudit() {
         const auto saved=strip.getBounds();
         strip.setBounds(saved.withWidth(360));
         auto& vp=strip.toolsViewport();
-        check(vp.getViewedComponent()->getWidth()==ui::LfoControlStrip::minimumToolsWidth() && vp.isHorizontalScrollBarShown() &&
-              vp.getViewedComponent()->getHeight()+vp.getScrollBarThickness()<=vp.getHeight() && strip.modeButton(LfoMode::Free).getHeight()>=28,
+        check(vp.getViewedComponent()->getWidth()==ui::LfoControlStrip::minimumToolsWidth() && vp.getHorizontalScrollBar().isVisible() &&
+              vp.getViewedComponent()->getHeight()+vp.getScrollBarThickness()<=vp.getHeight() && strip.modeButton(LfoMode::Free).getWidth()==38,
               "narrow strip: TOOLS scrolls horizontally in its own gutter, controls keep their size");
         strip.setPage(ui::LfoControlStrip::Page::Func);
-        check(strip.funcViewport().getViewedComponent()->getWidth()==ui::LfoControlStrip::minimumFuncWidth() && strip.funcKnob(0).getWidth()>=30,
+        check(strip.funcViewport().getViewedComponent()->getWidth()==ui::LfoControlStrip::minimumFuncWidth() && strip.funcKnob(0).getWidth()==44,
               "narrow strip: FUNC scrolls, knobs keep their size");
         strip.setPage(ui::LfoControlStrip::Page::Tools);
         strip.setBounds(saved);
@@ -4344,6 +4394,18 @@ void lfoEditorControlsAudit() {
 
     // ---- optional renders for the visual audit -----------------------------
     if(const char* dir=std::getenv("ORIGAMI_SNAPSHOT_DIR")) {
+        {   // Geometry report (design units == px at the 1440 x 900 default editor).
+            editor->setSize(1440,900); synth->selectSource(ModSource::Lfo2); strip.setPage(ui::LfoControlStrip::Page::Tools);
+            const auto r=[](const juce::Component& c){ return c.getBounds().toString().toStdString(); };
+            std::cerr<<"[lfo geometry] panel "<<r(*synth)<<" strip "<<r(strip)<<" canvas "<<synth->lfoCanvas().toString()<<"\n";
+            std::cerr<<"[lfo geometry] page "<<r(strip.pageSelector())<<" unit "<<r(strip.unitSelector())<<" knob "<<r(strip.rateKnob())<<" value "<<r(strip.rateField())<<"\n";
+            std::cerr<<"[lfo geometry] mode "<<r(strip.modeButton(LfoMode::Free))<<" glyph "<<strip.modeButton(LfoMode::Free).glyphArea().toString()<<" snap "<<r(strip.snapButton())<<" gridIcon "<<r(strip.gridIcon())<<" field "<<r(strip.gridRowsField())<<" fwd "<<r(strip.forwardButton())<<"\n";
+            for(const auto& g:strip.toolGroups()) std::cerr<<"[lfo geometry] group "<<g.toString()<<"\n";
+            strip.setPage(ui::LfoControlStrip::Page::Func);
+            std::cerr<<"[lfo geometry] func knob "<<r(strip.funcKnob(0))<<" label "<<r(strip.funcLabel(0))<<" funcContent "<<strip.funcViewport().getViewedComponent()->getBounds().toString()<<"\n";
+            strip.setPage(ui::LfoControlStrip::Page::Tools);
+            editor->setSize(1500,920);
+        }
         const auto shot=[&](const std::string& name,float scale) {
             const auto r=synth->getBoundsInParent();
             const auto img=editor->createComponentSnapshot(editor->getLocalArea(synth->getParentComponent(),r),true,scale);

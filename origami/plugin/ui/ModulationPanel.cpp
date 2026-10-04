@@ -38,8 +38,8 @@
 
 namespace mct::origami::ui {
 namespace {
-// LFO editor bottom row: the TOOLS / FUNC strip plus a 2 px margin each side.
-constexpr int lfoStripHeight=LfoControlStrip::preferredHeight+4;
+// LFO editor bottom row: the TOOLS / FUNC strip plus a 1 px margin each side.
+constexpr int lfoStripHeight=LfoControlStrip::preferredHeight+2;
 constexpr std::array<ParameterId,4> envelopeIds{
     ParameterId::Attack,ParameterId::Decay,ParameterId::Sustain,ParameterId::Release
 };

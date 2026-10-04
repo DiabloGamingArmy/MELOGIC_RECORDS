@@ -95,7 +95,8 @@ juce::Colour iconTint(IconState state) noexcept {
         case IconState::Pressed:     return juce::Colours::white;
         case IconState::Active:      return signalSourceColour();
         case IconState::ActiveHover: return signalSourceColour().brighter(.28f);
-        case IconState::Disabled:    return Palette::borderStrong().darker(.08f);
+        // Dim but still recognisable (e.g. the not-yet-available REVERSE arrow).
+        case IconState::Disabled:    return juce::Colour(0xff5a5a5a);
     }
     return Palette::muted();
 }
@@ -118,8 +119,8 @@ IconState IconButton::visualState() const noexcept {
 juce::Rectangle<float> IconButton::glyphArea() const noexcept {
     const auto b=getLocalBounds().toFloat();
     const float h=b.getHeight()*glyphFraction_*opticalScale_;
-    // Wide silhouettes (the direction arrows) may use a little more width.
-    const float w=juce::jmin(b.getWidth()-4.0f,h*1.6f);
+    // Wide silhouettes (the direction arrows) may use more width.
+    const float w=juce::jmin(b.getWidth()-6.0f,h*maxAspect_);
     return juce::Rectangle<float>(w,h).withCentre(b.getCentre()+opticalOffset_*h);
 }
 
