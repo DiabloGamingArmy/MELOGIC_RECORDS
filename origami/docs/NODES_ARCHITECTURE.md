@@ -1,7 +1,7 @@
 # NODES architecture
 
-Status: **N07**. Read this before adding anything graph-, routing- or
-modulation-shaped to Origami.
+Status: **current**. The NODES foundation (N01–N07) has landed. Read this
+before adding anything graph-, routing- or modulation-shaped to Origami.
 
 - **§0 is the authoritative description of the current system.**
 - §1–§10 hold the locked principles.
@@ -673,7 +673,7 @@ sidebar, inspector, Matrix contract) is already NODES-shaped.
   ("NODES / NODE 4 / P2"). Resolving names needs workspace access in the
   shared label function.
 
-## 12. N02: typed graph foundation (what exists now)
+## 12. N02: typed graph foundation (introduced in N02; §0 describes the current system)
 
 ### 12.1 N01 render discrepancy (resolved, not a bug)
 
@@ -868,7 +868,7 @@ What a generalized RenderPlan will need (not implemented):
 - No DSP, audio routing, modulation, Matrix or state behaviour changed.
 - The `Fx*` class names were kept on purpose (§11).
 
-## 13. N03: CONTROL layer — SOURCE → PARAMETER (what exists now)
+## 13. N03: CONTROL layer — SOURCE → PARAMETER (introduced in N03; §0 describes the current system)
 
 ### 13.1 One relationship, three views
 
@@ -1006,7 +1006,7 @@ a UI-rate or 60 Hz path. That decision is OPEN.
 - VOICE → GLOBAL semantics.
 - Showing incomplete Matrix routes (missing an end) in NODES.
 
-## 14. N04: CONTROL processing operators (what exists now)
+## 14. N04: CONTROL processing operators (introduced in N04; §0 describes the current system)
 
 N04 adds optional processing between sources and parameters. The one rule
 from N03 still holds: **NODES does not own another modulation system.**
@@ -1193,7 +1193,7 @@ ModulationState (routes + operators)
   inside the canonical per-sample evaluator.
 - Operator copy/paste across instruments.
 
-## 15. N05: EVENT / GATE / CLOCK, logic and stateful control (what exists now)
+## 15. N05: EVENT / GATE / CLOCK, logic and stateful control (introduced in N05; §0 describes the current system)
 
 ### 15.1 Signal families
 
@@ -1383,7 +1383,7 @@ production engine always lived on the heap inside the processor.
 - **TOGGLE RESET input.**
 - **Audio → control analysis:** a later phase.
 
-## 16. N06: sequencing, generative modulation and multi-output nodes (what exists now)
+## 16. N06: sequencing, generative modulation and multi-output nodes (introduced in N06; §0 describes the current system)
 
 ### 16.1 The existing sequencer (audit)
 
