@@ -4299,8 +4299,10 @@ void lfoEditorControlsAudit() {
         { auto m=mod(); m.lfo2.*(info.field)=static_cast<float>(info.neutral); p.setUiModulationState(m); sync(); }
         check(strip.funcKnob(i).getValue()==info.neutral,(std::string("FUNC ")+info.name+" follows external edits").c_str());
     }
-    check(!ui::LfoControlStrip::funcInfo()[4].implemented && juce::String(ui::LfoControlStrip::funcInfo()[4].tooltip).contains("one value per voice"),
-          "STEREO stays disabled and says why (scalar modulation)");
+    check(ui::LfoControlStrip::funcInfo()[4].implemented && ui::LfoControlStrip::funcInfo()[4].field==&LfoSettings::stereo && strip.funcKnob(4).isEnabled(),
+          "STEREO is live and bound to LfoSettings::stereo");
+    check(ui::LfoControlStrip::funcValueText(4,.5).startsWith("90") && ui::LfoControlStrip::funcValueText(4,1.0).startsWith("180") && ui::LfoControlStrip::funcValueText(4,0).startsWith("0"),
+          "STEREO shows the L / R phase separation in degrees (50% = 90 deg)");
     check(ui::LfoControlStrip::funcValueText(0,.35)=="35%" && ui::LfoControlStrip::funcValueText(1,.25)=="250 ms" && ui::LfoControlStrip::funcValueText(2,2.5)=="2.50 s" &&
           ui::LfoControlStrip::funcValueText(1,0)=="OFF" && ui::LfoControlStrip::funcValueText(3,.25).startsWith("90") && ui::LfoControlStrip::funcValueText(5,-.4)=="-40%" &&
           ui::LfoControlStrip::funcValueText(5,.4)=="+40%" && ui::LfoControlStrip::funcValueText(6,0)=="OFF" && ui::LfoControlStrip::funcValueText(6,1)=="2 LEVELS" &&
@@ -4308,7 +4310,10 @@ void lfoEditorControlsAudit() {
     {   // Processed overlay: absent when neutral, present for FUNC, base points untouched.
         auto m=mod(); for(const auto& f:ui::LfoControlStrip::funcInfo()) if(f.field) m.lfo2.*(f.field)=static_cast<float>(f.neutral);
         m.lfo2.pingPong=false; p.setUiModulationState(m); sync();
-        check(synth->lfoProcessedOverlay().empty(),"no processed overlay while every FUNC value is neutral");
+        check(synth->lfoProcessedOverlay().empty() && synth->lfoProcessedRightOverlay().empty(),"no processed overlay while every FUNC value is neutral");
+        m.lfo2.stereo=.5f; p.setUiModulationState(m); sync();
+        check(synth->lfoProcessedOverlay().empty() && synth->lfoProcessedRightOverlay().size()==513,"STEREO alone: only the RIGHT (dashed) trace is drawn");
+        m.lfo2.stereo=0.0f; p.setUiModulationState(m); sync();
         m.lfo2.skew=.6f; m.lfo2.quantize=.7f; p.setUiModulationState(m); sync();
         const auto& overlay=synth->lfoProcessedOverlay();
         check(overlay.size()==513 && lfo2().points[1].x==m.lfo2.points[1].x,"SKEW + QUANTIZE draw a processed overlay; the editable points do not move");
@@ -4320,9 +4325,9 @@ void lfoEditorControlsAudit() {
         const auto restore=mod();
         auto m=mod();
         for(std::size_t i=0;i<4;++i) { auto& l=lfoSettings(m,i); l.mode=i==0 ? LfoMode::Free : LfoMode::Loop; l.pingPong=true; l.smooth=.3f; l.attackSeconds=.2f; l.delaySeconds=.01f;
-            l.phase=.2f; l.skew=.3f; l.quantize=.4f; l.entropy=.5f; l.fracture=.5f; }
+            l.phase=.2f; l.skew=.3f; l.quantize=.4f; l.entropy=.5f; l.fracture=.5f; l.stereo=.7f; }
         { std::size_t slot=0; for(std::size_t i=0;i<4;++i) { while(m.routes[slot].id!=0) ++slot;
-            const ModRoute r{m.nextRouteId,true,static_cast<ModSource>(101+i),{ModDestination::Fine,1,0},.05f,false};
+            const ModRoute r{m.nextRouteId,true,static_cast<ModSource>(101+i),{i%2 ? ModDestination::Level : ModDestination::Cutoff,i%2 ? 1u : 0u,0},.2f,false};
             if(!routeDuplicates(m,r)) { m.routes[slot]=r; ++m.nextRouteId; } } }
         check(p.setUiModulationState(m),"all four LFOs with FUNC routed");
         juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi; midi.ensureSize(4096);
@@ -4331,7 +4336,7 @@ void lfoEditorControlsAudit() {
         pluginAllocations.store(0); pluginGuardAllocations.store(true);
         for(int b=0;b<64;++b) { audio.clear(); p.processBlock(audio,midi); }
         pluginGuardAllocations.store(false);
-        check(pluginAllocations.load()==0,"FUNC LFO processing allocates nothing on the audio thread (8 voices, 64 blocks)");
+        check(pluginAllocations.load()==0,"FUNC + STEREO LFO processing (LEVEL / CUTOFF stereo paths) allocates nothing on the audio thread (8 voices, 64 blocks)");
         juce::MidiBuffer off; for(int n=0;n<8;++n) off.addEvent(juce::MidiMessage::noteOff(1,48+n),0);
         audio.clear(); p.processBlock(audio,off);
         check(p.setUiModulationState(restore),"restore the pre-allocation-check state"); sync();
@@ -4491,7 +4496,9 @@ void lfoEditorControlsAudit() {
             p.setUiModulationState(m); sync(); synth->repaint();
             shot("N_processed_overlay",2.0f); strip.setPage(ui::LfoControlStrip::Page::Func); stripShot("O_func_live_3x",3.0f); shot("P_func_live_page",1.0f); strip.setPage(ui::LfoControlStrip::Page::Tools);
             m.lfo2.skew=0; m.lfo2.quantize=0; m.lfo2.smooth=0; m.lfo2.entropy=0; m.lfo2.phase=0; m.lfo2.fracture=.7f; m.lfo2.pingPong=false; p.setUiModulationState(m); sync(); shot("Q_fracture_overlay",2.0f);
-            m.lfo2.fracture=0; p.setUiModulationState(m); sync(); }
+            m.lfo2.fracture=0; m.lfo2.stereo=.5f; p.setUiModulationState(m); sync(); shot("R_stereo_overlay",2.0f);
+            strip.setPage(ui::LfoControlStrip::Page::Func); stripShot("T_func_stereo_3x",3.0f); strip.setPage(ui::LfoControlStrip::Page::Tools);
+            m.lfo2.stereo=0; p.setUiModulationState(m); sync(); }
         stripShot("S_strip_tools_3x",3.0f); strip.setPage(ui::LfoControlStrip::Page::Func); stripShot("S_strip_func_3x",3.0f); strip.setPage(ui::LfoControlStrip::Page::Tools);
     }
 }

@@ -203,7 +203,7 @@ const std::array<LfoControlStrip::FuncInfo,LfoControlStrip::funcCount>& LfoContr
         {"ATTACK","Attack: fades the modulation depth in after the delay",true,&LfoSettings::attackSeconds,0,maxT,0,1},
         {"DELAY","Delay: holds the LFO at zero before it starts (per note; FREE: after the engine starts)",true,&LfoSettings::delaySeconds,0,maxT,0,1},
         {"PHASE","Phase: offsets where the LFO reads its curve",true,&LfoSettings::phase,0,1,0,.5},
-        {"STEREO","Stereo: not available yet. Origami's modulation carries one value per voice, so a left/right phase offset has nowhere to go",false,nullptr,0,1,0,.5},
+        {"STEREO","Stereo: offsets the RIGHT channel's LFO phase from LEFT (up to 180 deg). Moves LEVEL, CUTOFF and RESONANCE per channel; other destinations follow LEFT",true,&LfoSettings::stereo,0,1,0,.5},
         {"SKEW","Skew: warps time inside each cycle (slow rise / fast fall, or the reverse) without changing the levels",true,&LfoSettings::skew,-1,1,0,0},
         {"QUANTIZE","Quantize: steps the LFO output into a fixed number of levels",true,&LfoSettings::quantize,0,1,0,.5},
         {"ENTROPY","Entropy: slow, organic drift in timing and depth, different on every cycle",true,&LfoSettings::entropy,0,1,0,.5},
@@ -216,6 +216,8 @@ juce::String LfoControlStrip::funcValueText(std::size_t index,double v) {
     if(info.field==&LfoSettings::attackSeconds || info.field==&LfoSettings::delaySeconds)
         return v<=0.0 ? juce::String("OFF") : v<1.0 ? juce::String(juce::roundToInt(v*1000.0))+" ms" : juce::String(v,2)+" s";
     if(info.field==&LfoSettings::phase) return juce::String(juce::roundToInt(v*360.0))+juce::String(juce::CharPointer_UTF8("\xc2\xb0"));
+    // STEREO shows the L / R phase separation it produces (0..180 deg).
+    if(info.field==&LfoSettings::stereo) return juce::String(juce::roundToInt(v*180.0))+juce::String(juce::CharPointer_UTF8("\xc2\xb0"));
     if(info.field==&LfoSettings::skew) { const int pct=juce::roundToInt(v*100.0); return (pct>0 ? "+" : "")+juce::String(pct)+"%"; }
     if(info.field==&LfoSettings::quantize) { const int levels=Lfo::quantizeLevels(static_cast<float>(v)); return levels==0 ? juce::String("OFF") : juce::String(levels)+" LEVELS"; }
     return juce::String(juce::roundToInt(v*100.0))+"%";

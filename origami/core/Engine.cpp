@@ -474,10 +474,21 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         modules[0].level=value(ParameterId::OscLevel);
 
         std::array<float,CompiledModulation::globalSourceCount> sources{};
+        // mct-origami-stereo-modulation: a stereo plan asks each FREE LFO for
+        // its RIGHT value too (LEFT is bit-identical either way).
+        const bool stereoPlan=compiledModulation_.hasStereoPlan();
+        auto& globalStereo=frame.stereo.globalLfo;
+        globalStereo.mask=0;
         for(std::size_t i=0;i<4;++i) {
             if(!compiledModulation_.usesGlobalSource(i)) continue;
             const auto& l=lfoSettings(audioModulation_,i);
-            sources[i]=l.mode==LfoMode::Free ? globalLfos_[i].next(l,sampleRate_)*currentLfoScaling_ : 0.0f;
+            if(l.mode!=LfoMode::Free) { sources[i]=0.0f; continue; }
+            if(stereoPlan && l.stereo>0.0f) {
+                float right=0.0f;
+                sources[i]=globalLfos_[i].nextStereo(l,sampleRate_,right)*currentLfoScaling_;
+                globalStereo.lfo[i]=right*currentLfoScaling_;
+                globalStereo.mask|=std::uint8_t(1u<<i);
+            } else sources[i]=globalLfos_[i].next(l,sampleRate_)*currentLfoScaling_;
         }
         // Macros by stable id (1..16); only routed ones smooth / publish.
         for(std::size_t i=0;i<smoothedMacros_.size();++i) {

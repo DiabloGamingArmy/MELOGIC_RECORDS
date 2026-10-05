@@ -64,6 +64,12 @@ public:
                         const CompiledModulation&,const ModulationState&,
                         float pitchBendSemitones,float pitchBendNormalized,
                         float modWheel,float aftertouch,const OscillatorRenderPlan&,const OscillatorProcessPlans&,bool observe=true) noexcept;
+private:
+    template<bool Stereo>
+    Samples render(const std::array<const dsp::Wavetable*,16>&,const ModulationFrame&,float sustain,
+                   const CompiledModulation&,const ModulationState&,float pitchBendSemitones,float pitchBendNormalized,
+                   float modWheel,float aftertouch,const OscillatorRenderPlan&,const OscillatorProcessPlans&,bool observe) noexcept;
+public:
     VoiceInfo info() const noexcept;
     void setSlot(std::uint32_t slot) noexcept { slot_=slot; }
     void restartLifecycles() noexcept { lifecycle_=0; } // engine reset: renders repeat
@@ -160,5 +166,10 @@ private:
     ModulationFrame localFrame_{};
     dsp::OscProcessPlan processScratch_{};
     VoiceVisualizationSnapshot visualization_{};
+    // mct-origami-stereo-modulation: RIGHT's filter state, cold data kept at the end of the voice (the mono hot
+    // members keep their layout); used only while a
+    // module's CUTOFF / RESONANCE differ between channels (bit m live).
+    std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFiltersRight_{};
+    std::uint16_t rightFilterLive_=0;
 };
 }

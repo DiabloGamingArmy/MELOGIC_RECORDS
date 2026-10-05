@@ -566,6 +566,251 @@ void lfoFunctionProcessing() {
     }
 }
 
+// ---- mct-origami-stereo-modulation ----------------------------------------
+std::pair<std::vector<float>,std::vector<float>> runStereo(const LfoSettings& s,std::size_t n,double sr=48000.0,std::uint32_t stream=Lfo::globalStream(0)) {
+    Lfo l; l.reset(); l.setStreams(stream,Lfo::fractureSeed(0));
+    std::vector<float> left(n),right(n);
+    for(std::size_t i=0;i<n;++i) left[i]=l.nextStereo(s,sr,right[i]);
+    return {left,right};
+}
+void lfoStereoModulation() {
+    const auto ramp=curveLfo({{0,-1,0},{1,1,0}});
+    const auto custom=curveLfo({{0,0,0},{.2f,.9f,.3f},{.35f,-.2f,-.4f},{.6f,1,0},{.8f,-.8f,.5f},{1,0,0}});
+    LfoSettings sine; sine.mode=LfoMode::Loop; sine.rateHz=1.0f;
+    auto tri=sine; tri.shape=LfoShape::Triangle; auto square=sine; square.shape=LfoShape::Square;
+
+    // ---- source: STEREO 0 is mono, LEFT never changes -----------------------
+    {
+        bool same=true,leftSame=true;
+        for(auto base:{sine,tri,square,custom,ramp}) for(auto mode:{LfoMode::Free,LfoMode::Loop,LfoMode::Envelope}) for(bool processed:{false,true}) {
+            auto s=base; s.mode=mode; s.rateHz=3.0f; if(processed) { s.skew=.3f; s.entropy=.4f; s.smooth=.2f; s.pingPong=true; }
+            const auto [l,r]=runStereo(s,24000);
+            same&=std::memcmp(l.data(),r.data(),l.size()*sizeof(float))==0;
+            const auto mono=run(s,24000);
+            leftSame&=std::memcmp(l.data(),mono.data(),l.size()*sizeof(float))==0;
+            auto st=s; st.stereo=.73f;
+            const auto [ls,rs]=runStereo(st,24000);
+            leftSame&=std::memcmp(ls.data(),mono.data(),ls.size()*sizeof(float))==0; // turning STEREO never moves LEFT
+        }
+        check(same,"STEREO 0: RIGHT == LEFT bit for bit (every shape, mode, FUNC path)");
+        check(leftSame,"LEFT is bit-identical to the mono LFO at any STEREO amount");
+    }
+    // ---- source: phase separation ------------------------------------------
+    for(const auto& [name,base]:std::initializer_list<std::pair<const char*,LfoSettings>>{{"sine",sine},{"triangle",tri},{"square",square},{"custom",custom}}) {
+        for(float amount:{.25f,.5f,1.0f}) {
+            auto s=base; s.stereo=amount; s.mode=LfoMode::Loop;
+            const auto [l,r]=runStereo(s,3000,1000.0); // 1 Hz @ 1 kHz: 1000 samples per cycle
+            const auto shift=static_cast<std::size_t>(std::lround(amount*500.0)); // amount * 180 deg
+            int mismatches=0;
+            for(std::size_t i=0;i<1500;++i) if(!near(r[i],l[i+shift],2e-3f)) ++mismatches;
+            check(mismatches<=4,(std::string("STEREO ")+std::to_string(int(amount*100))+"% on "+name+": RIGHT = LEFT "+std::to_string(int(amount*180))+" deg later").c_str());
+        }
+    }
+    for(auto mode:{LfoMode::Free,LfoMode::Loop}) {
+        auto s=sine; s.mode=mode; s.stereo=.5f;
+        const auto [l,r]=runStereo(s,2000,1000.0);
+        bool ok=true; for(std::size_t i=0;i<1500;++i) ok&=near(r[i],l[i+250],2e-3f);
+        check(ok,"STEREO 50% = 90 deg in FREE and RETRIGGER");
+    }
+    {   // ENVELOPE: one-shot RIGHT reads its cycle from +90 deg and holds; never loops.
+        auto e=ramp; e.mode=LfoMode::Envelope; e.stereo=.5f;
+        const auto [l,r]=runStereo(e,3000,1000.0);
+        check(near(r[0],-.5f,1e-4f) && near(r[740],.98f,.01f) && near(r[760],-.98f,.01f) && r[1500]==r[2999] && l[1500]==1.0f,
+              "ENVELOPE + STEREO: RIGHT is the same one-shot read from 90 deg; both hold");
+    }
+    {   // PING-PONG 180 deg: RIGHT starts at the right end, same period, no duplicated endpoint.
+        auto pp=ramp; pp.pingPong=true; pp.stereo=1.0f;
+        const auto [l,r]=runStereo(pp,3000,1000.0);
+        bool periodic=true; for(std::size_t i=0;i<2000;++i) periodic&=near(r[i],r[i+1000],2e-5f);
+        check(r[0]==1.0f && near(r[500],-1.0f,1e-4f) && periodic && r[1]<1.0f && near(r[1],r[999],1e-4f),"PING-PONG + STEREO 100%: RIGHT is half a cycle on, same period, endpoints read once");
+        bool mirror=true; for(std::size_t i=0;i<1000;++i) mirror&=near(r[i],l[(i+500)%1000],2e-4f) || i==500;
+        check(mirror,"PING-PONG + STEREO: RIGHT traverses the same reflected path (no reversal artefact)");
+    }
+    {   // One processed system: RIGHT == a mono LFO whose PHASE is offset by
+        // stereo * 0.5, with every FUNC processor on (same ENTROPY trajectory,
+        // same FRACTURE structure, same QUANTIZE / SMOOTH / DELAY / ATTACK).
+        auto s=custom; s.rateHz=2.0f; s.pingPong=true; s.phase=.1f; s.skew=-.3f; s.entropy=.6f; s.fracture=.5f;
+        s.quantize=.3f; s.smooth=.25f; s.delaySeconds=.01f; s.attackSeconds=.05f; s.stereo=.6f;
+        auto shifted=s; shifted.stereo=0.0f; shifted.phase=s.phase+0.5f*s.stereo;
+        for(auto mode:{LfoMode::Free,LfoMode::Loop,LfoMode::Envelope}) {
+            s.mode=shifted.mode=mode;
+            const auto [l,r]=runStereo(s,48000);
+            const auto ref=run(shifted,48000);
+            int mismatches=0; for(std::size_t i=0;i<r.size();++i) if(!near(r[i],ref[i],1e-3f)) ++mismatches;
+            check(mismatches<48,"RIGHT is the SAME processed LFO read at its phase offset (ENTROPY / FRACTURE coherent, shared lifecycle)");
+            bool delayShared=true; for(std::size_t i=0;i<480;++i) delayShared&=l[i]==0.0f && r[i]==0.0f;
+            check(delayShared,"DELAY is shared: both channels start together");
+        }
+    }
+    {   // SMOOTH: independent RIGHT history; enabling STEREO mid-note never jumps.
+        auto s=square; s.rateHz=4.0f; s.smooth=.5f;
+        Lfo l; l.reset(); l.setStreams(1,Lfo::fractureSeed(0));
+        float r=0.0f; for(int i=0;i<6000;++i) l.nextStereo(s,48000.0,r);
+        s.stereo=1.0f;
+        float prevR=r; float maxJump=0.0f;
+        for(int i=0;i<200;++i) { l.nextStereo(s,48000.0,r); maxJump=std::max(maxJump,std::abs(r-prevR)); prevR=r; }
+        check(maxJump<.05f,"SMOOTH: RIGHT continues from LEFT's history when STEREO turns on (no jump)");
+    }
+    {   // Entropy stays deterministic; RIGHT does not get its own random pattern.
+        auto s=sine; s.entropy=.8f; s.stereo=1.0f;
+        const auto a=runStereo(s,48000),b=runStereo(s,48000);
+        check(a==b,"STEREO + ENTROPY deterministic");
+    }
+
+    // ---- routes / destinations (the compiled plan, directly) ---------------
+    const auto mods=modules();
+    const auto compileFrame=[&](const ModulationState& st,CompiledModulation& c){ c.prepare(48000.0); c.compile(st,mods,true); };
+    const auto globalSources=[&](float lfo1,float lfo2=0.0f,float macro1=0.0f){ std::array<float,CompiledModulation::globalSourceCount> s{}; s[0]=lfo1; s[1]=lfo2; s[CompiledModulation::macroSlot(1)]=macro1; return s; };
+    const auto frameFor=[&](CompiledModulation& c,const std::array<float,CompiledModulation::globalSourceCount>& src,std::uint8_t mask,std::array<float,4> right) {
+        auto f=std::make_unique<ModulationFrame>(); f->modules=mods; f->cutoff=1200.0f; f->resonance=.3f;
+        f->stereo.globalLfo.mask=mask; f->stereo.globalLfo.lfo=right;
+        c.globalFrame(*f,src,48000.0); return f;
+    };
+    {
+        ModulationState st; st.lfoActiveMask=0xF; st.nextRouteId=10;
+        st.routes[0]=route(1,ModSource::Lfo1,ModDestination::Cutoff,.4f);
+        st.routes[1]=route(2,ModSource::Macro1,ModDestination::Cutoff,.2f);
+        st.routes[2]=route(3,ModSource::Lfo1,ModDestination::Pan,.5f,1);
+        st.routes[3]=route(4,ModSource::Lfo1,ModDestination::Level,.6f,2);
+        st.routes[4]=route(5,ModSource::Lfo2,ModDestination::Level,.3f,2);
+        st.routes[5]=route(6,ModSource::Lfo1,ModDestination::WtPosition,.5f,1);
+        auto c=std::make_unique<CompiledModulation>(); compileFrame(st,*c);
+        check(c->hasStereoPlan(),"LFO -> CUTOFF / LEVEL makes a stereo plan");
+        const float L=.2f,R=-.6f,L2=.5f,R2=.1f,M=.7f;
+        auto stereoF=frameFor(*c,globalSources(L,L2,M),0x3,{R,R2,0,0});
+        auto monoF=frameFor(*c,globalSources(L,L2,M),0x0,{R,R2,0,0});
+        auto rightAsLeft=frameFor(*c,globalSources(R,R2,M),0x0,{});
+        // LEFT never moves; scalar destinations follow LEFT exactly.
+        check(stereoF->cutoff==monoF->cutoff && stereoF->modules[0].pan==monoF->modules[0].pan && stereoF->modules[1].level==monoF->modules[1].level &&
+              stereoF->modules[0].wtPosition==monoF->modules[0].wtPosition,"stereo source: every LEFT value is unchanged");
+        check(!monoF->stereo.cutoffSplit && monoF->stereo.levelMask==0,"mono sources never produce a right channel");
+        check(stereoF->stereo.cutoffSplit && std::abs(stereoF->stereo.cutoff-rightAsLeft->cutoff)<=rightAsLeft->cutoff*1e-4f,
+              "mixed mono + stereo -> CUTOFF: RIGHT = base + MACRO*a1 + LFO_R*a2 (macro promoted to both channels)");
+        check(((stereoF->stereo.levelMask>>1)&1u) && std::abs(stereoF->stereo.level[1]-rightAsLeft->modules[1].level)<1e-5f,
+              "two stereo sources -> LEVEL: both RIGHT values summed");
+        check(stereoF->modules[0].pan==monoF->modules[0].pan && (stereoF->stereo.levelMask&1u)==0,"PAN (scalar) uses LEFT; no right value exists for it");
+        check(stereoF->modules[0].wtPosition==monoF->modules[0].wtPosition,"WT POSITION (needs stereo oscillator DSP) uses LEFT");
+        check(stereoF->stereo.filter.g!=stereoF->filter.g,"RIGHT gets its own filter coefficients when CUTOFF differs");
+        // per-channel clamping: drive RIGHT past the top; LEFT stays inside.
+        auto clampF=frameFor(*c,globalSources(0.0f,0.0f,0.0f),0x1,{1.0f,0,0,0});
+        auto clampRef=frameFor(*c,globalSources(1.0f,0.0f,0.0f),0x0,{});
+        check(std::abs(clampF->stereo.cutoff-clampRef->cutoff)<=clampRef->cutoff*1e-4f,"each channel is mapped and clamped on its own");
+        // Turning STEREO only changes stereo-capable destinations.
+        auto noStereoPlan=st; noStereoPlan.routes[0]={}; noStereoPlan.routes[3]={}; noStereoPlan.routes[4]={};
+        auto c2=std::make_unique<CompiledModulation>(); compileFrame(noStereoPlan,*c2);
+        check(!c2->hasStereoPlan(),"stereo LFO routed only to scalar destinations: mono plan (fast path)");
+    }
+    {   // Per-voice (RETRIGGER) LFO -> LEVEL through voiceFrame.
+        ModulationState st; st.lfoActiveMask=0xF; st.lfo1.mode=LfoMode::Loop; st.nextRouteId=10;
+        st.routes[0]=route(1,ModSource::Lfo1,ModDestination::Level,.5f,1);
+        auto c=std::make_unique<CompiledModulation>(); compileFrame(st,*c);
+        auto g=std::make_unique<ModulationFrame>(); g->modules=mods; c->globalFrame(*g,{},48000.0);
+        auto v=std::make_unique<ModulationFrame>(*g);
+        std::array<float,CompiledModulation::voiceSourceCount> vs{}; vs[3]=.4f;
+        StereoSourceValues vst; vst.lfo[0]=-.4f; vst.mask=1;
+        c->voiceFrame(*v,vs,48000.0,&vst);
+        auto ref=std::make_unique<ModulationFrame>(*g); auto vs2=vs; vs2[3]=-.4f; c->voiceFrame(*ref,vs2,48000.0,nullptr);
+        check(c->hasStereoPlan() && ((v->stereo.levelMask>>0)&1u) && std::abs(v->stereo.level[0]-ref->modules[0].level)<1e-5f,"per-voice stereo LFO -> LEVEL (voice frame)");
+        vst.mask=0; auto v0=std::make_unique<ModulationFrame>(*g); c->voiceFrame(*v0,vs,48000.0,&vst);
+        check((v0->stereo.levelMask&1u)==0,"voice LFO at STEREO 0: no right value");
+    }
+    {   // NODES: component-wise continuous operators; EVENT / GATE stay scalar.
+        for(auto type:{ControlOpType::Add,ControlOpType::Multiply,ControlOpType::Clamp,ControlOpType::Curve,ControlOpType::ScaleOffset,ControlOpType::Remap,ControlOpType::Max,ControlOpType::Smooth,ControlOpType::Threshold}) {
+            ModulationState st; st.lfoActiveMask=0xF; st.nextRouteId=10;
+            st.operators[0]=makeControlOperator(type,st.nextOperatorId++);
+            st.operators[0].inputs[0]={ControlInput::Kind::Source,ModSource::Lfo1,0};
+            st.operators[0].inputs[1]={ControlInput::Kind::Source,ModSource::Macro1,0}; // mono operand: promoted (x, x)
+            st.routes[0]=route(1,operatorSource(st.operators[0].id),ModDestination::Level,.5f,1);
+            auto c=std::make_unique<CompiledModulation>(); compileFrame(st,*c);
+            const bool scalarOp=type==ControlOpType::Threshold;
+            check(c->hasStereoPlan()!=scalarOp,"continuous operator fed by an LFO makes the route stereo; EVENT / GATE operators never do");
+            const float L=.3f,R=.8f,M=.4f;
+            auto f=std::make_unique<ModulationFrame>(); f->modules=mods; f->stereo.globalLfo.mask=1; f->stereo.globalLfo.lfo[0]=R;
+            const auto src=globalSources(L,0.0f,M);
+            auto fr=std::make_unique<ModulationFrame>(); fr->modules=mods;
+            const auto srcR=globalSources(R,0.0f,M);
+            auto cR=std::make_unique<CompiledModulation>(); compileFrame(st,*cR);
+            for(int i=0;i<3;++i) { c->evaluateGlobalOperators(*f,src); cR->evaluateGlobalOperators(*fr,srcR); } // SMOOTH settles alike
+            if(scalarOp) { check((f->stereo.operatorMask&1u)==0,"THRESHOLD (GATE) output stays scalar"); continue; }
+            if(type==ControlOpType::Smooth) {
+                // SMOOTH's RIGHT history starts from LEFT (no jump) and follows RIGHT's input.
+                const float first=f->stereo.operatorRight[0];
+                for(int i=0;i<48000;++i) c->evaluateGlobalOperators(*f,src);
+                check((f->stereo.operatorMask&1u)!=0 && first>L && first<R && std::abs(f->stereo.operatorRight[0]-R)<1e-3f && std::abs(f->operatorOutputs[0]-L)<1e-3f,
+                      "SMOOTH: independent RIGHT history, starting from LEFT and settling on RIGHT's input");
+                continue;
+            }
+            check((f->stereo.operatorMask&1u)!=0 && std::abs(f->stereo.operatorRight[0]-fr->operatorOutputs[0])<1e-5f,
+                  "operator RIGHT = the same operator on RIGHT inputs (component-wise; mono operand promoted)");
+            c->globalFrame(*f,src,48000.0);
+            check((f->stereo.levelMask&1u)!=0,"stereo operator output -> LEVEL keeps its right channel");
+        }
+    }
+
+    // ---- engine: audio, block size, recompiles, state ------------------------
+    {
+        const auto render=[&](const ModulationState& ms,int block,std::size_t total,std::vector<float>* rightOut=nullptr) {
+            auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000,1024,2); e->setModulationState(ms); e->reset();
+            std::vector<float> outL; outL.reserve(total); if(rightOut) rightOut->clear();
+            std::array<float,1024> l{},r{};
+            e->noteOn(57,.8f);
+            for(std::size_t done=0;done<total;) {
+                const auto n=static_cast<int>(std::min<std::size_t>(block,total-done));
+                float* p[]{l.data(),r.data()}; e->process(p,2,n);
+                outL.insert(outL.end(),l.begin(),l.begin()+n); if(rightOut) rightOut->insert(rightOut->end(),r.begin(),r.begin()+n);
+                done+=static_cast<std::size_t>(n);
+            }
+            return outL;
+        };
+        const auto envelopeOf=[](const std::vector<float>& x,std::size_t window){ std::vector<float> env; for(std::size_t i=0;i+window<=x.size();i+=window){ double s=0; for(std::size_t k=0;k<window;++k) s+=double(x[i+k])*x[i+k]; env.push_back(float(std::sqrt(s/window))); } return env; };
+        auto e0=std::make_unique<OrigamiEngine>();
+        auto base=e0->instrumentState().modulation;
+        base.lfo1=sine; base.lfo1.mode=LfoMode::Loop; base.lfo1.rateHz=4.0f; base.nextRouteId=5;
+        base.routes[0]=route(1,ModSource::Lfo1,ModDestination::Level,.6f,1); base.routes[0].bipolar=true; // 0.7 +/- 0.3: never clipped
+        // STEREO 0 -> LEVEL: identical channels (centre pan).
+        auto s0=base; std::vector<float> r0; const auto l0=render(s0,256,24576,&r0);
+        check(l0==r0,"LFO STEREO 0 -> LEVEL: left and right outputs identical");
+        // STEREO 100% -> LEVEL: phase-separated amplitude trajectories.
+        auto s1=base; s1.lfo1.stereo=1.0f; std::vector<float> r1; const auto l1=render(s1,256,24576,&r1);
+        check(l1==l0,"turning STEREO never changes the LEFT channel");
+        const auto envL=envelopeOf(l1,480),envR=envelopeOf(r1,480); // 10 ms windows, 4 Hz LFO = 25 windows per cycle
+        double corr=0,ml=0,mr=0; for(std::size_t i=0;i<envL.size();++i){ ml+=envL[i]; mr+=envR[i]; } ml/=envL.size(); mr/=envR.size();
+        double sl=0,sr=0; for(std::size_t i=0;i<envL.size();++i){ corr+=(envL[i]-ml)*(envR[i]-mr); sl+=(envL[i]-ml)*(envL[i]-ml); sr+=(envR[i]-mr)*(envR[i]-mr); }
+        corr/=std::sqrt(sl*sr+1e-30);
+        check(corr<-0.6,("STEREO 100% -> LEVEL: left / right amplitude move in anti-phase (corr "+std::to_string(corr)+")").c_str());
+        // Block-size independence of both channels.
+        for(int block:{64,1024}) { std::vector<float> rb; const auto lb=render(s1,block,24576,&rb); check(lb==l1 && rb==r1,"stereo modulation renders identically at any block size"); }
+        // CUTOFF: stereo spectral motion, LEFT unchanged.
+        auto c0=base; c0.routes[0]=route(1,ModSource::Lfo1,ModDestination::Cutoff,.8f); std::vector<float> rc0; const auto lc0=render(c0,256,12288,&rc0);
+        auto c1=c0; c1.lfo1.stereo=1.0f; std::vector<float> rc1; const auto lc1=render(c1,256,12288,&rc1);
+        bool differ=false; for(std::size_t i=0;i<rc1.size();++i) differ|=std::abs(rc1[i]-lc1[i])>1e-4f;
+        check(lc0==rc0 && lc1==lc0 && differ,"CUTOFF: STEREO 0 identical channels; STEREO 100% RIGHT filters differently, LEFT unchanged");
+        // Scalar destinations never change with STEREO (PAN, WT POSITION, FINE).
+        for(auto dest:{ModDestination::Pan,ModDestination::WtPosition,ModDestination::Fine}) {
+            auto a=base; a.routes[0]=route(1,ModSource::Lfo1,dest,.6f,1); auto b=a; b.lfo1.stereo=1.0f;
+            std::vector<float> ra,rb; const auto la=render(a,256,8192,&ra),lb=render(b,256,8192,&rb);
+            check(la==lb && ra==rb,"scalar destination: turning STEREO changes nothing");
+        }
+        // STEREO edits never recompile the plan.
+        auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000,256,2); e->setModulationState(s1); e->reset();
+        std::array<float,256> l{},r{}; float* p[]{l.data(),r.data()}; e->process(p,2,256);
+        const auto before=e->nodesDiagnostics();
+        for(int i=0;i<10;++i) { auto m=s1; m.lfo1.stereo=float(i)/10.0f; e->setModulationState(m); e->process(p,2,256); }
+        check(e->nodesDiagnostics().compiles==before.compiles,"STEREO knob changes never recompile");
+    }
+    {   // State: v33 only when STEREO is used; older states load mono.
+        auto e=std::make_unique<OrigamiEngine>();
+        auto st=e->instrumentState();
+        const auto plain=encodeInstrumentState(st);
+        InstrumentState old; check(decodeInstrumentState(plain.data(),plain.size(),old) && old.modulation.lfo2.stereo==0.0f && encodeInstrumentState(old)==plain,"old state: STEREO 0, byte-identical re-save");
+        st.modulation.lfo2.stereo=.5f;
+        const auto v33=encodeInstrumentState(st);
+        InstrumentState back; check(v33[7]==33 && decodeInstrumentState(v33.data(),v33.size(),back) && back.modulation.lfo2.stereo==.5f && encodeInstrumentState(back)==v33,"STEREO saves as v33, exact round trip");
+        auto bad=st; bad.modulation.lfo2.stereo=1.5f;
+        auto e2=std::make_unique<OrigamiEngine>(); check(!e2->setModulationState(bad.modulation),"out-of-range STEREO rejected");
+    }
+}
+
 // Hot-path benchmark (printed; not a pass/fail gate).
 void lfoFunctionBenchmark() {
     using clock_t=std::chrono::steady_clock;
@@ -613,6 +858,7 @@ int main() {
         stateV3RoundTrip();
         renderSeparation();
         lfoFunctionProcessing();
+        lfoStereoModulation();
         if(std::getenv("ORIGAMI_LFO_BENCH")) lfoFunctionBenchmark();
         std::cout<<"PASS: "<<checks<<" modulation foundation checks\\n";
         return 0;

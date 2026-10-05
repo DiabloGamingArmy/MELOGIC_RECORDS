@@ -53,6 +53,7 @@ public:
     float snapLfoY(float) const noexcept;
     // The processed-result overlay points currently drawn (empty when neutral).
     const std::vector<juce::Point<float>>& lfoProcessedOverlay() { updateLfoProcessedOverlay(); return lfoProcessed_; }
+    const std::vector<juce::Point<float>>& lfoProcessedRightOverlay() { updateLfoProcessedOverlay(); return lfoProcessedRight_; }
 
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
@@ -174,7 +175,7 @@ private:
     bool commitLfo(const std::function<void(LfoSettings&)>&);
     // Processed-result overlay (FUNC / PING-PONG), cached on the settings.
     void updateLfoProcessedOverlay();
-    std::vector<juce::Point<float>> lfoProcessed_;
+    std::vector<juce::Point<float>> lfoProcessed_,lfoProcessedRight_; // LEFT (FUNC) / RIGHT (STEREO) traces
     LfoSettings lfoProcessedKey_{};
     std::size_t lfoProcessedIndex_=99;
     juce::Rectangle<float> lfoProcessedCanvas_{};
