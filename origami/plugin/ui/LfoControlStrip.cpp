@@ -36,7 +36,8 @@ void styleKnob(juce::Slider& s,const juce::String& name) {
 void styleCaption(juce::Label& l,const juce::String& text) {
     l.setText(text,juce::dontSendNotification);
     l.setJustificationType(juce::Justification::centred);
-    l.setFont(juce::FontOptions(9.0f));
+    l.setFont(juce::FontOptions(Type::label));
+    l.setBorderSize({});
     l.setColour(juce::Label::textColourId,Palette::text().withAlpha(.82f));
     l.setInterceptsMouseClicks(false,false);
 }
@@ -66,7 +67,7 @@ void StackSelector::paint(juce::Graphics& g) {
     const auto box=getLocalBounds().toFloat().reduced(.5f);
     g.setColour(Palette::inset()); g.fillRoundedRectangle(box,2.0f);
     g.setColour(Palette::borderSoft()); g.drawRoundedRectangle(box,2.0f,1.0f);
-    const float size=juce::jlimit(8.0f,11.5f,static_cast<float>(optionBounds(0).getHeight())*.52f);
+    const float size=juce::jlimit(Type::secondary,11.5f,static_cast<float>(optionBounds(0).getHeight())*.62f);
     for(int i=0;i<options_.size();++i) {
         const auto r=optionBounds(i);
         const bool on=i==selected_;

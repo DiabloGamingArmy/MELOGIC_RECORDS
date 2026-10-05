@@ -143,6 +143,10 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
         }
         resized();
     };
+    // Children configured their text boxes before they were attached to this
+    // editor's look-and-feel; re-send it so every slider value box and label
+    // uses Origami typography (not JUCE's 15 px default font).
+    sendLookAndFeelChange();
     startTimerHz(15);
     setResizable(true,true);
     setResizeLimits(EditorLayout::minWidth,EditorLayout::minHeight,EditorLayout::maxWidth,EditorLayout::maxHeight);

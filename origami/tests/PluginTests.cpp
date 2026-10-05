@@ -23,6 +23,10 @@
 #include "core/preset/StateCodec.h"
 #include "tests/NodesScenarios.h"
 #include <BinaryData.h>
+#include <cxxabi.h>
+#include <iomanip>
+#include <map>
+#include <typeinfo>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -4492,6 +4496,260 @@ void lfoEditorControlsAudit() {
     }
 }
 
+// mct-origami-ui-legibility-cleanup: what the editor actually draws.
+// A software renderer that records every glyph run (effective pixel height
+// after all component transforms, horizontal font scale, owning component).
+struct GlyphRun { float height=0,hscale=1; juce::Point<float> at; std::string owner,page; std::size_t glyphs=0; };
+class GlyphRecorder final : public juce::LowLevelGraphicsSoftwareRenderer {
+public:
+    GlyphRecorder(const juce::Image& image,std::vector<GlyphRun>& out) : juce::LowLevelGraphicsSoftwareRenderer(image),out_(out) {}
+    void setOrigin(juce::Point<int> o) override { stack_.back()=juce::AffineTransform::translation(float(o.x),float(o.y)).followedBy(stack_.back()); juce::LowLevelGraphicsSoftwareRenderer::setOrigin(o); }
+    void addTransform(const juce::AffineTransform& t) override { stack_.back()=t.followedBy(stack_.back()); juce::LowLevelGraphicsSoftwareRenderer::addTransform(t); }
+    void saveState() override { stack_.push_back(stack_.back()); juce::LowLevelGraphicsSoftwareRenderer::saveState(); }
+    void restoreState() override { if(stack_.size()>1) stack_.pop_back(); juce::LowLevelGraphicsSoftwareRenderer::restoreState(); }
+    void drawGlyphs(juce::Span<const std::uint16_t> glyphs,juce::Span<const juce::Point<float>> positions,const juce::AffineTransform& t) override {
+        if(!glyphs.empty() && !isClipEmpty()) {
+            const auto m=t.followedBy(stack_.back());
+            const auto& f=getFont();
+            GlyphRun run;
+            run.height=f.getHeight()*std::hypot(m.mat01,m.mat11);
+            run.hscale=f.getHorizontalScale()*std::hypot(m.mat00,m.mat10)/std::max(1e-6f,std::hypot(m.mat01,m.mat11));
+            run.at=positions.empty() ? juce::Point<float>{} : positions[0].transformedBy(m);
+            run.glyphs=glyphs.size();
+            out_.push_back(run);
+        }
+        juce::LowLevelGraphicsSoftwareRenderer::drawGlyphs(glyphs,positions,t);
+    }
+private:
+    std::vector<GlyphRun>& out_;
+    std::vector<juce::AffineTransform> stack_{juce::AffineTransform{}};
+};
+std::string componentPath(juce::Component& root,juce::Point<float> p) {
+    auto* c=root.getComponentAt(p.toInt());
+    std::string path;
+    for(int depth=0;c!=nullptr && c!=&root && depth<3;++depth,c=c->getParentComponent()) {
+        std::string n=c->getName().toStdString();
+        if(n.empty()) { int status=0; const char* mangled=typeid(*c).name(); char* d=abi::__cxa_demangle(mangled,nullptr,nullptr,&status); n=d ? d : mangled; std::free(d);
+            const auto colon=n.rfind("::"); if(colon!=std::string::npos) n=n.substr(colon+2); }
+        path=n+(path.empty() ? "" : "/"+path);
+    }
+    return path.empty() ? "editor" : path;
+}
+std::vector<GlyphRun> recordGlyphs(juce::Component& editor,const std::string& page) {
+    std::vector<GlyphRun> runs;
+    juce::Image image(juce::Image::ARGB,editor.getWidth(),editor.getHeight(),true);
+    { GlyphRecorder recorder(image,runs); juce::Graphics g(recorder); editor.paintEntireComponent(g,true); }
+    if(const char* dir=std::getenv("ORIGAMI_TYPE_SNAPSHOTS")) {
+        auto name=juce::String(page).replaceCharacters(" /()","____").removeCharacters(".");
+        juce::File f(juce::String(dir)+"/"+name+".png"); f.deleteFile(); juce::FileOutputStream out(f); juce::PNGImageFormat{}.writeImageToStream(image,out);
+    }
+    for(auto& r:runs) { r.owner=componentPath(editor,r.at); r.page=page; }
+    return runs;
+}
+// mct-origami-ui-legibility-cleanup: macro grid structure + OSC header geometry.
+void macroGridAndOscHeaderAudit() {
+    using namespace mct::origami;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true); editor->setSize(1440,900);
+    ui::MacroPanel* panel=nullptr; std::vector<ui::OscillatorCard*> oscs;
+    walk(*editor,[&](auto& c){ if(auto* x=dynamic_cast<ui::MacroPanel*>(&c)) panel=x; if(auto* x=dynamic_cast<ui::OscillatorCard*>(&c)) oscs.push_back(x); });
+    check(panel && !oscs.empty(),"grid audit: macro panel + oscillator cards");
+    const auto sync=[&]{ editor->refreshModulationViews(); panel->syncFromModel(); };
+    sync();
+    auto& vp=panel->viewport();
+    const auto transparentEdges=[](juce::Component& c,bool sidesOnly) {
+        const auto img=c.createComponentSnapshot(c.getLocalBounds(),false,1.0f);
+        bool clear=true; const int w=img.getWidth(),h=img.getHeight();
+        for(int y=sidesOnly ? 2 : 0;y<(sidesOnly ? h-2 : h);++y) { clear&=img.getPixelAt(0,y).getAlpha()==0 && img.getPixelAt(w-1,y).getAlpha()==0; } // ASSIGN: the hairline above is its only line
+        if(!sidesOnly) for(int x=0;x<w;++x) { clear&=img.getPixelAt(x,0).getAlpha()==0 && img.getPixelAt(x,h-1).getAlpha()==0; }
+        return clear;
+    };
+    const auto gridOk=[&](const std::string& label) {
+        const auto* content=vp.getViewedComponent();
+        const int w=content->getWidth();
+        bool ok=panel->gridFrame()==vp.getBounds().expanded(1);                 // frame hugs the grid: no padding
+        const int rows=int((panel->cardCount()+1)/2);
+        for(std::size_t i=0;i<panel->cardCount();++i) {
+            const auto b=panel->card(i)->getBounds();
+            const int col=int(i%2),row=int(i/2);
+            ok&=b.getY()==row*ui::MacroPanel::cardHeight && b.getHeight()==ui::MacroPanel::cardHeight;
+            ok&=col==0 ? b.getX()==0 : b.getRight()==w;                          // cells reach the frame / gutter
+            if(col==1) ok&=panel->card(i-1)->getRight()==b.getX();               // edge to edge: no gap
+        }
+        const auto lines=panel->gridDividers();
+        bool vertical=false; int horizontal=0;
+        for(const auto& l:lines) {
+            if(l.isVertical() && l.getStartX()<float(w)-0.5f) { vertical=true; ok&=std::abs(l.getStartX()-float(panel->card(1)->getX()))<=0.5f && l.getStartY()==0.0f && l.getEndY()==float(rows*ui::MacroPanel::cardHeight); }
+            if(l.isHorizontal()) { ++horizontal; ok&=l.getStartX()==0.0f && l.getEndX()==float(w); }
+        }
+        ok&=vertical && horizontal==rows;
+        const bool scrolls=content->getHeight()>vp.getHeight();
+        ok&=!scrolls || w==vp.getWidth()-vp.getScrollBarThickness()-1;
+        check(ok,("macro grid: "+label).c_str());
+    };
+    check(panel->cardCount()==4,"Init: four macro cells");
+    gridOk("4 macros = 2 x 2, edge to edge, dividers to the frame, no padding");
+    for(std::size_t i=0;i<panel->cardCount();++i) {
+        auto* cell=panel->card(i);
+        check(transparentEdges(*cell,false),"a macro cell draws no outer border / card box (all four edges transparent)");
+        auto* row=const_cast<ui::ModulationSourceRow*>(panel->assignment(panel->cardId(i)));
+        check(row && transparentEdges(*row,true),"ASSIGN draws no enclosing box (its sides are transparent)");
+    }
+    {   // Square frame: the corner pixel is the border colour (no radius).
+        const auto img=panel->createComponentSnapshot(panel->getLocalBounds(),true,1.0f);
+        const auto f=panel->gridFrame();
+        const auto corner=img.getPixelAt(f.getX(),f.getY()),edge=img.getPixelAt(f.getCentreX(),f.getY());
+        check(corner==edge && corner.getAlpha()==255,"the macro grid frame is square (corner pixel = border)");
+    }
+    {   // Cell titles fit at the label size up to MACRO 16.
+        const int header=panel->card(0)->getWidth()-2*ui::MacroPanel::cellPadding-20;
+        check(ui::textWidth("MACRO 16",ui::Type::label)<=float(header),"MACRO 16 fits its cell header at Type::label");
+    }
+    for(int i=0;i<8;++i) panel->addMacro();
+    sync();
+    check(panel->cardCount()==12 && vp.getViewedComponent()->getHeight()>vp.getHeight(),"12 macros scroll vertically");
+    gridOk("12 macros: the same grid continues; the scrollbar has its own gutter");
+    vp.setViewPosition(0,vp.getViewedComponent()->getHeight());
+    check(panel->card(11)->getBottom()<=vp.getViewPositionY()+vp.getHeight(),"the last macro scrolls into view");
+    const auto before=panel->cardCount();
+    check(panel->addButton().isVisible() && panel->addMacro()!=0 && panel->cardCount()==before+1,"+ ADD MACRO still adds a cell");
+    check(panel->removeMacro(panel->cardId(panel->cardCount()-1)) && panel->cardCount()==before,"remove still removes a cell");
+    {   // ASSIGN still assigns: a route from MACRO 1 shows in its ASSIGN area.
+        auto m=p.getUiInstrumentState().modulation;
+        std::size_t slot=0; while(m.routes[slot].id!=0) ++slot;
+        m.routes[slot]={m.nextRouteId++,true,macroSource(1),{ModDestination::Cutoff,0,0},0.4f,false};
+        check(p.setUiModulationState(m),"route from MACRO 1"); sync();
+        check(panel->assignment(1)->routes().size()==1,"ASSIGN shows the macro's route (interaction intact)");
+    }
+    for(const auto size:{std::pair<int,int>{960,600},{1920,1200}}) {
+        editor->setSize(size.first,size.second); sync();
+        gridOk("grid at "+std::to_string(size.first)+"x"+std::to_string(size.second));
+    }
+    editor->setSize(1440,900);
+
+    // ---- OSC header ---------------------------------------------------------
+    for(auto* card:oscs) {
+        const auto h=card->headerLayout();
+        bool ok=h.labels[0].getX()-h.title.getRight()<=12;                        // no reserved gap after "OSC N"
+        ok&=std::abs(float(h.title.getWidth())-std::ceil(ui::textWidth(card->getName(),ui::Type::title)))<=1.0f;
+        for(std::size_t i=0;i<3;++i) {
+            ok&=h.selectors[i].getX()-h.labels[i].getRight()==4;                  // descriptor hugs its selector
+            ok&=h.labels[i].getY()==h.title.getY() && h.labels[i].getHeight()==h.title.getHeight();
+            ok&=h.selectors[i].getY()==h.title.getY() && h.selectors[i].getHeight()==h.title.getHeight();
+            if(i>0) ok&=h.labels[i].getX()>h.selectors[i-1].getRight();
+        }
+        ok&=h.selectors[2].getRight()<h.power.getX() && h.power.getRight()<h.remove.getX() && h.remove.getRight()<=card->getWidth();
+        ok&=h.power.getY()==h.title.getY() && h.remove.getY()==h.title.getY();
+        ok&=float(h.selectors[0].getWidth())>=ui::textWidth("WAVETABLE",ui::Type::control)+6.0f;
+        ok&=ui::OscillatorCard::headerLabelSize>=11.0f;
+        check(ok,"OSC header: no dead gap after OSC N; MODE/PHASE/ROUTE at 11 px beside their selectors, one shared row");
+    }
+}
+
+void typographyAudit() {
+    using namespace mct::origami;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    editor->setSize(1440,900); // the default editor: design units == pixels
+    ui::OrigamiHeader* header=nullptr; ui::ModulationPanel* synth=nullptr; ui::FxPage* fx=nullptr; ui::OscillatorRack* rack=nullptr; ui::PerformanceKeyboard* keys=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* x=dynamic_cast<ui::OrigamiHeader*>(&c)) header=x;
+        if(auto* x=dynamic_cast<ui::ModulationPanel*>(&c)) synth=x;
+        if(auto* x=dynamic_cast<ui::FxPage*>(&c)) fx=x;
+        if(auto* x=dynamic_cast<ui::OscillatorRack*>(&c)) rack=x;
+        if(auto* x=dynamic_cast<ui::PerformanceKeyboard*>(&c)) keys=x; });
+    check(header && synth && fx && rack && keys,"typography audit: editor surfaces");
+    std::vector<GlyphRun> all;
+    // Every visible Label's text must fit its bounds at its font (no ellipsis,
+    // no clipped descenders): larger type may never be bought with truncation.
+    std::map<std::string,std::string> labelMisfits;
+    std::size_t labelsChecked=0;
+    const auto labelsFit=[&](const std::string& page){
+        walk(*editor,[&](juce::Component& c){
+            auto* l=dynamic_cast<juce::Label*>(&c);
+            if(l==nullptr || l->getText().isEmpty() || l->isBeingEdited() || l->getWidth()<=0) return;
+            for(juce::Component* v=l;v!=nullptr && v!=editor;v=v->getParentComponent()) if(!v->isVisible()) return; // visible in the editor
+            // Inside a viewport: only labels in the visible window count.
+            if(auto* vp=l->findParentComponentOfClass<juce::Viewport>())
+                if(!vp->getViewArea().intersects(vp->getViewedComponent()->getLocalArea(l->getParentComponent(),l->getBounds()))) return;
+            if(dynamic_cast<juce::ComboBox*>(l->getParentComponent())!=nullptr) return; // combo text: ellipsis by design
+            ++labelsChecked;
+            const auto f=l->getFont(); const auto border=l->getBorderSize();
+            const float w=ui::textWidth(l->getText(),f.getHeight())*f.getHorizontalScale();
+            const bool fits=w<=float(l->getWidth()-border.getLeftAndRight())+1.0f && f.getHeight()<=float(l->getHeight()-border.getTopAndBottom())+1.0f;
+            if(!fits) labelMisfits[l->getText().toStdString()+" ("+std::to_string(int(w))+" in "+std::to_string(l->getWidth())+"x"+std::to_string(l->getHeight())+" @"+std::to_string(f.getHeight()).substr(0,4)+")"]=page;
+        });
+    };
+    const auto grab=[&](const std::string& page){ auto r=recordGlyphs(*editor,page); all.insert(all.end(),r.begin(),r.end()); labelsFit(page); };
+    grab("SYNTH / ENV 1");
+    for(auto s:{ModSource::Lfo1,ModSource::Function,ModSource::Random,ModSource::Chaos,ModSource::Drift,ModSource::Sequencer,ModSource::Velocity,ModSource::Keytrack})
+        if(synth->selectSource(s)) grab("SYNTH / source "+std::to_string(static_cast<int>(s)));
+    synth->selectSource(ModSource::Lfo1); synth->lfoStrip().setPage(ui::LfoControlStrip::Page::Func); grab("SYNTH / LFO FUNC");
+    synth->lfoStrip().setPage(ui::LfoControlStrip::Page::Tools); synth->selectSource(ModSource::Env1);
+    header->selectMode(3); grab("MATRIX");
+    header->selectMode(2); fx->syncFromModel();
+    // A populated graph: effect modules plus NODES control operators.
+    fx->addEffect(fx::FxEffectType::Delay); fx->addEffect(fx::FxEffectType::Drive);
+    { auto m=scenarios::mixedControl(); m.macroMask=p.getUiInstrumentState().modulation.macroMask; p.setUiModulationState(m); editor->refreshModulationViews(); fx->syncFromModel(); }
+    for(auto tab:{ui::FxSidebar::Tab::Sources,ui::FxSidebar::Tab::Modulators,ui::FxSidebar::Tab::Filters,ui::FxSidebar::Tab::Buses,ui::FxSidebar::Tab::Matrix}) { fx->sidebar().setTab(tab); grab("NODES / sidebar "+std::to_string(static_cast<int>(tab))); }
+    const auto zoom=fx->graphZoom();
+    fx->graphView().setView(.5f,fx->graphView().pan()); grab("NODES / zoomed out (0.5)");
+    fx->graphView().setView(zoom,fx->graphView().pan());
+    header->selectMode(4); grab("GLOBAL");
+    header->selectMode(0);
+    if(keys->onArpSettingsRequested) { keys->onArpSettingsRequested(); grab("ARP"); keys->onArpSettingsRequested(); }
+    if(rack->onWavetableEditorRequested) { rack->onWavetableEditorRequested(1); grab("WAVETABLE EDITOR"); }
+    const auto defaultMisfits=labelMisfits;
+    for(const auto size:{std::pair<int,int>{960,600},{1920,1200}}) {
+        editor->setSize(size.first,size.second);
+        std::vector<GlyphRun> scaled=recordGlyphs(*editor,"size "+std::to_string(size.first));
+        float worst=1.0f; for(const auto& r:scaled) worst=std::min(worst,r.hscale);
+        labelMisfits.clear(); labelsFit("size "+std::to_string(size.first));
+        check(worst>=0.95f && labelMisfits.empty(),("editor "+std::to_string(size.first)+"x"+std::to_string(size.second)+": no squeezed or clipped text").c_str());
+    }
+    editor->setSize(1440,900);
+    labelMisfits=defaultMisfits;
+    // Report every sub-10 px run (owner, size, page).
+    std::map<std::string,std::pair<float,std::size_t>> small;
+    float minSquash=1.0f; std::string squashed;
+    for(const auto& r:all) {
+        if(r.height<9.95f && !r.page.empty()) { auto& e=small[r.owner+" @ "+r.page]; e.first=e.first==0 ? r.height : std::min(e.first,r.height); e.second+=r.glyphs; }
+        if(r.hscale<minSquash) { minSquash=r.hscale; squashed=r.owner+" @ "+r.page; }
+    }
+    if(std::getenv("ORIGAMI_TYPE_REPORT")) {
+        std::cerr<<"[type] runs="<<all.size()<<" sub-10px owners="<<small.size()<<" min horizontal scale "<<minSquash<<" ("<<squashed<<")\n";
+        for(const auto& [k,v]:small) std::cerr<<"[type] "<<std::fixed<<std::setprecision(1)<<v.first<<" px  "<<k<<"  ("<<v.second<<" glyphs)\n";
+        for(const auto& [k,v]:labelMisfits) std::cerr<<"[type] LABEL DOES NOT FIT: "<<k<<" @ "<<v<<"\n";
+        std::map<std::string,float> squash; for(const auto& r:all) if(r.hscale<0.95f) { auto& v=squash[r.owner]; v=v==0 ? r.hscale : std::min(v,r.hscale); }
+        for(const auto& [k,v]:squash) std::cerr<<"[type] SQUASHED x"<<v<<"  "<<k<<"\n";
+        if(std::getenv("ORIGAMI_TYPE_DEBUG")) for(const auto& r:all) if(r.hscale<0.95f) std::cerr<<"[squash] h="<<r.height<<" x"<<r.hscale<<" n="<<r.glyphs<<" "<<r.owner<<" @ "<<r.page<<"\n";
+    }
+    // ---- policy (default 1440 x 900 editor) --------------------------------
+    // Ordinary text never below Type::secondary; the only smaller text is the
+    // NODES graph zoomed out (semantic zoom scales the graph world).
+    float smallest=1000.0f; std::string smallestAt;
+    for(const auto& r:all) if(r.page.find("zoomed out")==std::string::npos && r.height<smallest) { smallest=r.height; smallestAt=r.owner+" @ "+r.page; }
+    check(smallest>=ui::Type::secondary-0.05f,("default scale: no text below 10 px (smallest "+std::to_string(smallest)+" at "+smallestAt+")").c_str());
+    check(minSquash>=0.95f,("no horizontally squeezed text (worst "+squashed+")").c_str());
+    check(labelsChecked>200,("the label-fit audit inspected the visible labels ("+std::to_string(labelsChecked)+")").c_str());
+    check(labelMisfits.empty(),("every visible label fits its bounds"+(labelMisfits.empty() ? std::string() : ": "+labelMisfits.begin()->first)).c_str());
+    {   // NODES: legible at default zoom; zooming out still scales the graph text.
+        float atDefault=1000.0f,atDefaultMax=0.0f,zoomedMax=0.0f;
+        for(const auto& r:all) if(r.owner.find("FxCanvas")!=std::string::npos) {
+            if(r.page.find("zoomed out")!=std::string::npos) zoomedMax=std::max(zoomedMax,r.height);
+            else if(r.page.find("NODES")!=std::string::npos) { atDefault=std::min(atDefault,r.height); atDefaultMax=std::max(atDefaultMax,r.height); }
+        }
+        check(atDefault>=ui::Type::secondary-0.05f && atDefaultMax>0.0f,"NODES graph text at default zoom >= 10 px");
+        check(zoomedMax>0.0f && zoomedMax<atDefaultMax*0.75f,"NODES semantic zoom: zooming out scales the graph text down");
+    }
+}
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -4510,6 +4768,8 @@ void run() {
     nodesMenuHierarchyAudit();
     synthDynamicMacrosAudit();
     lfoEditorControlsAudit();
+    typographyAudit();
+    macroGridAndOscHeaderAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

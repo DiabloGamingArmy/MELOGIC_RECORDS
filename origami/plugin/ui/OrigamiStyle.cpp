@@ -104,6 +104,17 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
         return;
     }
 
+    if(button.getName().startsWith("MOD SOURCE TAB MACRO")) {
+        // A macro cell's ASSIGN area: no frame of its own. A hairline above it
+        // separates it from the knob; hover / press / drag fill the area.
+        if(over || down) {
+            g.setColour(Palette::raised().withAlpha(down ? 0.60f : 0.38f));
+            g.fillRect(bounds);
+        }
+        g.setColour(Palette::borderSoft());
+        g.fillRect(bounds.getX(),bounds.getY()-.5f,bounds.getWidth(),1.0f);
+        return;
+    }
     if(button.getName().startsWith("MOD SOURCE TAB") ||
        button.getName()=="FILTER SOURCE TAB") {
         if(over || down) {
@@ -136,13 +147,13 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
         auto title=button.getLocalBounds().removeFromTop(17).reduced(4,1);
         // Narrow macro assignment rows: keep the title clear of the drag grip.
         if(button.getName().startsWith("MOD SOURCE TAB MACRO")) title=title.withTrimmedLeft(12);
-        text(g,button.getButtonText(),title,10.4f,
+        text(g,button.getButtonText(),title,Type::label,
              button.isEnabled()?Palette::text():Palette::muted(),
              juce::Justification::centred);
         return;
     }
     if(button.getName()=="FILTER SOURCE TAB") {
-        text(g,button.getButtonText(),button.getLocalBounds().reduced(5,2),10.6f,
+        text(g,button.getButtonText(),button.getLocalBounds().reduced(5,2),Type::label,
              button.isEnabled()?Palette::text():Palette::muted(),
              juce::Justification::centred);
         return;
@@ -183,7 +194,7 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
 
     if(button.getName()=="OSC PROCESS POWER") {
         g.setColour(button.isEnabled()?Palette::text():Palette::muted());
-        g.setFont(juce::FontOptions(9.2f));
+        g.setFont(juce::FontOptions(Type::secondary));
         g.drawText("PWR",button.getLocalBounds().reduced(1),juce::Justification::centred,false);
         return;
     }
@@ -194,12 +205,12 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
         // horizontally before ever resorting to an ellipsis.
         bounds=button.getLocalBounds().reduced(5,3);
         g.setColour(button.isEnabled()?Palette::text():Palette::muted());
-        g.setFont(juce::FontOptions(11.0f));
-        g.drawFittedText(button.getButtonText(),bounds,juce::Justification::centred,1,0.62f);
+        g.setFont(juce::FontOptions(Type::control));
+        g.drawFittedText(button.getButtonText(),bounds,juce::Justification::centred,1,0.85f);
         return;
     }
 
-    text(g,button.getButtonText(),bounds,11,
+    text(g,button.getButtonText(),bounds,Type::control,
          button.isEnabled()?Palette::text():Palette::muted(),
          juce::Justification::centred);
 }
@@ -301,9 +312,17 @@ void OrigamiLookAndFeel::drawComboBox(juce::Graphics& g,int width,int height,boo
     chevron.startNewSubPath(cx-3.0f,cy-1.5f);chevron.lineTo(cx,cy+1.5f);chevron.lineTo(cx+3.0f,cy-1.5f);
     g.setColour(Palette::secondary());g.strokePath(chevron,juce::PathStrokeType(1.15f));
 }
+juce::Label* OrigamiLookAndFeel::createSliderTextBox(juce::Slider& slider) {
+    auto* label=juce::LookAndFeel_V4::createSliderTextBox(slider);
+    label->setFont(juce::FontOptions(Type::control));
+    return label;
+}
 void OrigamiLookAndFeel::positionComboBoxText(juce::ComboBox& box,juce::Label& label) {
     label.setBounds(7,1,juce::jmax(0,box.getWidth()-22),juce::jmax(0,box.getHeight()-2));
-    label.setFont(juce::FontOptions(8.0f));label.setJustificationType(juce::Justification::centredLeft);
+    label.setFont(juce::FontOptions(Type::control));label.setJustificationType(juce::Justification::centredLeft);
+    // Never squeeze choice text: a value that does not fit ends in an ellipsis
+    // (the full text is in the menu).
+    label.setMinimumHorizontalScale(1.0f);
     label.setColour(juce::Label::textColourId,Palette::text());
 }
 void OrigamiLookAndFeel::drawToggleButton(juce::Graphics& g,juce::ToggleButton& button,bool over,bool down) {
@@ -336,7 +355,7 @@ void OrigamiLookAndFeel::drawToggleButton(juce::Graphics& g,juce::ToggleButton& 
                    b.getWidth()-10.0f,1.35f);
     }
 
-    text(g,button.getButtonText(),button.getLocalBounds().reduced(3),8.0f,
+    text(g,button.getButtonText(),button.getLocalBounds().reduced(3),Type::label,
          active?Palette::text():Palette::muted(),juce::Justification::centred);
 }
 

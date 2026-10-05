@@ -58,9 +58,9 @@ void GlobalPanel::resized() {
 
 void GlobalPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     auto area=body.reduced(28,22);
-    text(g,"VISUALIZATION",area.removeFromTop(24),11.0f,Palette::text());
+    text(g,"VISUALIZATION",area.removeFromTop(24),Type::title,Palette::text());
     text(g,"Display only — these switches never change synthesis, modulation, or automation.",
-         area.removeFromTop(20),8.5f,Palette::muted());
+         area.removeFromTop(20),Type::secondary,Palette::muted());
     constexpr int rowHeight=48;
     for(std::size_t i=0;i<names.size();++i) {
         const int column=static_cast<int>(i%2),row=static_cast<int>(i/2);
@@ -68,7 +68,7 @@ void GlobalPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                                       area.getY()+row*rowHeight,
                                       area.getWidth()/2,rowHeight).reduced(12,6);
         well(g,cell);
-        text(g,names[i],cell.reduced(12,0),9.5f,Palette::secondary());
+        text(g,names[i],cell.reduced(12,0),Type::label,Palette::secondary());
     }
 }
 }

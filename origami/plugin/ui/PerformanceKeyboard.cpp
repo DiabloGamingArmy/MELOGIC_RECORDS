@@ -29,6 +29,8 @@ struct PerformanceLayout {
     juce::Rectangle<int> bend,pitch,mod,keyboard,voice,glide,arpClock,utility;
 };
 
+// The BEND row captions (UP / DOWN at Type::secondary) own this many px.
+constexpr int bendLabelWidth=36;
 PerformanceLayout layoutFor(juce::Rectangle<int> bounds) {
     PerformanceLayout l;
     auto left=bounds;
@@ -54,7 +56,7 @@ void moduleSurface(juce::Graphics& g,juce::Rectangle<int> r,const juce::String& 
     r=r.reduced(2,2);
     g.setColour(juce::Colour(0xff151515));
     g.fillRoundedRectangle(r.toFloat(),4.0f);
-    text(g,title,r.removeFromTop(13),8.4f,Palette::muted(),juce::Justification::centred);
+    text(g,title,r.removeFromTop(13),Type::label,Palette::muted(),juce::Justification::centred);
 }
 } // namespace
 
@@ -97,8 +99,8 @@ void PerformanceKeyboard::resized() {
     auto bend=l.bend.reduced(5,3);bend.removeFromTop(13);
     auto up=bend.removeFromTop(bend.getHeight()/2).reduced(0,2);
     auto down=bend.reduced(0,2);
-    bendRange_.setBounds(up.withTrimmedLeft(24));
-    bendDownRange_.setBounds(down.withTrimmedLeft(24));
+    bendRange_.setBounds(up.withTrimmedLeft(bendLabelWidth));
+    bendDownRange_.setBounds(down.withTrimmedLeft(bendLabelWidth));
 
     auto voice=l.voice.reduced(5,3);voice.removeFromTop(14);
     auto top=voice.removeFromTop(22);
@@ -182,8 +184,8 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
     g.setColour(juce::Colour(0xff1b1b1b));
     g.fillRoundedRectangle(upRow.toFloat(),3.5f);
     g.fillRoundedRectangle(downRow.toFloat(),3.5f);
-    text(g,"UP",upRow.withTrimmedLeft(5).withWidth(20),7.6f,Palette::muted(),juce::Justification::centredLeft);
-    text(g,"DOWN",downRow.withTrimmedLeft(5).withWidth(24),7.6f,Palette::muted(),juce::Justification::centredLeft);
+    text(g,"UP",upRow.withTrimmedLeft(4).withWidth(bendLabelWidth-5),Type::secondary,Palette::muted(),juce::Justification::centredLeft);
+    text(g,"DOWN",downRow.withTrimmedLeft(4).withWidth(bendLabelWidth-5),Type::secondary,Palette::muted(),juce::Justification::centredLeft);
 
     moduleSurface(g,l.pitch,"PITCH");
     moduleSurface(g,l.mod,"MOD");
@@ -210,7 +212,7 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         const bool down=(note==mouseNote_);
         g.setColour(down?signalSurfaceColour(0.42f,0.72f):juce::Colour(0xffcdd5d9));g.fillRect(key);
         g.setColour(juce::Colour(0xff77838a));g.drawRect(key,.7f);
-        if(i%7==0) text(g,"C"+juce::String(3+i/7),key.toNearestInt().removeFromBottom(13),8.4f,juce::Colour(0xff596770),juce::Justification::centred);
+        if(i%7==0) text(g,"C"+juce::String(3+i/7),key.toNearestInt().removeFromBottom(14),Type::secondary,juce::Colour(0xff596770),juce::Justification::centred);
     }
     for(int i=0;i<whiteKeyCount-1;++i) {
         const int degree=i%7;if(degree==2||degree==6) continue;

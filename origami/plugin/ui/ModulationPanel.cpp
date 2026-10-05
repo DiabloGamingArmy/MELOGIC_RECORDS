@@ -57,7 +57,7 @@ void rotary(juce::Component& parent,juce::Slider& slider,juce::Label& label,
     slider.setScrollWheelEnabled(false);
     label.setText(name,juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
-    label.setFont(juce::FontOptions(8.0f));
+    label.setFont(juce::FontOptions(Type::label));
     label.setColour(juce::Label::textColourId,Palette::text().withAlpha(.82f));
 }
 
@@ -171,6 +171,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 
     rotary(*this,rate_,rateLabel_,"RATE / Hz");
     rate_.setRange(.01,40,0); rate_.setSkewFactorFromMidPoint(2);
+    rate_.setNumDecimalPlacesToDisplay(2);
     rate_.setTextBoxStyle(juce::Slider::TextBoxRight,false,50,18);
 
     rotary(*this,curve_,curveLabel_,"CURVE");
@@ -218,7 +219,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     addAndMakeVisible(sequenceStepsCaption_);
     sequenceStepsCaption_.setText("STEPS",juce::dontSendNotification);
     sequenceStepsCaption_.setColour(juce::Label::textColourId,Palette::accent().withAlpha(.82f));
-    sequenceStepsCaption_.setFont(juce::FontOptions(8.0f));
+    sequenceStepsCaption_.setFont(juce::FontOptions(Type::label));
     addAndMakeVisible(sequenceStepCount_);
     sequenceStepCount_.setName("SEQ STEP COUNT");
     for(int steps=1;steps<=8;++steps) sequenceStepCount_.addItem(juce::String(steps),steps);
@@ -229,7 +230,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     addAndMakeVisible(sequenceDirectionCaption_);
     sequenceDirectionCaption_.setText("DIRECTION",juce::dontSendNotification);
     sequenceDirectionCaption_.setColour(juce::Label::textColourId,Palette::accent().withAlpha(.82f));
-    sequenceDirectionCaption_.setFont(juce::FontOptions(8.0f));
+    sequenceDirectionCaption_.setFont(juce::FontOptions(Type::label));
     addAndMakeVisible(sequenceDirection_);
     sequenceDirection_.setName("SEQ DIRECTION");
     sequenceDirection_.addItem("FORWARD",1);sequenceDirection_.addItem("REVERSE",2);sequenceDirection_.addItem("PING-PONG",3);
@@ -238,7 +239,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     addAndMakeVisible(sequenceLoopCaption_);
     sequenceLoopCaption_.setText("LOOP",juce::dontSendNotification);
     sequenceLoopCaption_.setColour(juce::Label::textColourId,Palette::accent().withAlpha(.82f));
-    sequenceLoopCaption_.setFont(juce::FontOptions(8.0f));
+    sequenceLoopCaption_.setFont(juce::FontOptions(Type::label));
     addAndMakeVisible(sequenceLoopMode_);
     sequenceLoopMode_.setName("SEQ LOOP MODE");
     sequenceLoopMode_.addItem("LOOP",1);sequenceLoopMode_.addItem("ONE SHOT",2);
@@ -317,7 +318,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         step.setMouseDragSensitivity(180);
         label.setText(juce::String(static_cast<int>(i+1)),juce::dontSendNotification);
         label.setJustificationType(juce::Justification::centred);
-        label.setFont(juce::FontOptions(9.0f));
+        label.setFont(juce::FontOptions(Type::label));
         label.setColour(juce::Label::textColourId,Palette::muted());
         step.onValueChange=[this,i]{
             if(sequencePower_[i].getToggleState())
@@ -362,7 +363,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     }
     addAndMakeVisible(sequenceHumanize_);addAndMakeVisible(sequenceHumanizeLabel_);
     sequenceHumanize_.setSliderStyle(juce::Slider::LinearHorizontal);sequenceHumanize_.setColour(juce::Slider::backgroundColourId,Palette::borderSoft().withAlpha(.24f));sequenceHumanize_.setColour(juce::Slider::trackColourId,Palette::accent().withAlpha(.82f));sequenceHumanize_.setColour(juce::Slider::thumbColourId,Palette::accent());sequenceHumanize_.setRange(0.0,0.35,0.005);sequenceHumanize_.setValue(0.0,juce::dontSendNotification);sequenceHumanize_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);sequenceHumanize_.setPopupDisplayEnabled(true,true,this,700);
-    sequenceHumanizeLabel_.setText("HUMAN",juce::dontSendNotification);sequenceHumanizeLabel_.setFont(juce::FontOptions(8.0f));sequenceHumanizeLabel_.setColour(juce::Label::textColourId,Palette::accent().withAlpha(.82f));
+    sequenceHumanizeLabel_.setText("HUMAN",juce::dontSendNotification);sequenceHumanizeLabel_.setFont(juce::FontOptions(Type::label));sequenceHumanizeLabel_.setColour(juce::Label::textColourId,Palette::accent().withAlpha(.82f));
     for(auto* b:{&sequenceRandomize_,&sequenceInvert_,&sequenceClear_,&sequenceAllOn_,&sequenceAlternate_})
         addAndMakeVisible(*b);
     sequenceRandomize_.setTooltip("Generate a new bipolar modulation pattern");
@@ -435,7 +436,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     performanceTools_.onClick=[this]{showPerformanceToolsMenu();};
     performanceSnap_.setToggleState(true,juce::dontSendNotification);
     performanceInputLabel_.setJustificationType(juce::Justification::centredLeft);
-    performanceInputLabel_.setFont(juce::FontOptions(10.0f));
+    performanceInputLabel_.setFont(juce::FontOptions(Type::secondary));
     performanceInputLabel_.setColour(juce::Label::textColourId,Palette::muted());
     for(auto& shape:performanceMseg_) resetPerformanceShape(shape);
     auto update=[this]{commitGenerator();repaint();};
@@ -1764,7 +1765,7 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     g.fillRoundedRectangle(sourceTitleBox,2.5f);
     g.setColour(Palette::borderSoft());
     g.drawRoundedRectangle(sourceTitleBox,2.5f,1.0f);
-    text(g,"SOURCE",sourceTitle,8.5f,Palette::secondary(),juce::Justification::centred);
+    text(g,"SOURCE",sourceTitle,Type::label,Palette::secondary(),juce::Justification::centred);
 
     body.removeFromBottom(selected_>=3 && selected_<=6 ? lfoStripHeight+4 : 66);auto caption=body.removeFromTop(17);
     juce::String title;
@@ -1782,7 +1783,7 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     else if(selected_==12) title="VELOCITY / RESPONSE MSEG";
     else if(selected_==13) title="NOTE / KEYTRACK MSEG";
     else title="MODULATION SOURCE";
-    text(g,title,caption,9,Palette::muted());well(g,body);
+    text(g,title,caption,Type::label,Palette::muted());well(g,body);
     if(selected_==12 || selected_==13) { paintPerformanceCurve(g); return; }
 
     if(selected_==11) {
@@ -1833,10 +1834,10 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
         juce::String method="LORENZ";
         if(cached_.chaos.method==ChaosMethod::Rossler) method="ROSSLER";
         else if(cached_.chaos.method==ChaosMethod::Thomas) method="THOMAS";
-        text(g,method+" / X-Y PHASE SPACE",graph.removeFromTop(16).toNearestInt(),8.0f,Palette::muted());
+        text(g,method+" / X-Y PHASE SPACE",graph.removeFromTop(16).toNearestInt(),Type::secondary,Palette::muted());
         auto footer=graph.removeFromBottom(16).toNearestInt();
         text(g,"DETERMINISTIC  •  APERIODIC  •  "+juce::String(cached_.chaos.rateHz,2)+" RATE",
-             footer,8.0f,Palette::muted(),juce::Justification::centredRight);
+             footer,Type::secondary,Palette::muted(),juce::Justification::centredRight);
         return;
     }
 
@@ -2358,7 +2359,7 @@ void ModulationPanel::paintEnvelopeTimeMarkers(juce::Graphics& g) const {
     float lastLabelX=-1000.0f;
     int index=static_cast<int>(std::llround(t/majorStep));
 
-    g.setFont(juce::FontOptions(8.0f));
+    g.setFont(juce::FontOptions(Type::secondary));
     for(;t<=visibleEnd+1.0e-8;t+=majorStep,++index) {
         const float x=timeToX(t);
         if(x<envCanvas_.getX()-1.0f || x>envCanvas_.getRight()+1.0f) continue;
@@ -2587,32 +2588,33 @@ public:
     }
     bool confirming() const noexcept { return confirming_; }
     void resized() override {
-        auto b=getLocalBounds().reduced(3);
+        // Padding lives inside the cell; the cell itself draws no frame.
+        auto b=getLocalBounds().reduced(cellPadding,cellPadding-2);
         auto header=b.removeFromTop(20);
-        remove_.setBounds(header.removeFromRight(22).withSizeKeepingCentre(22,18));
+        remove_.setBounds(header.removeFromRight(18).withSizeKeepingCentre(18,18));
         if(confirming_) {
             // Narrow card: full-width buttons, stacked (never truncated labels).
             confirm_.setBounds(b.removeFromBottom(24).reduced(1,1));
             cancel_.setBounds(b.removeFromBottom(24).reduced(1,1));
             return;
         }
-        row_.setBounds(b.removeFromBottom(ModulationSourceRow::routedHeight));
+        // ASSIGN spans the cell's full width (a hairline separates it).
+        row_.setBounds(getLocalBounds().removeFromBottom(ModulationSourceRow::routedHeight).reduced(1,0).withTrimmedBottom(1));
+        b.setBottom(row_.getY()-2);
         knob_.setBounds(b.withSizeKeepingCentre(std::min(52,b.getWidth()-8),std::min(50,b.getHeight())));
     }
     void paint(juce::Graphics& g) override {
-        auto b=getLocalBounds().toFloat().reduced(0.5f);
-        g.setColour(Palette::inset()); g.fillRect(b);
-        g.setColour(Palette::borderSoft()); g.drawRect(b,1.0f);
-        auto header=getLocalBounds().reduced(3).removeFromTop(20).withTrimmedLeft(4).withTrimmedRight(24);
-        g.setColour(Palette::text()); g.setFont(juce::FontOptions(9.0f));
-        g.drawFittedText("MACRO "+juce::String(int(id_)),header,juce::Justification::centredLeft,1,0.75f);
+        // No background or border: the grid owns the only frame and dividers.
+        auto header=getLocalBounds().reduced(cellPadding,cellPadding-2).removeFromTop(20).withTrimmedRight(20);
+        g.setColour(Palette::text()); g.setFont(juce::FontOptions(Type::label));
+        g.drawText("MACRO "+juce::String(int(id_)),header,juce::Justification::centredLeft,true);
         if(confirming_) {
-            auto area=getLocalBounds().reduced(6).withTrimmedTop(24).withTrimmedBottom(54);
-            g.setColour(Palette::text()); g.setFont(juce::FontOptions(9.0f));
-            g.drawFittedText("REMOVE?",area.removeFromTop(16),juce::Justification::centredLeft,1,0.8f);
-            g.setColour(Palette::muted()); g.setFont(juce::FontOptions(8.0f));
+            auto area=getLocalBounds().reduced(cellPadding).withTrimmedTop(24).withTrimmedBottom(54);
+            g.setColour(Palette::text()); g.setFont(juce::FontOptions(Type::control));
+            g.drawText("REMOVE?",area.removeFromTop(16),juce::Justification::centredLeft,false);
+            g.setColour(Palette::muted()); g.setFont(juce::FontOptions(Type::secondary));
             g.drawFittedText(juce::String(int(links_))+(links_==1 ? " assignment goes" : " assignments go")+" with it.",
-                             area,juce::Justification::topLeft,3,0.85f);
+                             area,juce::Justification::topLeft,3,1.0f);
         }
     }
 private:
@@ -2632,6 +2634,8 @@ private:
 MacroPanel::MacroPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {
     setWantsKeyboardFocus(true);
     viewport_.setName("MACRO LIST");
+    content_.owner=this;
+    content_.setName("MACRO GRID");
     viewport_.setViewedComponent(&content_,false);
     viewport_.setScrollBarsShown(true,false,true,false); // vertical only; never horizontal
     viewport_.setScrollBarThickness(8);
@@ -2697,9 +2701,39 @@ void MacroPanel::rebuild(const ModulationState& state) {
 void MacroPanel::resized() {
     auto area=contentBounds().reduced(4,2);
     add_.setBounds(area.removeFromBottom(24).reduced(0,2));
-    area.removeFromBottom(2);
-    viewport_.setBounds(area);
+    area.removeFromBottom(4);
+    // The grid frame is the viewport's 1 px outline; nothing pads between them.
+    viewport_.setBounds(area.reduced(1));
     layoutCards();
+}
+
+void MacroPanel::paintContent(juce::Graphics& g,juce::Rectangle<int>) {
+    const auto frame=gridFrame();   // square, pixel-aligned: no radius
+    g.setColour(Palette::inset()); g.fillRect(frame);
+    g.setColour(Palette::borderSoft()); g.drawRect(frame,1);
+}
+
+std::vector<juce::Line<float>> MacroPanel::gridDividers() const {
+    std::vector<juce::Line<float>> lines;
+    const float w=float(content_.getWidth()),h=float(content_.getHeight());
+    const float column=w/float(columns);
+    const int rows=int((cards_.size()+columns-1)/columns);
+    // Column dividers stop at the last row; the row line below it closes the grid.
+    const float used=std::min(h,float(rows*cardHeight));
+    for(int c=1;c<columns && rows>0;++c) lines.push_back({column*float(c),0.0f,column*float(c),used});
+    for(int r=1;r<=rows;++r) lines.push_back({0.0f,float(r*cardHeight),w,float(r*cardHeight)});
+    // A scrollbar gutter on the right: close the grid against it.
+    if(content_.getWidth()<viewport_.getWidth()) lines.push_back({w,0.0f,w,h});
+    return lines;
+}
+
+void MacroPanel::Grid::paint(juce::Graphics& g) {
+    if(owner==nullptr) return;
+    g.setColour(Palette::borderSoft());
+    for(const auto& line:owner->gridDividers()) {
+        if(line.isVertical()) g.fillRect(juce::Rectangle<float>(line.getStartX()-.5f,line.getStartY(),1.0f,line.getLength()));
+        else g.fillRect(juce::Rectangle<float>(line.getStartX(),line.getStartY()-.5f,line.getLength(),1.0f));
+    }
 }
 
 // The scrollbar owns a dedicated gutter: when the cards overflow, the content
@@ -2708,11 +2742,14 @@ void MacroPanel::layoutCards() {
     const int rows=int((cards_.size()+columns-1)/columns);
     const int height=rows*cardHeight+std::max(0,rows-1)*gap;
     const bool scrolls=height>viewport_.getHeight();
-    const int width=std::max(0,viewport_.getWidth()-(scrolls ? viewport_.getScrollBarThickness()+gap : 0));
-    content_.setSize(width,height);
-    const int column=(width-gap)/columns;
-    for(std::size_t i=0;i<cards_.size();++i)
-        cards_[i]->setBounds(int(i%columns)*(column+gap),int(i/columns)*(cardHeight+gap),column,cardHeight);
+    const int width=std::max(0,viewport_.getWidth()-(scrolls ? viewport_.getScrollBarThickness()+1 : 0));
+    // At least the visible height, so the dividers reach the frame's bottom.
+    content_.setSize(width,std::max(height,viewport_.getHeight()));
+    for(std::size_t i=0;i<cards_.size();++i) {
+        const int c=int(i%columns),x0=width*c/columns,x1=width*(c+1)/columns;
+        cards_[i]->setBounds(x0,int(i/columns)*cardHeight,x1-x0,cardHeight);
+    }
+    content_.repaint();
 }
 
 std::size_t MacroPanel::addMacro() {

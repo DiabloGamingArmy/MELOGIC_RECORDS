@@ -30,9 +30,9 @@ void MixerPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         g.setColour(Palette::borderStrong());g.drawRoundedRectangle(cap.reduced(.5f),2.0f,1.0f);
         g.setColour(Palette::accent().withAlpha(.88f));g.fillRect(cap.reduced(3.0f,2.0f));
 
-        text(g,channels[i],caption,8.7f,Palette::muted(),juce::Justification::centred);
+        text(g,channels[i],caption,Type::label,Palette::muted(),juce::Justification::centred);
         well(g,muteSolo.reduced(1,0));
-        text(g,"M   S",muteSolo,8.5f,Palette::secondary(),juce::Justification::centred);
+        text(g,"M   S",muteSolo,Type::secondary,Palette::secondary(),juce::Justification::centred);
     }
 }
 // mct-origami-core-controls-v18.2
@@ -75,7 +75,7 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter,Modulatio
         addAndMakeVisible(label);
         label->setJustificationType(juce::Justification::centred);
         label->setColour(juce::Label::textColourId,Palette::muted());
-        label->setFont(juce::FontOptions(8.0f));
+        label->setFont(juce::FontOptions(Type::label));
     }
     cutoffLabel_.setText("CUTOFF",juce::dontSendNotification);
     resonanceLabel_.setText("RESONANCE",juce::dontSendNotification);
@@ -214,7 +214,7 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     g.fillRoundedRectangle(sourceTitleBox,2.5f);
     g.setColour(Palette::borderSoft());
     g.drawRoundedRectangle(sourceTitleBox,2.5f,1.0f);
-    text(g,"SOURCE",sourceTitle,8.5f,Palette::secondary(),juce::Justification::centred);
+    text(g,"SOURCE",sourceTitle,Type::label,Palette::secondary(),juce::Justification::centred);
 
     if(!filterEnabled_) {
         text(g,"NO FILTER — PRESS + TO ADD FILTER 1",body.reduced(12),10.5f,
@@ -222,8 +222,8 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         return;
     }
 
-    text(g,"LOW-PASS",{body.getX()+4,5,100,24},10,Palette::muted());
-    text(g,"ROUTING",{body.getRight()-96,5,90,24},9,Palette::muted(),juce::Justification::centredRight);
+    text(g,"LOW-PASS",{body.getX()+4,5,100,24},Type::label,Palette::muted());
+    text(g,"ROUTING",{body.getRight()-96,5,90,24},Type::label,Palette::muted(),juce::Justification::centredRight);
 
     auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
     body.removeFromBottom(7);
@@ -357,7 +357,7 @@ void FxPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 g.setColour(Palette::borderStrong());
                 g.drawHorizontalLine(juce::roundToInt(mark.getCentreY()),mark.getCentreX()-8.0f,mark.getCentreX()+8.0f);
             }
-            if(label!="+")text(g,label,slot.removeFromBottom(33),8,Palette::muted(),juce::Justification::centred);
+            if(label!="+")text(g,label,slot.removeFromBottom(33),Type::secondary,Palette::muted(),juce::Justification::centred);
         }
     }
 }

@@ -93,6 +93,15 @@ public:
     void syncFromModel();
     void setDisplayOrdinal(unsigned ordinal);
     std::function<void(unsigned)> onWavetableEditorRequested;
+    // mct-origami-ui-legibility-cleanup: the one header layout shared by
+    // resized() and paint: OSC N | MODE [..] | PHASE [..] | ROUTE [..] | PWR | -.
+    // Every width is measured from its text; nothing is a reserved slot.
+    struct HeaderLayout {
+        juce::Rectangle<int> title,power,remove;
+        std::array<juce::Rectangle<int>,3> labels{},selectors{};
+    };
+    HeaderLayout headerLayout() const;
+    static constexpr float headerLabelSize=Type::control;
 private:
     // Oscillator body navigation. The top bar remains persistent while the
     // content below it can be replaced by focused configuration workspaces.

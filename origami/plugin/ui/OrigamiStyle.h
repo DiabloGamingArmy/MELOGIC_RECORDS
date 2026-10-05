@@ -67,6 +67,20 @@ struct Palette {
     static juce::Colour muted()        { return juce::Colour(0xff858585); }
     static juce::Colour accent()       { return juce::Colour(0xffd6d6d6); }
 };
+// mct-origami-ui-legibility-cleanup: the text hierarchy, in px at the
+// 1440 x 900 default editor (the fixed-ratio editor scales everything
+// uniformly from there). Ordinary UI text never goes below Type::secondary.
+struct Type {
+    static constexpr float title=12.0f;     // panel / section titles
+    static constexpr float control=11.0f;   // values, button and selector text
+    static constexpr float label=10.5f;     // parameter labels, descriptors, captions
+    static constexpr float secondary=10.0f; // secondary technical text: the floor
+};
+// Width of a single line of text at a size (layout measurement, never paint).
+inline float textWidth(const juce::String& value,float size) {
+    juce::GlyphArrangement glyphs; glyphs.addLineOfText(juce::Font(juce::FontOptions(size)),value,0.0f,0.0f);
+    return glyphs.getBoundingBox(0,-1,true).getWidth();
+}
 inline void text(juce::Graphics& g, const juce::String& value, juce::Rectangle<int> bounds, float size = 12, juce::Colour colour = Palette::text(), juce::Justification alignment = juce::Justification::centredLeft) {
     g.setColour(colour); g.setFont(juce::FontOptions(size)); g.drawText(value, bounds, alignment, true);
 }
@@ -100,7 +114,7 @@ inline void dial(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::Str
     constexpr float start=-2.35f, sweep=4.70f;
 
     paintKnob(g,circle,position,start,start+sweep);
-    text(g,label,labelBounds,9.6f,Palette::muted(),juce::Justification::centred);
+    text(g,label,labelBounds,Type::label,Palette::muted(),juce::Justification::centred);
 }
 inline void dials(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::StringArray& labels) {
     const int width = bounds.getWidth()/juce::jmax(1,labels.size());
@@ -167,6 +181,9 @@ public:
     void drawComboBox(juce::Graphics&,int,int,bool,int,int,int,int,juce::ComboBox&) override;
     void positionComboBoxText(juce::ComboBox&,juce::Label&) override;
     void drawToggleButton(juce::Graphics&,juce::ToggleButton&,bool,bool) override;
+    // Slider value boxes use the control size (JUCE's 15 px default was being
+    // squeezed horizontally into the compact boxes).
+    juce::Label* createSliderTextBox(juce::Slider&) override;
     void drawScrollbar(juce::Graphics&,juce::ScrollBar&,int,int,int,int,bool,int,int,bool,bool) override;
 };
 class Panel : public juce::Component, public juce::SettableTooltipClient {
@@ -191,7 +208,7 @@ public:
 
         g.setColour(Palette::borderSoft());g.drawRect(shell,1.0f);
         g.setColour(Palette::borderStrong().withAlpha(.34f));g.drawHorizontalLine(30,10.0f,float(getWidth()-10));
-        text(g,title_,{10,5,getWidth()-20,22},12,Palette::secondary());
+        text(g,title_,{10,5,getWidth()-20,22},Type::title,Palette::secondary());
         paintContent(g,contentBounds());
     }
     juce::Rectangle<int> contentBounds() const { return getLocalBounds().reduced(4).withTrimmedTop(24); }
