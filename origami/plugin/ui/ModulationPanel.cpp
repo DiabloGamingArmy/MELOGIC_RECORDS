@@ -1524,26 +1524,33 @@ void ModulationPanel::resized() {
 void ModulationPanel::updateLfoProcessedOverlay() {
     // UI-thread only: runs the canonical Lfo over two cycles (one to settle
     // SMOOTH, one drawn) at 512 samples per cycle. Cached on the settings.
-    if(selected_<3 || selected_>6 || envCanvas_.isEmpty()) { lfoProcessed_.clear(); return; }
+    if(selected_<3 || selected_>6 || envCanvas_.isEmpty()) { lfoProcessed_.clear(); lfoProcessedRight_.clear(); return; }
     const auto index=static_cast<std::size_t>(selected_-3);
     auto s=lfoSettings(cached_,index);
     s.delaySeconds=0.0f; s.attackSeconds=0.0f;
     if(s.mode==LfoMode::Envelope) s.mode=LfoMode::Loop; // one cycle == the one-shot's cycle
-    if(lfoFunctionsNeutral(s)) { lfoProcessed_.clear(); lfoProcessedKey_={}; return; }
+    const bool funcActive=!lfoFunctionsNeutral(s),stereo=s.stereo>0.0f;
+    if(!funcActive && !stereo) { lfoProcessed_.clear(); lfoProcessedRight_.clear(); lfoProcessedKey_={}; return; }
     // Draw the editor's live base curve (also mid-drag).
     const auto& editor=lfoMseg_[index];
     s.pointCount=static_cast<std::uint32_t>(std::min(editor.count,s.points.size()));
     for(std::size_t i=0;i<s.pointCount;++i) s.points[i]={editor.points[i].x,editor.points[i].y,editor.points[i].curve};
-    if(!lfoProcessed_.empty() && lfoProcessedIndex_==index && lfoProcessedCanvas_==envCanvas_ &&
+    if((!lfoProcessed_.empty() || !lfoProcessedRight_.empty()) && lfoProcessedIndex_==index && lfoProcessedCanvas_==envCanvas_ &&
        std::memcmp(&lfoProcessedKey_,&s,sizeof(LfoSettings))==0) return;
     lfoProcessedKey_=s; lfoProcessedIndex_=index; lfoProcessedCanvas_=envCanvas_;
     constexpr int perCycle=512;
     Lfo lfo; lfo.reset(); lfo.setStreams(Lfo::globalStream(index),Lfo::fractureSeed(index));
     const double sampleRate=double(juce::jlimit(.01f,40.0f,s.rateHz))*perCycle;
-    for(int i=0;i<perCycle;++i) lfo.next(s,sampleRate);
-    lfoProcessed_.clear();
-    for(int i=0;i<=perCycle;++i)
-        lfoProcessed_.push_back(msegPixel({float(i)/float(perCycle),lfo.next(s,sampleRate),0.0f}));
+    float right=0.0f;
+    for(int i=0;i<perCycle;++i) lfo.nextStereo(s,sampleRate,right);
+    lfoProcessed_.clear(); lfoProcessedRight_.clear();
+    for(int i=0;i<=perCycle;++i) {
+        const float x=float(i)/float(perCycle);
+        const float left=lfo.nextStereo(s,sampleRate,right);
+        // LEFT only when FUNC changes the curve (else it IS the base curve).
+        if(funcActive) lfoProcessed_.push_back(msegPixel({x,left,0.0f}));
+        if(stereo) lfoProcessedRight_.push_back(msegPixel({x,right,0.0f}));
+    }
 }
 
 bool ModulationPanel::selectSource(ModSource source) {
@@ -2034,6 +2041,15 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
             for(std::size_t i=1;i<lfoProcessed_.size();++i) processed.lineTo(lfoProcessed_[i]);
             g.setColour(juce::Colours::white.withAlpha(.08f)); g.strokePath(processed,juce::PathStrokeType(3.0f));
             g.setColour(Palette::secondary().withAlpha(.48f)); g.strokePath(processed,juce::PathStrokeType(1.0f));
+        }
+        if(lfoProcessedRight_.size()>1) {
+            // RIGHT (STEREO): the same grey, dimmer and dashed.
+            juce::Path rightPath;
+            rightPath.startNewSubPath(lfoProcessedRight_.front());
+            for(std::size_t i=1;i<lfoProcessedRight_.size();++i) rightPath.lineTo(lfoProcessedRight_[i]);
+            juce::Path dashed; const float dashes[]{5.0f,4.0f};
+            juce::PathStrokeType(1.0f).createDashedStroke(dashed,rightPath,dashes,2);
+            g.setColour(Palette::secondary().withAlpha(.34f)); g.fillPath(dashed);
         }
 
         // LFO playback tracer: same visual language as ENV, rendered only for
