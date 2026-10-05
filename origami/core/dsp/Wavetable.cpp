@@ -170,6 +170,19 @@ bool sameProcessPlan(const OscProcessPlan& a,const OscProcessPlan& b) noexcept {
     }
     return true;
 }
+// A source plan addresses a cached key exactly when its quantized form equals
+// the key's plan (the same test the full lookup performs after quantizing).
+bool planMatchesKey(const OscProcessPlan& source,const OscProcessPlan& key) noexcept {
+    const auto count=std::min<std::size_t>(source.count,maxOscProcessStages);
+    if(count!=key.count) return false;
+    for(std::size_t i=0;i<count;++i) {
+        const auto& x=source.stages[i];const auto& y=key.stages[i];
+        if(x.type!=y.type || x.seed!=y.seed) return false;
+        const float amount=oscProcessIsSpectral(x.type) ? quantizedSpectralAmount(x.type,x.amount) : x.amount;
+        if(amount!=y.amount) return false;
+    }
+    return true;
+}
 bool sameSpectralKey(const SpectralKey& a,const SpectralKey& b) noexcept {
     return a.table==b.table && a.generation==b.generation && a.frame==b.frame &&
            a.band==b.band && sameProcessPlan(a.plan,b.plan);
@@ -213,10 +226,11 @@ public:
         // A stable chain needs neither re-quantization nor re-hashing per sample.
         // Revision validation under the pin handles eviction and table reuse.
         if(hint.revision && hint.table==&table && hint.generation==table.generation &&
-           hint.frame==frame && hint.band==band && sameProcessPlan(hint.plan,sourcePlan)) {
+           hint.frame==frame && hint.band==band) {
             auto& slot=cache_[hint.slot];
             if(pin(slot)) {
-                if(slot.revision==hint.revision) {
+                // The slot cannot be rewritten while pinned: its key is stable.
+                if(slot.revision==hint.revision && planMatchesKey(sourcePlan,slot.key.plan)) {
                     const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
                     touch(slot,hint);
                     unpin(slot);
@@ -239,8 +253,8 @@ public:
             if(sameSpectralKey(slot.key,key)){
                 const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
                 hint.table=&table;hint.generation=table.generation;
-                hint.frame=frame;hint.band=band;hint.plan=sourcePlan;
-                hint.slot=bucket+w;hint.revision=slot.revision;hint.hits=0;
+                hint.frame=static_cast<std::uint32_t>(frame);hint.band=static_cast<std::uint32_t>(band);
+                hint.slot=static_cast<std::uint32_t>(bucket+w);hint.revision=slot.revision;hint.hits=0;
                 touch(slot,hint);
                 unpin(slot);return value;
             }
@@ -732,10 +746,10 @@ float WavetableOscillator::nextSimple(const Wavetable& table,double frequency,do
     static constexpr OscProcessPlan empty{};
     return nextImpl<true>(table,frequency,sampleRate,position,empty,0.0,0.0);
 }
-template<bool Simple>
-float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,double sampleRate,float position,
-                                  const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew) noexcept {
-    if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
+// Pitch metadata shared by every read of a sample: phase increment and the
+// band-limited table band for this frequency (exact keys: FM, glide and
+// sample-rate changes stay audio-rate without rescanning bands every sample).
+void WavetableOscillator::preparePitch(const Wavetable& table,double frequency,double sampleRate) noexcept {
     if(pitchTable_!=&table || pitchGeneration_!=table.generation ||
        pitchFrequency_!=frequency || pitchSampleRate_!=sampleRate) {
         increment_=std::clamp(frequency/sampleRate,0.0,.499);
@@ -746,8 +760,14 @@ float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,doub
         pitchTable_=&table;pitchGeneration_=table.generation;
         pitchFrequency_=frequency;pitchSampleRate_=sampleRate;
     }
+}
+// One read of the current phase: frame interpolation, phase warps / spectral
+// table, PM offset and PSK skew. Stateless apart from the spectral read hints,
+// so a second read at the same phase (stereo RIGHT) is exact.
+template<bool Simple>
+float WavetableOscillator::readAt(const Wavetable& table,float position,const OscProcessPlan& plan,
+                                  double phaseOffsetCycles,double phaseSkew,std::array<SpectralReadHint,2>& hints) noexcept {
     const auto bandIndex=bandIndex_;
-    const double increment=increment_;
     const float framePosition=std::clamp(position,0.f,1.f)*static_cast<float>(table.frames.size()-1);
     const auto first=static_cast<std::size_t>(framePosition),second=std::min(first+1,table.frames.size()-1);
     double readPhase=phase_;
@@ -769,7 +789,7 @@ float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,doub
     const auto index=static_cast<std::size_t>(tablePosition)%table.tableLength,nextIndex=(index+1)%table.tableLength;
     const float fraction=static_cast<float>(tablePosition-static_cast<double>(static_cast<std::size_t>(tablePosition)));
     auto read=[&](std::size_t frame,std::size_t hintIndex){
-        if(spectral)return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,spectralHints_[hintIndex]);
+        if(spectral)return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,hints[hintIndex]);
         const auto& samples=table.frames[frame].bands[bandIndex].samples;
         return samples[index]+fraction*(samples[nextIndex]-samples[index]);};
     const float frameFraction=framePosition-static_cast<float>(first);
@@ -777,9 +797,46 @@ float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,doub
     // An exact frame does not consume the adjacent frame, so it needs no
     // lookup, pin, or spectral compilation request for that frame.
     const float b=frameFraction>0.0f && second!=first ? read(second,1) : a;
-    const float output=a+frameFraction*(b-a);
+    return a+frameFraction*(b-a);
+}
+template<bool Simple>
+float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,double sampleRate,float position,
+                                  const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew) noexcept {
+    if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
+    preparePitch(table,frequency,sampleRate);
+    const double increment=increment_;
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_);
     phase_+=increment;if(phase_>=1)phase_-=1;
     return frequency>=sampleRate*.5?0:output;
+}
+// mct-origami-dsp-performance-stereo-chain: one phase advance, two reads.
+template<bool Simple>
+float WavetableOscillator::nextStereoImpl(const Wavetable& table,double frequency,double sampleRate,
+        float position,const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew,
+        float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
+        std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
+    if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position)) { right=0.0f; return 0; }
+    preparePitch(table,frequency,sampleRate);
+    const double increment=increment_;
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_);
+    const float outputRight=readAt<Simple>(table,std::isfinite(positionRight)?positionRight:position,planRight,
+                                           phaseOffsetRight,phaseSkewRight,rightHints);
+    phase_+=increment;if(phase_>=1)phase_-=1;
+    const bool aboveNyquist=frequency>=sampleRate*.5;
+    right=aboveNyquist?0.0f:outputRight;
+    return aboveNyquist?0:output;
+}
+float WavetableOscillator::nextStereo(const Wavetable& table,double frequency,double sampleRate,
+        float position,const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew,
+        float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
+        std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
+    return nextStereoImpl<false>(table,frequency,sampleRate,position,plan,phaseOffsetCycles,phaseSkew,
+                                 positionRight,planRight,phaseOffsetRight,phaseSkewRight,rightHints,right);
+}
+float WavetableOscillator::nextStereoSimple(const Wavetable& table,double frequency,double sampleRate,
+        float position,float positionRight,std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
+    static constexpr OscProcessPlan empty{};
+    return nextStereoImpl<true>(table,frequency,sampleRate,position,empty,0.0,0.0,positionRight,empty,0.0,0.0,rightHints,right);
 }
 
 double midiFrequency(int note) noexcept { return 440.0 * std::exp2((std::clamp(note, 0, 127) - 69) / 12.0); }

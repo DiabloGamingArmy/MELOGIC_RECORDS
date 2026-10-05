@@ -15,6 +15,7 @@
 #include <cstring>
 #include <functional>
 #include <string>
+#include <thread>
 
 using namespace mct::origami;
 
@@ -689,14 +690,15 @@ void lfoStereoModulation() {
         check(((stereoF->stereo.levelMask>>1)&1u) && std::abs(stereoF->stereo.level[1]-rightAsLeft->modules[1].level)<1e-5f,
               "two stereo sources -> LEVEL: both RIGHT values summed");
         check(stereoF->modules[0].pan==monoF->modules[0].pan && (stereoF->stereo.levelMask&1u)==0,"PAN (scalar) uses LEFT; no right value exists for it");
-        check(stereoF->modules[0].wtPosition==monoF->modules[0].wtPosition,"WT POSITION (needs stereo oscillator DSP) uses LEFT");
+        check(stereoF->modules[0].wtPosition==monoF->modules[0].wtPosition && (stereoF->stereo.rightMask&c->moduleReadStereoGroups(0))!=0,
+              "WT POSITION: LEFT unchanged, RIGHT prepared for the oscillator's second read");
         check(stereoF->stereo.filter.g!=stereoF->filter.g,"RIGHT gets its own filter coefficients when CUTOFF differs");
         // per-channel clamping: drive RIGHT past the top; LEFT stays inside.
         auto clampF=frameFor(*c,globalSources(0.0f,0.0f,0.0f),0x1,{1.0f,0,0,0});
         auto clampRef=frameFor(*c,globalSources(1.0f,0.0f,0.0f),0x0,{});
         check(std::abs(clampF->stereo.cutoff-clampRef->cutoff)<=clampRef->cutoff*1e-4f,"each channel is mapped and clamped on its own");
         // Turning STEREO only changes stereo-capable destinations.
-        auto noStereoPlan=st; noStereoPlan.routes[0]={}; noStereoPlan.routes[3]={}; noStereoPlan.routes[4]={};
+        auto noStereoPlan=st; noStereoPlan.routes[0]={}; noStereoPlan.routes[3]={}; noStereoPlan.routes[4]={}; noStereoPlan.routes[5]={};
         auto c2=std::make_unique<CompiledModulation>(); compileFrame(noStereoPlan,*c2);
         check(!c2->hasStereoPlan(),"stereo LFO routed only to scalar destinations: mono plan (fast path)");
     }
@@ -786,7 +788,7 @@ void lfoStereoModulation() {
         bool differ=false; for(std::size_t i=0;i<rc1.size();++i) differ|=std::abs(rc1[i]-lc1[i])>1e-4f;
         check(lc0==rc0 && lc1==lc0 && differ,"CUTOFF: STEREO 0 identical channels; STEREO 100% RIGHT filters differently, LEFT unchanged");
         // Scalar destinations never change with STEREO (PAN, WT POSITION, FINE).
-        for(auto dest:{ModDestination::Pan,ModDestination::WtPosition,ModDestination::Fine}) {
+        for(auto dest:{ModDestination::Pan,ModDestination::Fine,ModDestination::Detune}) {
             auto a=base; a.routes[0]=route(1,ModSource::Lfo1,dest,.6f,1); auto b=a; b.lfo1.stereo=1.0f;
             std::vector<float> ra,rb; const auto la=render(a,256,8192,&ra),lb=render(b,256,8192,&rb);
             check(la==lb && ra==rb,"scalar destination: turning STEREO changes nothing");
@@ -808,6 +810,129 @@ void lfoStereoModulation() {
         InstrumentState back; check(v33[7]==33 && decodeInstrumentState(v33.data(),v33.size(),back) && back.modulation.lfo2.stereo==.5f && encodeInstrumentState(back)==v33,"STEREO saves as v33, exact round trip");
         auto bad=st; bad.modulation.lfo2.stereo=1.5f;
         auto e2=std::make_unique<OrigamiEngine>(); check(!e2->setModulationState(bad.modulation),"out-of-range STEREO rejected");
+    }
+}
+// ---- mct-origami-dsp-performance-stereo-chain: OSC CHAIN stereo -------------
+struct ChainRender { std::vector<float> left,right; };
+ChainRender renderChain(OrigamiEngine& e,const InstrumentState& st,int block,std::size_t total) {
+    e.restoreInstrumentState(st); e.reset();
+    ChainRender out; out.left.reserve(total); out.right.reserve(total);
+    std::array<float,1024> l{},r{};
+    e.noteOn(57,.8f);
+    for(std::size_t done=0;done<total;) {
+        const auto n=static_cast<int>(std::min<std::size_t>(block,total-done));
+        float* p[]{l.data(),r.data()}; e.process(p,2,n);
+        out.left.insert(out.left.end(),l.begin(),l.begin()+n); out.right.insert(out.right.end(),r.begin(),r.begin()+n);
+        done+=static_cast<std::size_t>(n);
+    }
+    return out;
+}
+// Spectral processes are compiled by a worker: render until a whole pass is
+// served from the cache (no fallback reads), so measured renders are exact.
+bool settleSpectral(OrigamiEngine& e,const InstrumentState& st,std::size_t total) {
+    for(int attempt=0;attempt<400;++attempt) {
+        const auto before=dsp::spectralCompilerStats().fallbackReads;
+        renderChain(e,st,256,total);
+        if(dsp::spectralCompilerStats().fallbackReads==before) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    }
+    return false;
+}
+double matchFraction(const std::vector<float>& a,const std::vector<float>& b,float tolerance) {
+    std::size_t ok=0; for(std::size_t i=0;i<a.size();++i) ok+=std::abs(a[i]-b[i])<=tolerance; return double(ok)/double(a.size());
+}
+void oscChainStereo() {
+    check(dsp::prepareSpectralCompiler(),"spectral worker running");
+    constexpr std::size_t total=9600;
+    // ---- RAND AMP (the acceptance case) ------------------------------------
+    {
+        auto e=std::make_unique<OrigamiEngine>(); check(e->prepare(48000,1024,2),"chain engine");
+        auto base=e->instrumentState();
+        auto& osc=base.oscillators[0];
+        osc.processCount=1; osc.nextProcessId=2;
+        osc.processes[0]={1,dsp::OscProcessType::RandAmp,0.5f,0x1234u,true};
+        base.modulation.nextRouteId=2;
+        base.modulation.routes[0]={1,true,ModSource::Lfo1,{ModDestination::ProcessAmount,osc.id,1},0.9f,true};
+        const auto custom=curveLfo({{0,0,0},{.2f,.9f,.3f},{.35f,-.2f,-.4f},{.6f,1,0},{.8f,-.8f,.5f},{1,0,0}});
+        struct Shape { const char* name; LfoSettings lfo; };
+        LfoSettings sine; LfoSettings tri; tri.shape=LfoShape::Triangle;
+        const std::array<Shape,3> shapes{{{"sine",sine},{"triangle",tri},{"custom",custom}}};
+        int configs=0;
+        for(const auto& shape:shapes) for(int mode=0;mode<4;++mode) {
+            auto st=base;
+            st.modulation.lfo1=shape.lfo; st.modulation.lfo1.rateHz=6.0f;
+            st.modulation.lfo1.mode=mode==0 ? LfoMode::Free : mode==2 ? LfoMode::Envelope : LfoMode::Loop;
+            st.modulation.lfo1.pingPong=mode==3;
+            const char* modeName=mode==0 ? "FREE" : mode==1 ? "RETRIGGER" : mode==2 ? "ENVELOPE" : "PING-PONG";
+            auto mono=st; mono.modulation.lfo1.stereo=0.0f;
+            check(settleSpectral(*e,mono,total),"spectral cache settles (mono)");
+            const auto m0=renderChain(*e,mono,256,total);
+            check(m0.left==m0.right,(std::string("RAND AMP STEREO 0 (")+shape.name+", "+modeName+"): L == R").c_str());
+            for(int angle:{45,90,135,180}) {
+                auto s=st; s.modulation.lfo1.stereo=float(angle)/180.0f;
+                auto ref=st; ref.modulation.lfo1.stereo=0.0f; ref.modulation.lfo1.phase=float(angle)/360.0f;
+                check(settleSpectral(*e,s,total) && settleSpectral(*e,ref,total),"spectral cache settles (stereo)");
+                const auto a=renderChain(*e,s,256,total),b=renderChain(*e,s,256,total);
+                const auto rr=renderChain(*e,ref,256,total);
+                const std::string label=std::string(" (")+shape.name+", "+modeName+", "+std::to_string(angle)+" deg)";
+                check(a.left==b.left && a.right==b.right,("RAND AMP stereo deterministic"+label).c_str());
+                check(a.left==m0.left,("RAND AMP LEFT unchanged by STEREO"+label).c_str());
+                const double match=matchFraction(a.right,rr.left,2e-3f);
+                check(match>=0.97,("RAND AMP RIGHT = the chain at LFO phase + "+std::to_string(angle)+" deg (match "+std::to_string(match)+")"+label).c_str());
+                bool differs=false; for(std::size_t i=0;i<a.left.size();++i) differs|=std::abs(a.left[i]-a.right[i])>1e-3f;
+                // A triangle read by PING-PONG at 180 deg is its own mirror image
+                // (tri(r) == tri(1 - r)): LEFT == RIGHT is the correct result there.
+                const bool mirrorSymmetric=std::string(shape.name)=="triangle" && mode==3 && angle==180;
+                check(differs!=mirrorSymmetric || mode==2,("RAND AMP: LEFT and RIGHT differ (or are a mirror-symmetric case)"+label).c_str());
+                ++configs;
+            }
+        }
+        check(configs==48,"RAND AMP matrix: 3 shapes x 4 modes x 4 angles");
+        auto s=base; s.modulation.lfo1.mode=LfoMode::Loop; s.modulation.lfo1.rateHz=5.0f; s.modulation.lfo1.stereo=1.0f;
+        check(settleSpectral(*e,s,total),"spectral settles");
+        const auto b256=renderChain(*e,s,256,total),b64=renderChain(*e,s,64,total),b1024=renderChain(*e,s,1024,total);
+        check(b64.left==b256.left && b64.right==b256.right && b1024.left==b256.left && b1024.right==b256.right,"RAND AMP stereo: block-size independent (64 / 256 / 1024)");
+    }
+    // ---- every other stereo-capable chain parameter -------------------------
+    {
+        auto e=std::make_unique<OrigamiEngine>(); check(e->prepare(48000,1024,2),"chain engine 2");
+        const auto osc2=e->addOscillatorModule();
+        check(osc2!=0,"second oscillator");
+        auto base=e->instrumentState();
+        auto& osc=base.oscillators[0];
+        base.modulation.lfo1.mode=LfoMode::Loop; base.modulation.lfo1.rateHz=4.0f;
+        base.modulation.nextRouteId=2;
+        struct Case { const char* name; std::function<void(InstrumentState&)> setup; bool stereo; };
+        const auto withProcess=[&](dsp::OscProcessType type){ return [type,id=osc.id](InstrumentState& st){
+            auto& o=st.oscillators[0]; o.processCount=1; o.nextProcessId=2; o.processes[0]={1,type,0.4f,7u,true};
+            st.modulation.routes[0]={1,true,ModSource::Lfo1,{ModDestination::ProcessAmount,id,1},0.8f,true}; }; };
+        const auto withRoute=[&](OscRouteType type){ return [type,id=osc.id,src=osc2](InstrumentState& st){
+            auto& o=st.oscillators[0]; o.routeCount=1; o.nextRouteId=2; o.routes[0]={1,src,type,0.4f,true};
+            st.modulation.routes[0]={1,true,ModSource::Lfo1,{ModDestination::RouteAmount,id,1},0.8f,true}; }; };
+        const std::vector<Case> cases{
+            {"WT POSITION",[id=osc.id](InstrumentState& st){ st.modulation.routes[0]={1,true,ModSource::Lfo1,{ModDestination::WtPosition,id,0},0.8f,true}; },true},
+            {"BEND+ (phase warp)",withProcess(dsp::OscProcessType::BendPlus),true},
+            {"FOLD (phase warp)",withProcess(dsp::OscProcessType::Fold),true},
+            {"SINE WARP (bipolar warp)",withProcess(dsp::OscProcessType::SineWarp),true},
+            {"RING MOD (post route)",withRoute(OscRouteType::RingMod),true},
+            {"WAVE FOLD (post route)",withRoute(OscRouteType::WaveFold),true},
+            {"PM (pre route)",withRoute(OscRouteType::PhaseMod),true},
+            {"PSK (pre route)",withRoute(OscRouteType::PhaseSkew),true},
+            {"FM (pre route, scalar)",withRoute(OscRouteType::FrequencyMod),false}};
+        for(const auto& c:cases) {
+            auto st=base; c.setup(st);
+            auto mono=st; const auto m0=renderChain(*e,mono,256,total);
+            auto s=st; s.modulation.lfo1.stereo=1.0f;
+            auto ref=st; ref.modulation.lfo1.phase=0.5f;
+            const auto a=renderChain(*e,s,256,total),rr=renderChain(*e,ref,256,total);
+            check(m0.left==m0.right && a.left==m0.left,(std::string(c.name)+": STEREO 0 is mono; LEFT unchanged by STEREO").c_str());
+            if(c.stereo) {
+                const double match=matchFraction(a.right,rr.left,1e-3f);
+                check(match>=0.99,(std::string(c.name)+": RIGHT = LFO at +180 deg (match "+std::to_string(match)+")").c_str());
+                bool differs=false; for(std::size_t i=0;i<a.left.size();++i) differs|=std::abs(a.left[i]-a.right[i])>1e-3f;
+                check(differs,(std::string(c.name)+": channels differ at 180 deg").c_str());
+            } else check(a.right==a.left,(std::string(c.name)+": scalar (FM changes the phase increment): RIGHT follows LEFT").c_str());
+        }
     }
 }
 
@@ -859,6 +984,7 @@ int main() {
         renderSeparation();
         lfoFunctionProcessing();
         lfoStereoModulation();
+        oscChainStereo();
         if(std::getenv("ORIGAMI_LFO_BENCH")) lfoFunctionBenchmark();
         std::cout<<"PASS: "<<checks<<" modulation foundation checks\\n";
         return 0;

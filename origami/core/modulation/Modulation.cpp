@@ -1183,6 +1183,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         opStereo[c.slot]=c.stereo;
     }
     stereoGroupCount_=0;
+    moduleReadGroups_.fill(0u); readGroupsAll_=0; readTargets_={};
     for(std::size_t i=0;i<count_;++i) {
         auto& g=groups_[i];
         g.stereo=false; g.stereoGlobalLfos=g.stereoVoiceLfos=0; g.stereoGlobalOps=g.stereoVoiceOps=0;
@@ -1198,7 +1199,16 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             if(out%maxControlOutputs==0 && opStereo[out/maxControlOutputs]) g.stereoVoiceOps|=1u<<r;
         }
         g.stereo=g.stereoGlobalLfos!=0 || g.stereoVoiceLfos!=0 || g.stereoGlobalOps!=0 || g.stereoVoiceOps!=0;
-        if(g.stereo) stereoGroups_[stereoGroupCount_++]=static_cast<std::uint8_t>(i);
+        if(g.stereo) {
+            stereoGroups_[stereoGroupCount_++]=static_cast<std::uint8_t>(i);
+            if(stereoOscillatorRead(g.address.parameter) && g.slot<16) {
+                moduleReadGroups_[g.slot]|=1u<<i; readGroupsAll_|=1u<<i;
+                std::uint8_t item=static_cast<std::uint8_t>(g.itemSlot);
+                if(g.address.parameter==ModDestination::Process1Amount || g.address.parameter==ModDestination::Route1Amount) item=0;
+                if(g.address.parameter==ModDestination::Process2Amount || g.address.parameter==ModDestination::Route2Amount) item=1;
+                readTargets_[i]={g.address.parameter,item};
+            }
+        }
     }
     stereoPlan_=stereoGroupCount_!=0;
 }
@@ -1280,13 +1290,14 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
 }
 // RIGHT channel of a stereo-capable destination: the same normalized ->
 // parameter mapping (and clamping) as write(), into the frame's right slots.
-void CompiledModulation::writeRight(ModulationFrame& f,const Group& g,float n) noexcept {
+void CompiledModulation::writeRight(ModulationFrame& f,const Group& g,std::size_t group,float n) noexcept {
     if(!std::isfinite(n)) n=0.0f;
     n=std::clamp(n,0.0f,1.0f);
     float v=g.minimum+n*(g.maximum-g.minimum);
     if(g.address.parameter==ModDestination::Cutoff)
         v=g.minimum*static_cast<float>(dsp::fastExp2Audio(static_cast<double>(n)*g.log2Span));
     auto& st=f.stereo;
+    st.right[group]=v; st.rightMask|=1u<<group;
     switch(g.address.parameter) {
         case ModDestination::Level: st.level[g.slot]=v; st.levelMask|=std::uint16_t(1u<<g.slot); break;
         case ModDestination::Cutoff: st.cutoff=v; st.cutoffSplit=true; break;
@@ -2272,7 +2283,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
     // Stereo terms are evaluated only while some LFO / operator actually has a
     // right value (STEREO > 0); otherwise the frame is simply mono.
     const bool stereoNow=stereoPlan_ && (f.stereo.globalLfo.mask!=0 || f.stereo.operatorMask!=0);
-    if(stereoPlan_) { f.stereo.levelMask=0; f.stereo.cutoffSplit=f.stereo.resonanceSplit=false; f.stereo.active=stereoNow; }
+    if(stereoPlan_) { f.stereo.levelMask=0; f.stereo.rightMask=0; f.stereo.cutoffSplit=f.stereo.resonanceSplit=false; f.stereo.active=stereoNow; }
     for(std::size_t i=0;i<count_;++i) {
         const auto& g=groups_[i];
         if(isFxDestination(g.address.parameter)) continue;
@@ -2295,7 +2306,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
         if(stereoNow && g.stereo) {
             const float d=stereoDelta(g,f,&sources,nullptr,nullptr,false);
             f.stereo.delta[i]=d;
-            if(d!=0.0f) writeRight(f,g,n+d);
+            if(d!=0.0f) writeRight(f,g,i,n+d);
         }
     }
     if(f.filterEnabled) f.filter=globalFilter(rate,f.cutoff,f.resonance);
@@ -2325,10 +2336,13 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
             // voice's own stereo terms; zero means RIGHT == LEFT here.
             const float base=f.stereo.active && std::isfinite(f.stereo.delta[i]) ? f.stereo.delta[i] : 0.0f;
             const float d=base+stereoDelta(g,f,nullptr,&sources,voiceStereo,true);
-            if(d!=0.0f) writeRight(f,g,n+d);
-            else if(g.address.parameter==ModDestination::Level) f.stereo.levelMask&=std::uint16_t(~(1u<<g.slot));
-            else if(g.address.parameter==ModDestination::Cutoff) f.stereo.cutoffSplit=false;
-            else if(g.address.parameter==ModDestination::Resonance) f.stereo.resonanceSplit=false;
+            if(d!=0.0f) writeRight(f,g,i,n+d);
+            else {
+                f.stereo.rightMask&=~(1u<<i);
+                if(g.address.parameter==ModDestination::Level) f.stereo.levelMask&=std::uint16_t(~(1u<<g.slot));
+                else if(g.address.parameter==ModDestination::Cutoff) f.stereo.cutoffSplit=false;
+                else if(g.address.parameter==ModDestination::Resonance) f.stereo.resonanceSplit=false;
+            }
         }
     }
     if(voiceFilter_) f.filter=filterTable_.make(f.cutoff,f.resonance);

@@ -138,7 +138,8 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
     // LEFT's state the next time it is needed).
     bool stereoActive=false;
     if constexpr(Stereo) {
-        stereoActive=effective->stereo.levelMask!=0 || effective->stereo.filterSplit();
+        stereoActive=effective->stereo.levelMask!=0 || effective->stereo.filterSplit() ||
+                     (effective->stereo.rightMask&compiled.readStereoGroups())!=0;
         if(!stereoActive) rightFilterLive_=0;
     }
     // Modules no voice route writes are read from the global frame (N07).
@@ -250,22 +251,97 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         }
         const auto& processPlan=*processes;
 
+        // mct-origami-dsp-performance-stereo-chain: RIGHT read parameters when a
+        // stereo group addresses this module's oscillator read (WT POSITION,
+        // OSC CHAIN process / route amounts). The group -> target map is
+        // prepared by the compiled plan; nothing is searched here.
+        std::uint32_t readMask=0;
+        if constexpr(Stereo) if(stereoActive) readMask=effective->stereo.rightMask&compiled.moduleReadStereoGroups(m);
+        float positionRight=position;
+        dsp::OscProcessPlan processPlanRight;
+        std::array<float,maxOscRoutes> routeAmountRight{};
+        double phaseOffsetRight=routedPhaseOffset,phaseSkewRight=routedPhaseSkew;
+        if(readMask!=0) {
+            processPlanRight=processPlan;
+            const std::size_t routeSlots=modulePlan.dynamicRoutes ? std::min<std::size_t>(module.routeCount,maxOscRoutes) : 2u;
+            for(std::size_t r=0;r<routeSlots;++r)
+                routeAmountRight[r]=modulePlan.dynamicRoutes ? module.routes[r].amount : (r==0 ? module.route1Amount : module.route2Amount);
+            for(std::uint32_t bits=readMask;bits!=0;bits&=bits-1u) {
+                const auto i=static_cast<std::size_t>(__builtin_ctz(bits));
+                const auto& target=compiled.readTarget(i);
+                const float value=effective->stereo.right[i];
+                switch(target.parameter) {
+                    case ModDestination::WtPosition: positionRight=value; break;
+                    case ModDestination::ProcessAmount: case ModDestination::Process1Amount: case ModDestination::Process2Amount:
+                        if(modulePlan.dynamicProcesses!=(target.parameter==ModDestination::ProcessAmount)) break;
+                        for(std::size_t p=0;p<modulePlan.processCount;++p)
+                            if(modulePlan.processes[p]==target.item) processPlanRight.stages[p].amount=value;
+                        break;
+                    case ModDestination::RouteAmount: case ModDestination::Route1Amount: case ModDestination::Route2Amount:
+                        if(modulePlan.dynamicRoutes!=(target.parameter==ModDestination::RouteAmount)) break;
+                        if(target.item<maxOscRoutes) routeAmountRight[target.item]=value;
+                        break;
+                    default: break;
+                }
+            }
+            // PM / PSK read with RIGHT's amounts; FM stays LEFT (it changes the
+            // phase increment, which is the oscillator's state).
+            phaseOffsetRight=0.0; phaseSkewRight=0.0;
+            for(std::size_t r=0;r<modulePlan.preCount;++r) {
+                const auto& route=modulePlan.preRoutes[r];
+                if(route.source<0 || route.source>=static_cast<int>(previousOscillatorSamples_.size())) continue;
+                const float source=std::clamp(previousOscillatorSamples_[static_cast<std::size_t>(route.source)],-1.0f,1.0f);
+                const float amount=std::clamp(routeAmountRight[route.amountSlot],-1.0f,1.0f);
+                if(route.type==OscRouteType::PhaseMod) phaseOffsetRight+=static_cast<double>(source*amount)*0.5;
+                else if(route.type==OscRouteType::PhaseSkew) {
+                    phaseSkewRight+=static_cast<double>(source*amount)*0.42;
+                    phaseSkewRight=std::clamp(phaseSkewRight,-0.44,0.44);
+                }
+            }
+        }
+
         const auto renderOscillator=[&](dsp::WavetableOscillator& oscillator,double frequency) noexcept {
             return modulePlan.simple ? oscillator.nextSimple(table,frequency,sampleRate_,position)
                 : oscillator.next(table,frequency,sampleRate_,position,processPlan,routedPhaseOffset,routedPhaseSkew);
         };
-        float oscillatorMix=0.0f;
-        if(count==1) {
-            oscillatorMix=renderOscillator(moduleOscillators_[m][0],baseFrequency);
-        } else {
-            float unisonStack=0.0f;
-            for(unsigned u=0;u<count;++u) {
-                unisonStack+=renderOscillator(moduleOscillators_[m][u],baseFrequency*runtime.detuneRatios[u]);
-            }
-            unisonStack/=static_cast<float>(count);
+        float oscillatorMix=0.0f,oscillatorMixRight=0.0f;
+        if(readMask==0) {
+            if(count==1) {
+                oscillatorMix=renderOscillator(moduleOscillators_[m][0],baseFrequency);
+            } else {
+                float unisonStack=0.0f;
+                for(unsigned u=0;u<count;++u) {
+                    unisonStack+=renderOscillator(moduleOscillators_[m][u],baseFrequency*runtime.detuneRatios[u]);
+                }
+                unisonStack/=static_cast<float>(count);
 
-            const float centre=renderOscillator(moduleBlendCenters_[m],baseFrequency);
-            oscillatorMix=centre+(unisonStack-centre)*blend;
+                const float centre=renderOscillator(moduleBlendCenters_[m],baseFrequency);
+                oscillatorMix=centre+(unisonStack-centre)*blend;
+            }
+        } else {
+            // One phase advance per oscillator, LEFT and RIGHT reads.
+            auto& hints=rightSpectralHints_[m];
+            const auto renderStereo=[&](dsp::WavetableOscillator& oscillator,double frequency,float& right) noexcept {
+                return modulePlan.simple ? oscillator.nextStereoSimple(table,frequency,sampleRate_,position,positionRight,hints,right)
+                    : oscillator.nextStereo(table,frequency,sampleRate_,position,processPlan,routedPhaseOffset,routedPhaseSkew,
+                                            positionRight,processPlanRight,phaseOffsetRight,phaseSkewRight,hints,right);
+            };
+            if(count==1) {
+                oscillatorMix=renderStereo(moduleOscillators_[m][0],baseFrequency,oscillatorMixRight);
+            } else {
+                float unisonStack=0.0f,unisonStackRight=0.0f;
+                for(unsigned u=0;u<count;++u) {
+                    float right=0.0f;
+                    unisonStack+=renderStereo(moduleOscillators_[m][u],baseFrequency*runtime.detuneRatios[u],right);
+                    unisonStackRight+=right;
+                }
+                unisonStack/=static_cast<float>(count);
+                unisonStackRight/=static_cast<float>(count);
+                float centreRight=0.0f;
+                const float centre=renderStereo(moduleBlendCenters_[m],baseFrequency,centreRight);
+                oscillatorMix=centre+(unisonStack-centre)*blend;
+                oscillatorMixRight=centreRight+(unisonStackRight-centreRight)*blend;
+            }
         }
         if(observe) {
             visualization_.moduleSamples[m]=oscillatorMix;
@@ -341,7 +417,11 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         for(std::size_t r=0;r<modulePlan.postCount;++r) {
             const auto& route=modulePlan.postRoutes[r];
             oscillatorMix=applyPostRoute(oscillatorMix,route.source,route.type,routeAmount(route));
+            // RIGHT: the same post route with RIGHT's amount (the source tap is
+            // the source oscillator's LEFT / reference sample).
+            if(readMask!=0) oscillatorMixRight=applyPostRoute(oscillatorMixRight,route.source,route.type,routeAmountRight[route.amountSlot]);
         }
+        if(readMask!=0 && !std::isfinite(oscillatorMixRight)) oscillatorMixRight=0.0f;
 
         if(!std::isfinite(oscillatorMix)) {
             for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
@@ -383,17 +463,22 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         const auto& stereo=effective->stereo;
         const bool stereoLevel=((stereo.levelMask>>m)&1u)!=0;
         const bool stereoFilter=effective->filterEnabled && stereo.filterSplit();
+        const bool readSplit=readMask!=0;
         const auto rightBit=std::uint16_t(1u<<m);
 
         float sampleValue=oscillatorMix*envelopeValue;
-        float sampleRight=sampleValue;
+        // A stereo READ already made RIGHT a different signal: it needs its own
+        // filter state even when the coefficients are shared.
+        const float inputRight=readSplit ? oscillatorMixRight*envelopeValue : sampleValue;
+        float sampleRight=inputRight;
         if(effective->filterEnabled) {
-            if(stereoFilter && (rightFilterLive_&rightBit)==0) { moduleFiltersRight_[m]=moduleFilters_[m]; rightFilterLive_|=rightBit; } // continue from LEFT's state: no click
+            const bool rightFilter=stereoFilter || readSplit;
+            if(rightFilter && (rightFilterLive_&rightBit)==0) { moduleFiltersRight_[m]=moduleFilters_[m]; rightFilterLive_|=rightBit; } // continue from LEFT's state: no click
             const float input=sampleValue;
             sampleValue=moduleFilters_[m].next(input,effective->filter);
             filtersQuiet=filtersQuiet && moduleFilters_[m].quiet();
-            if(stereoFilter) {
-                sampleRight=moduleFiltersRight_[m].next(input,stereo.filter);
+            if(rightFilter) {
+                sampleRight=moduleFiltersRight_[m].next(inputRight,stereoFilter ? stereo.filter : effective->filter);
                 filtersQuiet=filtersQuiet && moduleFiltersRight_[m].quiet();
             } else { rightFilterLive_&=std::uint16_t(~rightBit); sampleRight=sampleValue; }
         } else {
@@ -403,7 +488,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         const float leveled=sampleValue*level;
         sampleValue=leveled*modulePlan.mainBusSend;
         if(!std::isfinite(sampleValue)) {moduleFilters_[m].reset();sampleValue=0.0f;}
-        if(!stereoLevel && !stereoFilter) {
+        if(!stereoLevel && !stereoFilter && !readSplit) {
             // Same post-filter signal, scaled per user bus. Each destination
             // receives exactly its own send; MAIN is unaffected by user sends.
             if(modulePlan.auxSends && std::isfinite(leveled)) {
