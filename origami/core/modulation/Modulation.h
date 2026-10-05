@@ -87,9 +87,14 @@ struct LfoSettings {
     float quantize=0.0f;        // 0..1  amplitude levels: 0 = continuous, 1 = 2 levels
     float entropy=0.0f;         // 0..1  organic, evolving timing/trajectory drift
     float fracture=0.0f;        // 0..1  deterministic structural fragmentation
+    // mct-origami-stereo-modulation: RIGHT reads the same processed LFO at a
+    // phase offset of stereo * 180 deg (LEFT is the reference). 0 = mono.
+    float stereo=0.0f;          // 0..1
     static constexpr float maxTimeSeconds=10.0f;
 };
 // True when every FUNC processor and PING-PONG is neutral (legacy path).
+// STEREO is deliberately not part of this test: it never changes LEFT, so the
+// LEFT/reference channel takes exactly the same path with or without it.
 inline bool lfoFunctionsNeutral(const LfoSettings& s) noexcept {
     return !s.pingPong && s.smooth==0.0f && s.attackSeconds==0.0f && s.delaySeconds==0.0f && s.phase==0.0f &&
            s.skew==0.0f && s.quantize==0.0f && s.entropy==0.0f && s.fracture==0.0f;
@@ -472,13 +477,17 @@ class Lfo {
 public:
     // Restart the lifecycle (note on / retrigger / engine reset). The entropy
     // stream is kept: callers set it per lifecycle with setStream().
-    void reset() noexcept { phase_=0; cycles_=0; samples_=0; smoothed_=0; smoothReady_=false; read_=0; }
+    void reset() noexcept { phase_=0; cycles_=0; samples_=0; smoothed_=smoothedRight_=0; smoothReady_=smoothReadyRight_=false; read_=0; }
     // Deterministic ENTROPY stream (global: per LFO index; voice: per voice
     // lifecycle, the same seed family NODES uses for per-voice randomness).
     // FRACTURE structure: per LFO index, identical for every voice.
     void setStreams(std::uint32_t entropy,std::uint32_t structure) noexcept;
     std::uint32_t stream() const noexcept { return stream_; }
     float next(const LfoSettings&,double sampleRate) noexcept;
+    // LEFT (returned, bit-identical to next()) and RIGHT (out). RIGHT shares
+    // the lifecycle (DELAY / ATTACK), the ENTROPY trajectory and the FRACTURE
+    // structure; it only reads at +stereo * 0.5 cycle. stereo == 0: right = left.
+    float nextStereo(const LfoSettings&,double sampleRate,float& right) noexcept;
     static float shape(LfoShape,double phase) noexcept;
     static float mseg(const LfoSettings&,double phase) noexcept;
     double phase() const noexcept { return phase_; }
@@ -499,13 +508,13 @@ public:
     static std::uint32_t globalStream(std::size_t lfoIndex) noexcept;
     static std::uint32_t voiceStream(std::uint32_t voiceSeed,std::size_t lfoIndex) noexcept;
 private:
-    float legacyNext(const LfoSettings&,double sampleRate) noexcept;
-    float processedNext(const LfoSettings&,double sampleRate) noexcept;
+    float legacyNext(const LfoSettings&,double sampleRate,float* right=nullptr) noexcept;
+    float processedNext(const LfoSettings&,double sampleRate,float* right=nullptr) noexcept;
     double phase_=0;          // accumulator, [0,1) (ENVELOPE clamps at 1)
     double cycles_=0;         // unwrapped accumulator: the ENTROPY clock
     std::uint64_t samples_=0; // samples since the lifecycle start (DELAY / ATTACK)
     double read_=0;
-    float smoothed_=0;
+    float smoothed_=0,smoothedRight_=0;
     float smoothAlpha_=1,smoothKey_=-1,smoothRate_=-1,smoothSampleRate_=-1;
     std::uint32_t stream_=0,structure_=0;
     // Hot-path caches (pure functions of the inputs; never change output).
@@ -515,7 +524,7 @@ private:
     float quantizeKey_=-1; int quantizeLevels_=0;
     const struct FractureTable* fractureTable_=nullptr; // shared, built at static init
     float noise(std::size_t layer,double x,std::uint32_t seed) noexcept;
-    bool smoothReady_=false;
+    bool smoothReady_=false,smoothReadyRight_=false;
 };
 static_assert(sizeof(Lfo)<=160,"Lfo runtime grew: 4 per voice x every voice");
 
@@ -620,6 +629,56 @@ private:
     std::atomic<unsigned> middle_{1};
 };
 
+// ---- mct-origami-stereo-modulation ----------------------------------------
+// Every existing modulation value is the LEFT / reference channel and keeps
+// its exact scalar path. Stereo is a SPARSE right channel layered on top:
+// only stereo LFOs produce a right value, only stereo-capable destinations
+// keep one, and nothing is computed while no stereo LFO reaches one of them.
+//
+// Destination capability (audited against the DSP that owns each value):
+//  A Stereo            LEVEL (per-oscillator gain before pan), CUTOFF and
+//                      RESONANCE (per-oscillator filter, independent L/R state)
+//  B RequiresStereoDsp WT POSITION, OCTAVE / SEMITONE / FINE (one oscillator
+//                      phase per module), OSC process and route amounts (inside
+//                      the mono oscillator chain), FX parameters (one value per
+//                      effect node), MASTER GAIN (per voice, or after FX at
+//                      block rate depending on FX ORDER)
+//  C Scalar            PAN, DETUNE, TUNING, TRANSPOSE, PORTA, SWING
+//  D Ambiguous         ENV / LFO SCALING (they scale the sources themselves)
+// B, C and D read the LEFT / reference value: turning STEREO never changes them.
+enum class StereoCapability : std::uint8_t { Stereo=0, RequiresStereoDsp=1, Scalar=2, Ambiguous=3 };
+constexpr StereoCapability stereoCapability(ModDestination d) noexcept {
+    switch(d) {
+        case ModDestination::Level: case ModDestination::Cutoff: case ModDestination::Resonance: return StereoCapability::Stereo;
+        case ModDestination::WtPosition: case ModDestination::Octave: case ModDestination::Semitone: case ModDestination::Fine:
+        case ModDestination::Process1Amount: case ModDestination::Process2Amount: case ModDestination::ProcessAmount:
+        case ModDestination::Route1Amount: case ModDestination::Route2Amount: case ModDestination::RouteAmount:
+        case ModDestination::FxParameter: case ModDestination::MasterGain: return StereoCapability::RequiresStereoDsp;
+        case ModDestination::EnvelopeScaling: case ModDestination::LfoScaling: return StereoCapability::Ambiguous;
+        default: return StereoCapability::Scalar;
+    }
+}
+// RIGHT values of the four LFOs this sample (bit i of mask: LFO i is stereo,
+// so its right value may differ; otherwise right == left by definition).
+struct StereoSourceValues {
+    std::array<float,4> lfo{};
+    std::uint8_t mask=0;
+};
+// The right channel carried by a ModulationFrame. Valid entries are flagged;
+// everything else means "same as LEFT".
+struct StereoModulationFrame {
+    StereoSourceValues globalLfo{};                         // FREE (global) LFO pairs
+    std::array<float,ModulationState::capacity> delta{};   // per group: normalized RIGHT - LEFT
+    std::array<float,ModulationState::maxControlOperators> operatorRight{}; // port 0, by operator slot
+    std::uint32_t operatorMask=0;                           // bit slot: operatorRight valid
+    std::array<float,16> level{};                           // per module
+    std::uint16_t levelMask=0;                              // bit module: level[m] is RIGHT's level
+    bool cutoffSplit=false,resonanceSplit=false;
+    float cutoff=8000.0f,resonance=.1f;
+    dsp::LowPassCoefficients filter{};                      // RIGHT's filter (valid when split)
+    bool filterSplit() const noexcept { return cutoffSplit || resonanceSplit; }
+};
+
 struct ModulationFrame {
     std::array<OscillatorModuleState,16> modules{};
     ControlEventContext events{}; // N05: timing (global) + note state (per voice)
@@ -635,6 +694,7 @@ struct ModulationFrame {
     // False when FX ORDER = PRE MASTER: the renderer applies master gain after the FX graph.
     bool applyMaster=true;
     std::array<float,ModulationState::capacity> normalized{};
+    StereoModulationFrame stereo{};
     // N07: copy everything a voice reads or writes, but only the ACTIVE
     // oscillator modules: the 16 module slots are 8 KB of this 8.9 KB frame,
     // and a voice renders only the plan's active modules. Inactive slots keep
@@ -642,7 +702,8 @@ struct ModulationFrame {
     // fields above (the static_assert below trips when the frame changes).
     // Operator outputs are NOT copied: per-voice operators read GLOBAL operator
     // outputs from the global frame and write their own here.
-    void copyForVoice(const ModulationFrame& g,const std::array<std::uint8_t,16>& active,std::size_t activeCount,std::uint16_t moduleMask=0xffffu) noexcept {
+    void copyForVoice(const ModulationFrame& g,const std::array<std::uint8_t,16>& active,std::size_t activeCount,std::uint16_t moduleMask=0xffffu,bool withStereo=false) noexcept {
+        if(withStereo) stereo=g.stereo; // only when the plan carries stereo terms
         for(std::size_t i=0;i<activeCount && i<active.size();++i)
             if((moduleMask>>active[i])&1u) modules[active[i]]=g.modules[active[i]];
         events=g.events; globalSources=g.globalSources;
@@ -654,7 +715,7 @@ struct ModulationFrame {
 
 // Fields copied by ModulationFrame::copyForVoice: the size is pinned so any
 // field change trips here and forces copyForVoice to be updated with it.
-static_assert(sizeof(ModulationFrame)==8928,"ModulationFrame changed: update copyForVoice");
+static_assert(sizeof(ModulationFrame)==8928+sizeof(StereoModulationFrame),"ModulationFrame changed: update copyForVoice");
 
 class CompiledModulation {
 public:
@@ -679,7 +740,12 @@ public:
     // read there, so a voice's frame never needs a copy of every operator output.
     void evaluateVoiceOperators(ModulationFrame&,const std::array<float,voiceSourceCount>&,OperatorState&,
                                 std::array<std::uint32_t,operatorSlotCount>* eventCounts=nullptr,
-                                const ModulationFrame* global=nullptr) const noexcept;
+                                const ModulationFrame* global=nullptr,
+                                const StereoSourceValues* voiceStereo=nullptr) const noexcept;
+    // mct-origami-stereo-modulation: whether any stereo-capable destination is
+    // reached by an LFO (directly or through component-wise NODES operators).
+    // False: no right channel is ever computed, copied or read (mono plan).
+    bool hasStereoPlan() const noexcept { return stereoPlan_; }
     // N05: ENV 2 / ENV 3 retrigger requests produced this sample (bit 1 / 2).
     std::uint8_t envelopeTriggers(const ModulationFrame&) const noexcept;
     bool hasEnvelopeTriggers() const noexcept { return envelopeTriggerCount_!=0; }
@@ -703,7 +769,8 @@ public:
     void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;
     void advance(float smoothing) noexcept;
     void globalFrame(ModulationFrame&,const std::array<float,globalSourceCount>&,double sampleRate) const noexcept;
-    void voiceFrame(ModulationFrame&,const std::array<float,voiceSourceCount>&,double sampleRate) const noexcept;
+    void voiceFrame(ModulationFrame&,const std::array<float,voiceSourceCount>&,double sampleRate,
+                    const StereoSourceValues* voiceStereo=nullptr) const noexcept;
     bool hasVoiceRoutes() const noexcept {return voiceCount_!=0;}
     bool hasFxRoutes() const noexcept {return fxCount_!=0;}
     bool hasFxVoiceRoutes() const noexcept {return fxVoice_;}
@@ -748,6 +815,11 @@ private:
         // N04: operator storage slots feeding this group.
         std::array<std::uint8_t,operatorSlotCount> globalOpSlots{},voiceOpSlots{};
         std::uint8_t globalOpSlotCount=0,voiceOpSlotCount=0;
+        // Stereo terms (stereo-capable destinations only): which of this
+        // group's sources may carry a different RIGHT value.
+        bool stereo=false;
+        std::uint8_t stereoGlobalLfos=0,stereoVoiceLfos=0; // bit i: LFO i
+        std::uint32_t stereoGlobalOps=0,stereoVoiceOps=0;  // bit: compact routed operator slot
     };
     // One compiled operator, in topological order; inputs resolved to slots.
     struct CompiledOp {
@@ -770,6 +842,10 @@ private:
         float k0=0.0f,k1=0.0f;               // Constant: k0. Linear: a*k0+k1. ClampRange: [k0, k1]
         std::uint8_t globalOperatorInputs=0; // bit k: input k reads a GLOBAL operator's output
         ControlOpPrepared prepared{};
+        // Stereo: component-wise continuous operators (the stateless shaping /
+        // math family and SMOOTH) whose inputs may be stereo. EVENT / GATE and
+        // stateful generators stay scalar (they never set a right value).
+        bool stereo=false;
     };
     void runOperator(const CompiledOp&,const std::array<float,voiceSourceCount>*,ModulationFrame&,ControlOpRuntime&,
                      const ModulationFrame& globalOperators) const noexcept;
@@ -780,6 +856,18 @@ private:
     }
     float operatorRouteValue(std::size_t operatorSlot,float raw,bool bipolar) const noexcept;
     static float operatorInput(std::int16_t input,const std::array<float,voiceSourceCount>*,const ModulationFrame&,const ModulationFrame& operators) noexcept;
+    // RIGHT value of an operator input (LEFT when that input carries no right value).
+    static float operatorInputRight(std::int16_t input,float left,const StereoSourceValues* voiceStereo,
+                                    const ModulationFrame& f,const ModulationFrame& operators) noexcept;
+    void runOperatorRight(const CompiledOp&,const std::array<float,voiceSourceCount>*,const StereoSourceValues*,
+                          ModulationFrame&,ControlOpRuntime&,const ModulationFrame& globalOperators) const noexcept;
+    static void writeRight(ModulationFrame&,const Group&,float normalized) noexcept;
+    float stereoDelta(const Group&,const ModulationFrame&,const std::array<float,globalSourceCount>*,
+                      const std::array<float,voiceSourceCount>*,const StereoSourceValues*,bool voice) const noexcept;
+    void finishStereo(ModulationFrame&,bool voice) const noexcept;
+    bool stereoPlan_=false;
+    std::array<std::uint8_t,ModulationState::capacity> stereoGroups_{};
+    std::size_t stereoGroupCount_=0;
     std::array<CompiledOp,operatorSlotCount> ops_{};
     std::size_t opCount_=0,globalOpCount_=0,voiceOpCount_=0;
     // N07: execution order per domain (indices into ops_), so neither loop

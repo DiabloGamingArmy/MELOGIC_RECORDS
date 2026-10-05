@@ -139,6 +139,10 @@ private:
     dsp::Envelope envelope_,env2_,env3_;
     std::array<Lfo,4> noteLfos_{};
     std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFilters_{};
+    // mct-origami-stereo-modulation: RIGHT's filter state, used only while a
+    // module's CUTOFF / RESONANCE differ between channels (bit m live).
+    std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFiltersRight_{};
+    std::uint16_t rightFilterLive_=0;
     NoteAddress address_ {};
     std::uint64_t order_ = 0;
     double sampleRate_ = 48000, frequency_ = 440, targetFrequency_ = 440, glideRatio_ = 1;

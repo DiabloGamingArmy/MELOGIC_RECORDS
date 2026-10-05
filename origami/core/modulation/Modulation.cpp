@@ -39,7 +39,8 @@ bool validLfo(const LfoSettings& s) {
     // FUNC processing ranges (defaults are the neutral values).
     if(!range(s.smooth,0.f,1.f) || !range(s.attackSeconds,0.f,LfoSettings::maxTimeSeconds) ||
        !range(s.delaySeconds,0.f,LfoSettings::maxTimeSeconds) || !range(s.phase,0.f,1.f) ||
-       !range(s.skew,-1.f,1.f) || !range(s.quantize,0.f,1.f) || !range(s.entropy,0.f,1.f) || !range(s.fracture,0.f,1.f))
+       !range(s.skew,-1.f,1.f) || !range(s.quantize,0.f,1.f) || !range(s.entropy,0.f,1.f) || !range(s.fracture,0.f,1.f) ||
+       !range(s.stereo,0.f,1.f))
         return false;
     float previousX=-1.0f;
     for(std::size_t i=0;i<s.pointCount;++i) {
@@ -317,22 +318,33 @@ float Lfo::next(const LfoSettings& s,double sampleRate) noexcept {
     return lfoFunctionsNeutral(s) ? legacyNext(s,sampleRate) : processedNext(s,sampleRate);
 }
 
-float Lfo::legacyNext(const LfoSettings& s,double sampleRate) noexcept {
+float Lfo::nextStereo(const LfoSettings& s,double sampleRate,float& right) noexcept {
+    // LEFT takes exactly the path next() takes (bit-identical); RIGHT is only
+    // evaluated when STEREO is non-zero, alongside, from the same state.
+    if(!(s.stereo>0.0f)) { const float left=next(s,sampleRate); right=left; smoothReadyRight_=false; return left; }
+    return lfoFunctionsNeutral(s) ? legacyNext(s,sampleRate,&right) : processedNext(s,sampleRate,&right);
+}
+
+float Lfo::legacyNext(const LfoSettings& s,double sampleRate,float* right) noexcept {
     // The accepted pre-FUNC LFO, unchanged (bit-identical output). The extra
     // bookkeeping (lifecycle samples, unwrapped cycles, read position) never
     // feeds this path's output; it lets FUNC take over mid-note seamlessly.
     ++samples_;
     // Envelope mode is a one-shot MSEG: after reaching the right endpoint it
     // remains there until reset by the next note. Loop and Free wrap normally.
+    // RIGHT (stereo only): the same curve at +stereo * 0.5 cycle; a finished
+    // one-shot holds the position where RIGHT's cycle ends.
+    const double offset=right!=nullptr ? 0.5*double(std::clamp(s.stereo,0.0f,1.0f)) : 0.0;
     if(s.mode==LfoMode::Envelope && phase_>=1.0) {
         read_=1.0;
-        if(s.pointCount>=2 && s.pointCount<=s.points.size())
-            return s.points[s.pointCount-1].y;
-        return shape(s.shape,0.999999);
+        const float end=s.pointCount>=2 && s.pointCount<=s.points.size() ? s.points[s.pointCount-1].y : shape(s.shape,0.999999);
+        if(right!=nullptr) { const double r=offset-std::floor(offset); *right=r<1.0e-12 ? end : mseg(s,r); }
+        return end;
     }
 
     read_=phase_;
     const float out=mseg(s,phase_);
+    if(right!=nullptr) { double r=phase_+offset; r-=std::floor(r); *right=mseg(s,r); }
     if(std::isfinite(sampleRate) && sampleRate>0 && std::isfinite(s.rateHz)) {
         const double increment=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
         phase_+=increment;
@@ -502,7 +514,7 @@ std::uint32_t Lfo::voiceStream(std::uint32_t voiceSeed,std::size_t i) noexcept {
     return mix32(voiceSeed^(static_cast<std::uint32_t>(i)+1u)*0x85ebca6bu)|1u;
 }
 
-float Lfo::processedNext(const LfoSettings& s,double sampleRate) noexcept {
+float Lfo::processedNext(const LfoSettings& s,double sampleRate,float* right) noexcept {
     // FUNC pipeline (one sample):
     //  1 DELAY      lifecycle gate: neutral 0 output, accumulator frozen
     //  2 BASE       accumulator progress (ENVELOPE: one cycle, then hold)
@@ -520,8 +532,9 @@ float Lfo::processedNext(const LfoSettings& s,double sampleRate) noexcept {
         ? static_cast<std::uint64_t>(std::llround(double(s.delaySeconds)*sampleRate)) : 0u;
     if(samples_<onset) {
         ++samples_;
-        smoothReady_=false;
+        smoothReady_=false; smoothReadyRight_=false;
         read_=double(s.phase)-std::floor(double(s.phase));
+        if(right!=nullptr) *right=0.0f; // the lifecycle (DELAY) is shared
         return 0.0f;
     }
 
@@ -538,20 +551,37 @@ float Lfo::processedNext(const LfoSettings& s,double sampleRate) noexcept {
     // A finished one-shot reads the END of the cycle that began at PHASE
     // (never wraps back into a loop).
     if(envelope && cycles_>=1.0 && pos<1.0e-12) pos=1.0;
-    if(s.skew!=0.0f) pos=skewPhase(pos,s.skew);
-    if(s.pingPong) pos=pingPongPhase(pos);
-    if(s.fracture>0.0f) pos=fractureTable_ ? fractureWith(pos,s.fracture,*fractureTable_) : fracturePhase(pos,s.fracture,structure_);
+    // RIGHT: the same canonical cycle position (same PHASE, same ENTROPY
+    // trajectory) + stereo * 0.5 cycle, then the same SKEW / PING-PONG /
+    // FRACTURE structure. Only the read phase differs.
+    double posRight=0.0;
+    if(right!=nullptr) {
+        const double cr=c+0.5*double(std::clamp(s.stereo,0.0f,1.0f));
+        posRight=cr-std::floor(cr);
+        if(envelope && cycles_>=1.0 && posRight<1.0e-12) posRight=1.0;
+    }
+    const auto shapeRead=[&](double p) {
+        if(s.skew!=0.0f) p=skewPhase(p,s.skew);
+        if(s.pingPong) p=pingPongPhase(p);
+        if(s.fracture>0.0f) p=fractureTable_ ? fractureWith(p,s.fracture,*fractureTable_) : fracturePhase(p,s.fracture,structure_);
+        return p;
+    };
+    pos=shapeRead(pos);
     read_=pos;
 
     float y=pos>=1.0 ? lfoEndValue(s) : mseg(s,pos);
+    float yRight=0.0f;
+    if(right!=nullptr) { const double pr=shapeRead(posRight); yRight=pr>=1.0 ? lfoEndValue(s) : mseg(s,pr); }
     if(s.entropy>0.0f) {
         const float a=s.entropy*std::sqrt(s.entropy);
-        y*=1.0f-0.35f*a*(0.5f+0.5f*noise(2,progress*0.5,mix32(stream_^0x27d4eb2fu)));
+        const float depth=1.0f-0.35f*a*(0.5f+0.5f*noise(2,progress*0.5,mix32(stream_^0x27d4eb2fu)));
+        y*=depth; yRight*=depth; // one trajectory: both channels breathe together
     }
     if(s.quantize>0.0f) {
         if(s.quantize!=quantizeKey_) { quantizeKey_=s.quantize; quantizeLevels_=quantizeLevels(s.quantize); }
         const float steps=static_cast<float>(quantizeLevels_-1);
         y=-1.0f+2.0f*std::round((std::clamp(y,-1.0f,1.0f)+1.0f)*0.5f*steps)/steps;
+        if(right!=nullptr) yRight=-1.0f+2.0f*std::round((std::clamp(yRight,-1.0f,1.0f)+1.0f)*0.5f*steps)/steps;
     }
     if(s.smooth>0.0f && valid) {
         const float rate=std::isfinite(s.rateHz) ? std::clamp(s.rateHz,.01f,40.0f) : 1.0f;
@@ -562,11 +592,21 @@ float Lfo::processedNext(const LfoSettings& s,double sampleRate) noexcept {
             smoothAlpha_=static_cast<float>(1.0-std::exp(-1.0/(tau*sampleRate)));
             smoothKey_=s.smooth; smoothRate_=rate; smoothSampleRate_=static_cast<float>(sampleRate);
         }
+        // RIGHT has its own history (its input differs); it starts from LEFT's
+        // state so enabling STEREO mid-note never jumps.
+        if(right!=nullptr) {
+            if(!smoothReadyRight_) { smoothedRight_=smoothReady_ ? smoothed_ : yRight; smoothReadyRight_=true; }
+            else smoothedRight_+=smoothAlpha_*(yRight-smoothedRight_);
+            yRight=smoothedRight_;
+        }
         if(!smoothReady_) { smoothed_=y; smoothReady_=true; }
         else smoothed_+=smoothAlpha_*(y-smoothed_);
         y=smoothed_;
-    } else smoothReady_=false;
-    if(s.attackSeconds>0.0f && valid) y*=attackGain(double(samples_-onset)/sampleRate,s.attackSeconds);
+    } else { smoothReady_=false; smoothReadyRight_=false; }
+    if(s.attackSeconds>0.0f && valid) {
+        const float gain=attackGain(double(samples_-onset)/sampleRate,s.attackSeconds); // shared lifecycle
+        y*=gain; yRight*=gain;
+    }
 
     if(valid && std::isfinite(s.rateHz)) {
         const double increment=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
@@ -574,6 +614,7 @@ float Lfo::processedNext(const LfoSettings& s,double sampleRate) noexcept {
         else { cycles_+=increment; phase_=cycles_-std::floor(cycles_); }
     }
     ++samples_;
+    if(right!=nullptr) *right=std::isfinite(yRight) ? std::clamp(yRight,-1.0f,1.0f) : 0.0f;
     return std::isfinite(y) ? std::clamp(y,-1.0f,1.0f) : 0.0f;
 }
 float RandomGenerator::randomValue() noexcept {
@@ -1106,6 +1147,58 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             if(g.address.parameter==ModDestination::Cutoff || g.address.parameter==ModDestination::Resonance) voiceFilter_=true;
         }
     }
+
+    // ---- mct-origami-stereo-modulation: stereo terms ----------------------
+    // Which operators can carry a right value (component-wise continuous
+    // operators fed, directly or through others, by an LFO) and which
+    // stereo-capable destinations read a source that may be stereo.
+    const auto lfoOfSlot=[](std::size_t slot)->int {
+        if(slot<4) return int(slot);                                    // global (FREE) LFO 1..4
+        if(slot>=globalSourceCount && slot<sourceSlotCount) {
+            const auto v=slot-globalSourceCount;
+            if(v>=3 && v<=6) return int(v-3);                           // per-voice LFO 1..4
+        }
+        return -1;
+    };
+    std::array<bool,operatorSlotCount> opStereo{};
+    for(std::size_t i=0;i<opCount_;++i) {
+        auto& c=ops_[i];
+        c.stereo=false;
+        switch(c.op.type) {
+            case ControlOpType::Add: case ControlOpType::Subtract: case ControlOpType::Multiply:
+            case ControlOpType::Min: case ControlOpType::Max: case ControlOpType::ScaleOffset:
+            case ControlOpType::Remap: case ControlOpType::Curve: case ControlOpType::Abs:
+            case ControlOpType::Invert: case ControlOpType::Clamp: case ControlOpType::Quantize:
+            case ControlOpType::Smooth: break;
+            default: continue; // EVENT / GATE / stateful generators: scalar (LEFT) by policy
+        }
+        for(const auto input:c.input) {
+            if(input<0) continue;
+            const auto idx=static_cast<std::size_t>(input);
+            if(idx<sourceSlotCount) c.stereo|=lfoOfSlot(idx)>=0;
+            else { const auto out=idx-sourceSlotCount; c.stereo|=out%maxControlOutputs==0 && opStereo[out/maxControlOutputs]; }
+        }
+        opStereo[c.slot]=c.stereo;
+    }
+    stereoGroupCount_=0;
+    for(std::size_t i=0;i<count_;++i) {
+        auto& g=groups_[i];
+        g.stereo=false; g.stereoGlobalLfos=g.stereoVoiceLfos=0; g.stereoGlobalOps=g.stereoVoiceOps=0;
+        if(isFxDestination(g.address.parameter) || stereoCapability(g.address.parameter)!=StereoCapability::Stereo) continue;
+        for(std::size_t k=0;k<g.globalSlotCount;++k) { const int l=lfoOfSlot(g.globalSlots[k]); if(l>=0) g.stereoGlobalLfos|=std::uint8_t(1u<<l); }
+        for(std::size_t k=0;k<g.voiceSlotCount;++k) { const int l=lfoOfSlot(globalSourceCount+g.voiceSlots[k]); if(l>=0) g.stereoVoiceLfos|=std::uint8_t(1u<<l); }
+        for(std::size_t k=0;k<g.globalOpSlotCount;++k) {
+            const auto r=g.globalOpSlots[k],out=routedOutput_[r];
+            if(out%maxControlOutputs==0 && opStereo[out/maxControlOutputs]) g.stereoGlobalOps|=1u<<r;
+        }
+        for(std::size_t k=0;k<g.voiceOpSlotCount;++k) {
+            const auto r=g.voiceOpSlots[k],out=routedOutput_[r];
+            if(out%maxControlOutputs==0 && opStereo[out/maxControlOutputs]) g.stereoVoiceOps|=1u<<r;
+        }
+        g.stereo=g.stereoGlobalLfos!=0 || g.stereoVoiceLfos!=0 || g.stereoGlobalOps!=0 || g.stereoVoiceOps!=0;
+        if(g.stereo) stereoGroups_[stereoGroupCount_++]=static_cast<std::uint8_t>(i);
+    }
+    stereoPlan_=stereoGroupCount_!=0;
 }
 void CompiledModulation::advance(float alpha) noexcept {
     if(!smoothingActive_) return;
@@ -1181,6 +1274,22 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
             break;
         case ModDestination::FxParameter:break; // FX parameters live in the FX renderer
         case ModDestination::None:break;
+    }
+}
+// RIGHT channel of a stereo-capable destination: the same normalized ->
+// parameter mapping (and clamping) as write(), into the frame's right slots.
+void CompiledModulation::writeRight(ModulationFrame& f,const Group& g,float n) noexcept {
+    if(!std::isfinite(n)) n=0.0f;
+    n=std::clamp(n,0.0f,1.0f);
+    float v=g.minimum+n*(g.maximum-g.minimum);
+    if(g.address.parameter==ModDestination::Cutoff)
+        v=g.minimum*static_cast<float>(dsp::fastExp2Audio(static_cast<double>(n)*g.log2Span));
+    auto& st=f.stereo;
+    switch(g.address.parameter) {
+        case ModDestination::Level: st.level[g.slot]=v; st.levelMask|=std::uint16_t(1u<<g.slot); break;
+        case ModDestination::Cutoff: st.cutoff=v; st.cutoffSplit=true; break;
+        case ModDestination::Resonance: st.resonance=v; st.resonanceSplit=true; break;
+        default: break;
     }
 }
 void CompiledModulation::prepare(double sampleRate) noexcept {
@@ -2022,6 +2131,59 @@ void CompiledModulation::runOperator(const CompiledOp& c,const std::array<float,
     for(std::size_t port=0;port<maxControlOutputs;++port) f.operatorOutputs[base+port]=outputs[port]; // fixed count: unrolled (unused ports are 0)
 }
 
+float CompiledModulation::operatorInputRight(std::int16_t input,float left,const StereoSourceValues* voiceStereo,
+                                             const ModulationFrame& f,const ModulationFrame& operators) noexcept {
+    if(input<0) return left;
+    const auto i=static_cast<std::size_t>(input);
+    if(i<4) return ((f.stereo.globalLfo.mask>>i)&1u) ? f.stereo.globalLfo.lfo[i] : left; // FREE LFO
+    if(i<globalSourceCount) return left;
+    if(i<sourceSlotCount) {
+        const auto v=i-globalSourceCount;
+        if(v>=3 && v<=6 && voiceStereo!=nullptr && ((voiceStereo->mask>>(v-3))&1u)) return voiceStereo->lfo[v-3];
+        return left;
+    }
+    const auto out=i-sourceSlotCount,slot=out/maxControlOutputs;
+    if(out%maxControlOutputs==0 && ((operators.stereo.operatorMask>>slot)&1u)) return operators.stereo.operatorRight[slot];
+    return left; // a mono value is promoted: (x, x)
+}
+
+// RIGHT of a component-wise operator: the same operator on the right inputs.
+// Stateless operators run on a scratch copy of their state; SMOOTH keeps its
+// own right history (in fields SMOOTH never uses: phase = value, gate = ready).
+void CompiledModulation::runOperatorRight(const CompiledOp& c,const std::array<float,voiceSourceCount>* voice,
+                                          const StereoSourceValues* voiceStereo,ModulationFrame& f,
+                                          ControlOpRuntime& state,const ModulationFrame& global) const noexcept {
+    const auto bit=1u<<c.slot;
+    ControlOpInputs in;
+    bool differs=false;
+    for(std::size_t k=0;k<3;++k) {
+        const auto& src=((c.globalOperatorInputs>>k)&1u)!=0 ? global : f;
+        const float left=operatorInput(c.input[k],voice,f,src);
+        in.value[k]=operatorInputRight(c.input[k],left,voiceStereo,f,src);
+        in.connected[k]=c.input[k]>=0;
+        in.range[k]=c.range[k];
+        differs|=std::memcmp(&in.value[k],&left,sizeof(float))!=0;
+    }
+    if(!differs) { // RIGHT == LEFT: nothing to carry
+        f.stereo.operatorMask&=~bit;
+        if(c.op.type==ControlOpType::Smooth) state.gate=false;
+        return;
+    }
+    std::array<float,maxControlOutputs> outputs{};
+    if(c.op.type==ControlOpType::Smooth) {
+        ControlOpRuntime right=state;
+        right.value=state.gate ? static_cast<float>(state.phase) : state.value; // starts from LEFT: no jump
+        right.initialized=true;
+        evaluateControlOpOutputs(c.op,in,right,c.prepared,f.events,outputs);
+        state.phase=double(right.value); state.gate=true;
+    } else {
+        ControlOpRuntime scratch=state;
+        evaluateControlOpOutputs(c.op,in,scratch,c.prepared,f.events,outputs);
+    }
+    f.stereo.operatorRight[c.slot]=finiteOr0(outputs[0]);
+    f.stereo.operatorMask|=bit;
+}
+
 // Same-sample ordering (N05): sources -> global operators (topological) ->
 // per-voice operators (topological) -> destinations -> targets. An event at
 // sample N is seen by every downstream node at sample N.
@@ -2030,6 +2192,7 @@ void CompiledModulation::evaluateGlobalOperators(ModulationFrame& f,const std::a
     for(std::size_t i=0;i<globalOpCount_;++i) {
         const auto& c=ops_[globalOrder_[i]];
         runOperator(c,nullptr,f,globalOpState_[c.slot],f);
+        if(stereoPlan_ && c.stereo) runOperatorRight(c,nullptr,nullptr,f,globalOpState_[c.slot],f);
         const std::size_t base=operatorOutputIndex(c.slot,0);
         // The SEQUENCER node's VALUE is the canonical SEQ source this sample.
         if(c.op.type==ControlOpType::Sequencer) f.globalSources[12]=f.operatorOutputs[base];
@@ -2039,11 +2202,12 @@ void CompiledModulation::evaluateGlobalOperators(ModulationFrame& f,const std::a
 
 void CompiledModulation::evaluateVoiceOperators(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,
                                                 OperatorState& state,std::array<std::uint32_t,operatorSlotCount>* counts,
-                                                const ModulationFrame* global) const noexcept {
+                                                const ModulationFrame* global,const StereoSourceValues* voiceStereo) const noexcept {
     const ModulationFrame& globalOperators=global!=nullptr ? *global : f;
     for(std::size_t i=0;i<voiceOpCount_;++i) {
         const auto& c=ops_[voiceOrder_[i]];
         runOperator(c,&sources,f,state[c.slot],globalOperators);
+        if(stereoPlan_ && c.stereo) runOperatorRight(c,&sources,voiceStereo,f,state[c.slot],globalOperators);
         const std::size_t base=operatorOutputIndex(c.slot,0);
         if(counts!=nullptr && eventFired(c,f.operatorOutputs,base)) ++(*counts)[c.slot];
     }
@@ -2056,8 +2220,54 @@ std::uint8_t CompiledModulation::envelopeTriggers(const ModulationFrame& f) cons
     return mask;
 }
 
+// RIGHT - LEFT of a stereo group's normalized sum: only the terms whose
+// source carries a right value contribute (route amount scales both channels;
+// each channel takes the same source -> route mapping, clamped per channel).
+float CompiledModulation::stereoDelta(const Group& g,const ModulationFrame& f,
+                                      const std::array<float,globalSourceCount>* global,
+                                      const std::array<float,voiceSourceCount>* voice,
+                                      const StereoSourceValues* voiceStereo,bool voicePass) const noexcept {
+    const auto weight=[&](std::size_t slot){ const float w=g.weight[slot]; return std::isfinite(w) ? w : 0.0f; };
+    float d=0.0f;
+    const auto opTerms=[&](std::uint32_t bits) {
+        for(std::size_t r=0;bits!=0 && r<operatorSlotCount;++r,bits>>=1) {
+            if((bits&1u)==0) continue;
+            const std::size_t out=routedOutput_[r],slot=out/maxControlOutputs;
+            if(((f.stereo.operatorMask>>slot)&1u)==0) continue;
+            const bool bip=g.bipolar[sourceSlotCount+r];
+            d+=weight(sourceSlotCount+r)*(operatorRouteValue(r,f.stereo.operatorRight[slot],bip)-operatorRouteValue(r,f.operatorOutputs[out],bip));
+        }
+    };
+    if(!voicePass) {
+        const auto lfos=std::uint8_t(g.stereoGlobalLfos&f.stereo.globalLfo.mask);
+        for(std::size_t i=0;i<4;++i) if((lfos>>i)&1u)
+            d+=weight(i)*(routeSourceValue(i,f.stereo.globalLfo.lfo[i],g.bipolar[i])-routeSourceValue(i,(*global)[i],g.bipolar[i]));
+        opTerms(g.stereoGlobalOps);
+    } else {
+        if(voiceStereo!=nullptr) {
+            const auto lfos=std::uint8_t(g.stereoVoiceLfos&voiceStereo->mask);
+            for(std::size_t i=0;i<4;++i) if((lfos>>i)&1u) {
+                const auto slot=globalSourceCount+3+i;
+                d+=weight(slot)*(routeSourceValue(slot,voiceStereo->lfo[i],g.bipolar[slot])-routeSourceValue(slot,(*voice)[3+i],g.bipolar[slot]));
+            }
+        }
+        opTerms(g.stereoVoiceOps);
+    }
+    return std::isfinite(d) ? d : 0.0f;
+}
+
+// After the destinations: RIGHT's filter coefficients when CUTOFF or
+// RESONANCE differ (the other one is LEFT's value).
+void CompiledModulation::finishStereo(ModulationFrame& f,bool voice) const noexcept {
+    auto& st=f.stereo;
+    if(!f.filterEnabled || !st.filterSplit()) return;
+    if(voice && !voiceFilter_) return; // the global frame's right filter still applies
+    st.filter=filterTable_.make(st.cutoffSplit ? st.cutoff : f.cutoff,st.resonanceSplit ? st.resonance : f.resonance);
+}
+
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {
     f.filterEnabled=filterEnabled_;
+    if(stereoPlan_) { f.stereo.levelMask=0; f.stereo.cutoffSplit=f.stereo.resonanceSplit=false; }
     for(std::size_t i=0;i<count_;++i) {
         const auto& g=groups_[i];
         if(isFxDestination(g.address.parameter)) continue;
@@ -2077,10 +2287,17 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
         }
         if(!std::isfinite(n)) n=0.0f;
         f.normalized[i]=std::clamp(n,-4.0f,4.0f);write(f,g,n);
+        if(g.stereo) {
+            const float d=stereoDelta(g,f,&sources,nullptr,nullptr,false);
+            f.stereo.delta[i]=d;
+            if(d!=0.0f) writeRight(f,g,n+d);
+        }
     }
     if(f.filterEnabled) f.filter=globalFilter(rate,f.cutoff,f.resonance);
+    if(stereoPlan_) finishStereo(f,false);
 }
-void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,double /*rate*/) const noexcept {
+void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,double /*rate*/,
+                                    const StereoSourceValues* voiceStereo) const noexcept {
     for(std::size_t j=0;j<voiceCount_;++j) {
         const auto i=voiceGroups_[j];const auto& g=groups_[i];
         float n=std::isfinite(f.normalized[i])?f.normalized[i]:0.0f;
@@ -2097,8 +2314,18 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
             n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,f.operatorOutputs[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
         }
         if(!std::isfinite(n)) n=0.0f;write(f,g,n);
+        if(g.stereo) {
+            // The global pass's delta (global LFO / operator terms) plus this
+            // voice's own stereo terms; zero means RIGHT == LEFT here.
+            const float d=(std::isfinite(f.stereo.delta[i]) ? f.stereo.delta[i] : 0.0f)+stereoDelta(g,f,nullptr,&sources,voiceStereo,true);
+            if(d!=0.0f) writeRight(f,g,n+d);
+            else if(g.address.parameter==ModDestination::Level) f.stereo.levelMask&=std::uint16_t(~(1u<<g.slot));
+            else if(g.address.parameter==ModDestination::Cutoff) f.stereo.cutoffSplit=false;
+            else if(g.address.parameter==ModDestination::Resonance) f.stereo.resonanceSplit=false;
+        }
     }
     if(voiceFilter_) f.filter=filterTable_.make(f.cutoff,f.resonance);
+    if(stereoPlan_) finishStereo(f,true);
 }
 void CompiledModulation::fxFrame(FxModulationOutput& out,const std::array<float,globalSourceCount>& global,
                                  const std::array<float,voiceSourceCount>* voice,

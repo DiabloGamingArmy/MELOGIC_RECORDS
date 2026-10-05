@@ -63,7 +63,10 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     // all-neutral LFOs keep saving in the older format, byte for byte.
     bool lfoFunctions=false;
     for(std::size_t i=0;i<4;++i) lfoFunctions|=!lfoFunctionsNeutral(lfoSettings(s.modulation,i));
-    const std::uint32_t version=lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
+    // LFO STEREO: v33 only when some LFO uses it (older formats otherwise).
+    bool lfoStereo=false;
+    for(std::size_t i=0;i<4;++i) lfoStereo|=lfoSettings(s.modulation,i).stereo!=0.0f;
+    const std::uint32_t version=lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
     Writer w;w.word(magic);w.word(version);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
@@ -242,6 +245,8 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
             for(float v:{l.smooth,l.attackSeconds,l.delaySeconds,l.phase,l.skew,l.quantize,l.entropy,l.fracture}) w.real(v);
         }
     }
+    // V33: per LFO, STEREO.
+    if(version>=33) for(std::size_t i=0;i<4;++i) w.real(lfoSettings(s.modulation,i).stereo);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -252,7 +257,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>32) return false;
+    if(version<1 || version>33) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -512,6 +517,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             for(float* v:{&l.smooth,&l.attackSeconds,&l.delaySeconds,&l.phase,&l.skew,&l.quantize,&l.entropy,&l.fracture}) *v=r.real();
         }
     }
+    if(version>=33) for(std::size_t i=0;i<4;++i) lfoSettings(s.modulation,i).stereo=r.real(); // older: 0 (mono)
     // mct-origami-nodes-n01: (source, destination) pairs are unique. States
     // written before that rule may repeat a pair; merge them deterministically
     // (summed amount, as the compiler always did) instead of rejecting the load.
