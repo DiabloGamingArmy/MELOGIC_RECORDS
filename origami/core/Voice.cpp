@@ -52,6 +52,18 @@ void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSet
 Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& tables,const ModulationFrame& global,
     float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
     float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch,const OscillatorRenderPlan& topology,const OscillatorProcessPlans& sharedProcesses,bool observe) noexcept {
+    // mct-origami-stereo-modulation: two instantiations of one renderer. The
+    // mono one (no stereo plan) compiles every stereo branch away and is the
+    // pre-stereo code path.
+    return compiled.hasStereoPlan()
+        ? render<true>(tables,global,sustain,compiled,modulation,pitchBendSemitones,pitchBendNormalized,modWheel,aftertouch,topology,sharedProcesses,observe)
+        : render<false>(tables,global,sustain,compiled,modulation,pitchBendSemitones,pitchBendNormalized,modWheel,aftertouch,topology,sharedProcesses,observe);
+}
+
+template<bool Stereo>
+Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,const ModulationFrame& global,
+    float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
+    float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch,const OscillatorRenderPlan& topology,const OscillatorProcessPlans& sharedProcesses,bool observe) noexcept {
     Samples outputs{};
     if(topology.auxActive) aux_.fill(0.0f);
     if(!active_) return outputs;
@@ -68,11 +80,12 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     // mct-origami-stereo-modulation: per-voice LFO pairs (RIGHT only when the
     // plan is stereo and that LFO's STEREO is non-zero; LEFT is unchanged).
     StereoSourceValues voiceStereo{};
-    const bool stereoPlan=compiled.hasStereoPlan();
+    constexpr bool stereoPlan=Stereo;
     for(std::size_t i=0;i<4;++i){
         const auto& l=lfoSettings(modulation,i);
         if(l.mode==LfoMode::Free) voiceSources[3+i]=0.0f;
-        else if(stereoPlan && l.stereo>0.0f) {
+        else if constexpr(!Stereo) voiceSources[3+i]=noteLfos_[i].next(l,sampleRate_)*sourceLfoScale;
+        else if(l.stereo>0.0f) {
             float right=0.0f;
             voiceSources[3+i]=noteLfos_[i].nextStereo(l,sampleRate_,right)*sourceLfoScale;
             voiceStereo.lfo[i]=right*sourceLfoScale; voiceStereo.mask|=std::uint8_t(1u<<i);
@@ -120,6 +133,14 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     }
     if(observe && voiceOperators) visualization_.operators=effective->operatorOutputs;
     const auto& modules=effective->modules;
+    // Some channel differs this sample: only then does any module take the
+    // stereo render path (a right filter that went idle simply restarts from
+    // LEFT's state the next time it is needed).
+    bool stereoActive=false;
+    if constexpr(Stereo) {
+        stereoActive=effective->stereo.levelMask!=0 || effective->stereo.filterSplit();
+        if(!stereoActive) rightFilterLive_=0;
+    }
     // Modules no voice route writes are read from the global frame (N07).
     const std::uint16_t localModules=effective==&local && !observe ? compiled.voiceModuleMask() : (effective==&local ? 0xffffu : 0u);
     const float envelopeValue=envelope*velocity_*std::clamp(effective->envelopeScaling,0.0f,2.0f);
@@ -332,9 +353,36 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         // between channels renders LEFT and RIGHT from the same oscillator
         // signal (pitch / WT / processes stay shared); everything else keeps
         // the unchanged mono path below.
+        if(!Stereo || !stereoActive) {
+            // Mono plan (or no channel differs this sample): the original path.
+            float sampleValue=oscillatorMix*envelopeValue;
+            if(effective->filterEnabled) {
+                sampleValue=moduleFilters_[m].next(sampleValue,effective->filter);
+                filtersQuiet=filtersQuiet && moduleFilters_[m].quiet();
+            } else {
+                moduleFilters_[m].reset();
+            }
+            const float leveled=sampleValue*level;
+            sampleValue=leveled*modulePlan.mainBusSend;
+            if(!std::isfinite(sampleValue)) {moduleFilters_[m].reset();sampleValue=0.0f;}
+            // Same post-filter signal, scaled per user bus. Each destination
+            // receives exactly its own send; MAIN is unaffected by user sends.
+            if(modulePlan.auxSends && std::isfinite(leveled)) {
+                for(std::size_t b=1;b<topology.busCount;++b) {
+                    const float send=modulePlan.busSend[b];
+                    if(send==0.0f) continue;
+                    aux_[2*(b-1)]+=leveled*send*panLeft;
+                    aux_[2*(b-1)+1]+=leveled*send*panRight;
+                }
+            }
+            outputs.left+=sampleValue*panLeft;
+            outputs.right+=sampleValue*panRight;
+            outputs.mono+=sampleValue;
+            continue;
+        }
         const auto& stereo=effective->stereo;
-        const bool stereoLevel=stereoPlan && ((stereo.levelMask>>m)&1u)!=0;
-        const bool stereoFilter=stereoPlan && effective->filterEnabled && stereo.filterSplit();
+        const bool stereoLevel=((stereo.levelMask>>m)&1u)!=0;
+        const bool stereoFilter=effective->filterEnabled && stereo.filterSplit();
         const auto rightBit=std::uint16_t(1u<<m);
 
         float sampleValue=oscillatorMix*envelopeValue;

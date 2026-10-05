@@ -508,8 +508,9 @@ public:
     static std::uint32_t globalStream(std::size_t lfoIndex) noexcept;
     static std::uint32_t voiceStream(std::uint32_t voiceSeed,std::size_t lfoIndex) noexcept;
 private:
-    float legacyNext(const LfoSettings&,double sampleRate,float* right=nullptr) noexcept;
-    float processedNext(const LfoSettings&,double sampleRate,float* right=nullptr) noexcept;
+    // WithRight=false is the pre-stereo code (no right-channel work at all).
+    template<bool WithRight> float legacyNext(const LfoSettings&,double sampleRate,float* right) noexcept;
+    template<bool WithRight> float processedNext(const LfoSettings&,double sampleRate,float* right) noexcept;
     double phase_=0;          // accumulator, [0,1) (ENVELOPE clamps at 1)
     double cycles_=0;         // unwrapped accumulator: the ENTROPY clock
     std::uint64_t samples_=0; // samples since the lifecycle start (DELAY / ATTACK)
@@ -676,6 +677,7 @@ struct StereoModulationFrame {
     bool cutoffSplit=false,resonanceSplit=false;
     float cutoff=8000.0f,resonance=.1f;
     dsp::LowPassCoefficients filter{};                      // RIGHT's filter (valid when split)
+    bool active=false;                                      // any right value / delta this sample
     bool filterSplit() const noexcept { return cutoffSplit || resonanceSplit; }
 };
 
@@ -703,7 +705,10 @@ struct ModulationFrame {
     // Operator outputs are NOT copied: per-voice operators read GLOBAL operator
     // outputs from the global frame and write their own here.
     void copyForVoice(const ModulationFrame& g,const std::array<std::uint8_t,16>& active,std::size_t activeCount,std::uint16_t moduleMask=0xffffu,bool withStereo=false) noexcept {
-        if(withStereo) stereo=g.stereo; // only when the plan carries stereo terms
+        if(withStereo) { // only when the plan carries stereo terms
+            if(g.stereo.active) stereo=g.stereo;
+            else { stereo.active=false; stereo.globalLfo.mask=0; stereo.operatorMask=0; stereo.levelMask=0; stereo.cutoffSplit=stereo.resonanceSplit=false; }
+        }
         for(std::size_t i=0;i<activeCount && i<active.size();++i)
             if((moduleMask>>active[i])&1u) modules[active[i]]=g.modules[active[i]];
         events=g.events; globalSources=g.globalSources;
