@@ -90,13 +90,13 @@ inline void paintSourceEntityRow(juce::Graphics& g,juce::Rectangle<int> r,const 
     const int reserved=int(rings)*int(sourceEntityRingSize+4.0f)+(s.active ? 14 : 0);
     const auto colour=s.enabled ? Palette::text() : Palette::muted().withAlpha(.65f);
     if(s.detail.isNotEmpty()) {
-        text(g,s.label,inner.withHeight(r.getHeight()/2+2).withY(r.getY()+3),10.5f,colour);
-        text(g,s.detail,inner.withTrimmedTop(r.getHeight()/2+1).withTrimmedRight(reserved),8.0f,Palette::muted());
+        text(g,s.label,inner.withHeight(r.getHeight()/2+2).withY(r.getY()+3),Type::label,colour);
+        text(g,s.detail,inner.withTrimmedTop(r.getHeight()/2+1).withTrimmedRight(reserved),Type::secondary,Palette::muted());
     } else {
-        text(g,s.label,inner,10.5f,colour);
+        text(g,s.label,inner,Type::label,colour);
     }
     if(s.badge.isNotEmpty())
-        text(g,s.badge,inner.withTrimmedRight(reserved+2),8.0f,Palette::muted(),juce::Justification::centredRight);
+        text(g,s.badge,inner.withTrimmedRight(reserved+2),Type::secondary,Palette::muted(),juce::Justification::centredRight);
 }
 
 }

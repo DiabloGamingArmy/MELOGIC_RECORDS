@@ -243,7 +243,7 @@ private:
                             g.strokePath(envelope,juce::PathStrokeType(0.72f));
                         }
                     }
-                    g.setFont(juce::Font(juce::FontOptions("Arial",9.5f,juce::Font::bold)));
+                    g.setFont(juce::Font(juce::FontOptions("Arial",mct::origami::ui::Type::label,juce::Font::bold)));
                     g.setColour(juce::Colours::white.withAlpha(0.78f));
                     g.drawText(juce::String(displayIndex_+1),getLocalBounds().removeFromBottom(18),
                                juce::Justification::centred,false);
@@ -611,7 +611,7 @@ private:
                         g.drawVerticalLine(juce::roundToInt(x),static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()));
                     }
                 }
-                g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::plain)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",mct::origami::ui::Type::secondary,juce::Font::plain)));
                 g.setColour(juce::Colours::white.withAlpha(0.34f));
                 const char* ampLabels[]{"+1.0","+0.5","0.0","-0.5","-1.0"};
                 for(int i=0;i<5;++i) {
@@ -654,7 +654,7 @@ private:
                 }
                 if(curve_.active) paintCurveDraft(g);
                 juce::String readout="FRAME "+juce::String(static_cast<int>(document_.selectedFrame+1)).paddedLeft('0',3)+"     2048 SAMPLES";
-                if(curve_.active) readout+="     CURVE DRAFT · "+juce::String(static_cast<int>(curve_.points.size()))+" POINTS";
+                if(curve_.active) readout+=juce::String(juce::CharPointer_UTF8("     CURVE DRAFT \xc2\xb7 "))+juce::String(static_cast<int>(curve_.points.size()))+" POINTS";
                 else if(selection_.active) readout+="     "+juce::String(static_cast<int>(selection_.start))+"-"+juce::String(static_cast<int>(selection_.end))+" · "+juce::String(static_cast<int>(selection_.end-selection_.start+1))+" SELECTED";
                 g.drawText(readout,plot.getX(),3,plot.getWidth(),14,juce::Justification::centredRight,false);
             }
@@ -943,7 +943,7 @@ private:
                 auto bounds=top;
                 auto labelArea=bounds.removeFromBottom(18);
                 auto scaleArea=bounds.removeFromLeft(31);
-                g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::plain)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",mct::origami::ui::Type::secondary,juce::Font::plain)));
                 for(int i=0;i<=6;++i) {
                     const float y=static_cast<float>(bounds.getY())+static_cast<float>(i)/6.0f*static_cast<float>(bounds.getHeight());
                     g.setColour(juce::Colour(0xff1c1c1c));
@@ -982,14 +982,14 @@ private:
                     g.fillRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getBottom())-height,width,height));
                     if(bin==(hoveredBin_>0?hoveredBin_:selectedBin_)) { g.setColour(juce::Colours::white.withAlpha(0.9f)); g.drawRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getY()),width,static_cast<float>(bounds.getHeight())),1.0f); }
                 }
-                g.setColour(juce::Colours::white.withAlpha(0.38f)); g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::plain)));
+                g.setColour(juce::Colours::white.withAlpha(0.38f)); g.setFont(juce::Font(juce::FontOptions("Arial",mct::origami::ui::Type::secondary,juce::Font::plain)));
                 for(int n=0;n<=4;++n) {
                     const int bin=firstBin_+(count-1)*n/4;
                     const float x=static_cast<float>(bounds.getX())+static_cast<float>(n)/4.0f*static_cast<float>(bounds.getWidth());
                     const auto label=noteNameForFrequency(referenceFundamentalHz_*static_cast<float>(bin));
                     g.drawText(label,juce::roundToInt(x)-22,labelArea.getY(),44,labelArea.getHeight(),juce::Justification::centred,false);
                 }
-                juce::String status="HARMONICS · "+juce::String(zoom_)+"x";
+                juce::String status=juce::String(juce::CharPointer_UTF8("HARMONICS \xc2\xb7 "))+juce::String(zoom_)+"x";
                 if(hoveredBin_>0 && hoveredBin_<static_cast<int>(kBins)) {
                     const float frequency=referenceFundamentalHz_*static_cast<float>(hoveredBin_);
                     if(editMode_==EditMode::Additive) {
@@ -1332,7 +1332,7 @@ private:
                                 .withMultipliedAlpha(alpha));
                 g.drawRect(bounds,1.0f);
                 g.setColour(juce::Colours::white.withAlpha(0.82f*alpha));
-                g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::plain)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",mct::origami::ui::Type::secondary,juce::Font::plain)));
                 const auto text=labels_.count(selectedId_)!=0?labels_.at(selectedId_):juce::String{};
                 g.drawText(text,getLocalBounds().reduced(8,0).withTrimmedRight(18),
                            juce::Justification::centredLeft,false);
@@ -1389,7 +1389,7 @@ private:
                 const auto b=getLocalBounds().toFloat().reduced(0.5f);
                 g.setColour(down?juce::Colour(0xff252525):(over?juce::Colour(0xff202020):juce::Colour(0xff1c1c1c))); g.fillRect(b);
                 g.setColour(juce::Colour(0xff383838)); g.drawRect(b,1.0f);
-                g.setColour(juce::Colours::white.withAlpha(0.72f)); g.setFont(juce::Font(juce::FontOptions("Arial",9.5f,juce::Font::bold)));
+                g.setColour(juce::Colours::white.withAlpha(0.72f)); g.setFont(juce::Font(juce::FontOptions("Arial",mct::origami::ui::Type::label,juce::Font::bold)));
                 g.drawText(getButtonText(),getLocalBounds().reduced(8,0).withTrimmedRight(18),juce::Justification::centred,false);
                 const float cx=static_cast<float>(getWidth())-10.0f,cy=static_cast<float>(getHeight())*0.5f; juce::Path p;
                 if(open_) { p.startNewSubPath(cx-3.5f,cy-2.0f); p.lineTo(cx+3.5f,cy-2.0f); p.lineTo(cx,cy+2.5f); }
@@ -1535,8 +1535,7 @@ private:
             }
             void paint(juce::Graphics& g) override {
                 g.setColour(juce::Colours::white.withAlpha(0.38f));
-                g.setFont(juce::Font(juce::FontOptions("Arial",9.5f,juce::Font::bold)));
-                g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::plain)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",mct::origami::ui::Type::secondary,juce::Font::plain)));
                 g.setColour(juce::Colours::white.withAlpha(0.55f));
                 if(gridOpen_) g.drawText("X GRID",xGridText_,juce::Justification::centredLeft,false);
                 if(gridOpen_) g.drawText("X SNAP",xSnapText_,juce::Justification::centredLeft,false);
@@ -1672,7 +1671,7 @@ private:
                 addHint_.setText("CLICK WAVEFORM TO ADD POINT",juce::dontSendNotification);
                 for(auto* l:std::array<juce::Label*,4>{{&title_,&mode_,&selection_,&addHint_}}) {
                     l->setColour(juce::Label::textColourId,juce::Colours::white.withAlpha(l==&title_?0.82f:0.55f));
-                    l->setFont(juce::Font(juce::FontOptions("Arial",l==&title_?11.0f:9.5f,l==&title_?juce::Font::bold:juce::Font::plain)));
+                    l->setFont(juce::Font(juce::FontOptions("Arial",l==&title_?mct::origami::ui::Type::control:mct::origami::ui::Type::label,l==&title_?juce::Font::bold:juce::Font::plain)));
                     l->setJustificationType(juce::Justification::centredLeft);
                 }
                 setupNumber(x_); setupNumber(y_); setupNumber(hardness_);
@@ -1709,7 +1708,7 @@ private:
                 auto bottom=getLocalBounds().reduced(7).removeFromBottom(58); apply_.setBounds(bottom.removeFromTop(26)); bottom.removeFromTop(4); cancel_.setBounds(bottom.removeFromTop(26));
             }
             void paint(juce::Graphics& g) override {
-                g.fillAll(juce::Colour(0xff080808)); g.setColour(juce::Colours::white.withAlpha(0.42f)); g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::bold)));
+                g.fillAll(juce::Colour(0xff080808)); g.setColour(juce::Colours::white.withAlpha(0.42f)); g.setFont(juce::Font(juce::FontOptions("Arial",mct::origami::ui::Type::label,juce::Font::bold)));
                 const bool point=canvas_.selectedCurvePointIndex()>=0;
                 g.drawText(point?"X SAMPLE":"CONTROL X %",xLabel_,juce::Justification::centredLeft,false);
                 g.drawText(point?"Y VALUE":"CONTROL Y",yLabel_,juce::Justification::centredLeft,false);
@@ -1813,7 +1812,7 @@ private:
                 g.drawLine(0.0f,static_cast<float>(getHeight())-0.5f,
                            static_cast<float>(getWidth()),static_cast<float>(getHeight())-0.5f,1.0f);
                 g.setColour(juce::Colours::white.withAlpha(0.72f));
-                g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",mct::origami::ui::Type::label,juce::Font::bold)));
                 g.drawText("WAVETABLE EDITOR",titleBounds_.reduced(10,0),
                            juce::Justification::centredLeft,false);
             }

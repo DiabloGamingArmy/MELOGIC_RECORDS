@@ -64,7 +64,7 @@ juce::String modulationRouteTargetLabel(const InstrumentState& state,std::uint32
 void paintModulationRouteTooltip(juce::Graphics& g,const juce::String& label,
                                  juce::Point<float> at,juce::Rectangle<float> bounds) {
     if(label.isEmpty()) return;
-    g.setFont(juce::FontOptions(9.0f));
+    g.setFont(juce::FontOptions(Type::secondary));
     // Avoid JUCE Font width APIs here: this project is building against
     // a JUCE revision where both getStringWidthFloat() and getStringWidth()
     // are unavailable. This tooltip is short, fixed-font UI text, so a
@@ -146,9 +146,9 @@ void ModulationSourceRow::paintButton(juce::Graphics& g,bool over,bool down) {
     for(std::size_t i=0;i<shown;++i) paintModulationMagnitudeRing(g,ringBounds(i),routes_[i].amount);
     if(routes_.size()>shown) {
         g.setColour(Palette::muted());
-        g.setFont(juce::FontOptions(7.0f));
+        g.setFont(juce::FontOptions(Type::secondary));
         g.drawText("+"+juce::String(int(routes_.size()-shown)),
-                   juce::Rectangle<float>(inner.getRight()-18.0f,dividerY+1.0f,16.0f,11.0f),
+                   juce::Rectangle<float>(inner.getRight()-24.0f,dividerY+1.0f,22.0f,13.0f),
                    juce::Justification::centred);
     }
 }

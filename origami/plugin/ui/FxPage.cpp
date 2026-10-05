@@ -307,7 +307,7 @@ void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode&
             const float t=(db+48.0f)/72.0f;
             g.setColour(ink);
             g.fillRect(juce::Rectangle<float>(in.getX(),in.getCentreY()-4.0f,in.getWidth()*juce::jlimit(0.0f,1.0f,t),8.0f));
-            if(physicalById(n,2)>=0.5f) text(g,"INV",in.toNearestInt(),8.0f,Palette::muted(),juce::Justification::topRight);
+            if(physicalById(n,2)>=0.5f) text(g,"INV",in.toNearestInt(),Type::secondary,Palette::muted(),juce::Justification::topRight);
         } else {
             const float width=physicalById(n,3)>=0.5f ? 0.0f : physicalById(n,1);
             const float balance=physicalById(n,2);
@@ -523,19 +523,19 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         auto title=local.withHeight(34).withTrimmedLeft(58).withTrimmedRight(detailed ? 74 : 44);
         text(g,node_.name,title,11.5f,node_.enabled ? Palette::text() : Palette::muted());
         if(d==nullptr || !d->processesAudio)
-            text(g,"NO DSP",title,7.5f,Palette::muted().withAlpha(.75f),juce::Justification::centredRight);
+            text(g,"NO DSP",title,Type::secondary,Palette::muted().withAlpha(.75f),juce::Justification::centredRight);
         if(!detailed) break;
         paintEffectPreview(g,juce::Rectangle<float>(12.0f,40.0f,float(getWidth()-24),52.0f),node_);
         const auto quick=parametersFor(node_,true,std::nullopt);
         auto labels=local.withTrimmedTop(local.getHeight()-22).reduced(12,0);
         const int width=labels.getWidth()/juce::jmax<int>(1,int(quick.size()));
-        for(const auto* p:quick) text(g,p->label,labels.removeFromLeft(width),9.0f,Palette::muted(),juce::Justification::centred);
+        for(const auto* p:quick) text(g,p->label,labels.removeFromLeft(width),Type::label,Palette::muted(),juce::Justification::centred);
         break;
     }
     case FxNodeKind::Source: {
         text(g,page_.busName(node_.bus)+" IN",local.withHeight(32).reduced(12,0),11.5f,Palette::text());
         if(!detailed) break;
-        text(g,node_.bus==mainBusId ? "SYNTH VOICE SUM" : "OSCILLATOR SENDS",local.withTrimmedTop(32).withHeight(16).reduced(12,0),8.5f,Palette::muted());
+        text(g,node_.bus==mainBusId ? "SYNTH VOICE SUM" : "OSCILLATOR SENDS",local.withTrimmedTop(32).withHeight(16).reduced(12,0),Type::secondary,Palette::muted());
         auto wave=juce::Rectangle<float>(12.0f,54.0f,float(getWidth())-40.0f,18.0f);
         juce::Path p;
         for(int i=0;i<=40;++i) {
@@ -563,11 +563,11 @@ void FxNodeComponent::paint(juce::Graphics& g) {
                 g.setColour(signalShade(.85f,.85f));
                 g.fillRect(fill);
             }
-            text(g,channel==0 ? "L" : "R",column.removeFromBottom(14),9.0f,Palette::muted(),juce::Justification::centred);
+            text(g,channel==0 ? "L" : "R",column.removeFromBottom(14),Type::secondary,Palette::muted(),juce::Justification::centred);
         }
         const float loud=std::max(meterLeft_,meterRight_);
         text(g,loud>1.0e-5f ? juce::String(20.0f*std::log10(loud),1)+" DB" : juce::String("-INF DB"),
-             local.withTrimmedBottom(44).withTrimmedTop(local.getHeight()-44-26).withHeight(20),9.0f,Palette::secondary(),juce::Justification::centred);
+             local.withTrimmedBottom(44).withTrimmedTop(local.getHeight()-44-26).withHeight(20),Type::secondary,Palette::secondary(),juce::Justification::centred);
         break;
     }
     case FxNodeKind::Split: case FxNodeKind::Merge: {
@@ -806,10 +806,10 @@ void NodePalette::paint(juce::Graphics& g) {
         if(scroll_+r==selected_) { g.setColour(signalSourceColour().withAlpha(0.22f)); g.fillRoundedRectangle(row.toFloat(),3.0f); }
         const auto colour=e.enabled ? Palette::text() : Palette::muted();
         text(g,e.label,row.reduced(8,0).withTrimmedRight(110),11.0f,colour);
-        text(g,e.enabled ? e.group : e.reason,row.reduced(8,0),8.5f,Palette::muted(),juce::Justification::centredRight);
+        text(g,e.enabled ? e.group : e.reason,row.reduced(8,0),Type::secondary,Palette::muted(),juce::Justification::centredRight);
     }
     if(int(shown_.size())>visibleRows)
-        text(g,juce::String(shown_.size())+" results",getLocalBounds().reduced(10,4).removeFromBottom(12),8.0f,Palette::muted(),juce::Justification::centredRight);
+        text(g,juce::String(shown_.size())+" results",getLocalBounds().reduced(10,4).removeFromBottom(13),Type::secondary,Palette::muted(),juce::Justification::centredRight);
 }
 
 void NodePalette::mouseDown(const juce::MouseEvent& e) {
@@ -1014,18 +1014,18 @@ void ControlNodeComponent::paint(juce::Graphics& g) {
     auto top=getLocalBounds().withTrimmedLeft(left).withTrimmedRight(hasOutput() ? 26 : 12).removeFromTop(26).withTrimmedTop(6);
     if(detail_==Detail::Minimal) {
         // Fit view: identity + ports only. The title keeps a readable on-screen
-        // size (>= 9 px) by growing in graph units as the zoom falls.
+        // size (>= Type::secondary px) by growing in graph units as the zoom falls.
         const float zoom=std::max(0.1f,page_.graphZoom());
-        const float size=juce::jlimit(10.5f,30.0f,9.0f/zoom);
+        const float size=juce::jlimit(10.5f,30.0f,Type::secondary/zoom);
         g.setColour(Palette::text());
         g.setFont(juce::FontOptions(size,juce::Font::bold));
         g.drawFittedText(view_.title,getLocalBounds().reduced(20,4),juce::Justification::centred,2,0.7f);
     } else {
         text(g,view_.title,top.withTrimmedRight(view_.removable ? 26 : 0),detail_==Detail::Full ? 10.5f : 12.0f,Palette::text());
-        if(detail_==Detail::Full) text(g,nodes::toString(view_.domain),top.withTrimmedRight(view_.removable ? 30 : 0),7.5f,Palette::muted(),juce::Justification::centredRight);
+        if(detail_==Detail::Full) text(g,nodes::toString(view_.domain),top.withTrimmedRight(view_.removable ? 30 : 0),Type::secondary,Palette::muted(),juce::Justification::centredRight);
     }
     g.setColour(Palette::muted());
-    g.setFont(juce::FontOptions(8.5f));
+    g.setFont(juce::FontOptions(Type::secondary));
     if(detail_==Detail::Minimal) {
         // no secondary text at fit zoom
     } else if(op) {
@@ -1092,7 +1092,7 @@ void ControlNodeComponent::paintOverChildren(juce::Graphics& g) {
     // The inline control's label and value read on top of its bar.
     const auto row=primary_.getBounds().reduced(5,0);
     g.setColour(Palette::text().withAlpha(0.9f));
-    g.setFont(juce::FontOptions(8.0f));
+    g.setFont(juce::FontOptions(Type::secondary));
     g.drawText(view_.primaryLabel,row,juce::Justification::centredLeft);
     const float value=float(primary_.getValue());
     juce::String shown=view_.primaryInteger ? juce::String(juce::roundToInt(value)) : juce::String(value,3);
@@ -1879,7 +1879,7 @@ public:
             const auto& row=rows[i];
             if(row.modulationSource) continue; // a hosted ModulationSourceRow paints itself
             auto r=rowBounds(i);
-            if(row.header) { text(g,row.label,r.withTrimmedTop(12),8.5f,Palette::muted()); continue; }
+            if(row.header) { text(g,row.label,r.withTrimmedTop(12),Type::secondary,Palette::muted()); continue; }
             SourceEntityStyle style;
             style.label=row.label; style.badge=row.badge; style.detail=row.detail;
             style.draggable=row.dragDescription.isNotEmpty();
@@ -2233,7 +2233,7 @@ void FxGlobalFxEditor::paint(juce::Graphics& g) {
     g.drawRect(getLocalBounds());
     auto area=getLocalBounds().reduced(18,12);
     text(g,"GLOBAL FX",area.removeFromTop(28),13.0f,Palette::text());
-    text(g,"INPUT  >  BUS GRAPHS  >  DRY/WET  >  WIDTH  >  OUTPUT",area.removeFromTop(26),8.5f,Palette::muted());
+    text(g,"INPUT  >  BUS GRAPHS  >  DRY/WET  >  WIDTH  >  OUTPUT",area.removeFromTop(26),Type::secondary,Palette::muted());
     auto knobs=area.removeFromTop(104);
     auto values=knobs.removeFromBottom(16),labels=knobs.removeFromBottom(18);
     const int width=labels.getWidth()/4;
@@ -2241,18 +2241,18 @@ void FxGlobalFxEditor::paint(juce::Graphics& g) {
                                juce::String(juce::roundToInt(s.width*100))+"%",juce::String(s.outputGainDb,1)+" dB"};
     int i=0;
     for(const char* n:{"INPUT","DRY/WET","WIDTH","OUTPUT"}) {
-        text(g,n,labels.removeFromLeft(width),9.5f,Palette::muted(),juce::Justification::centred);
-        text(g,texts[i++],values.removeFromLeft(width),9.5f,Palette::secondary(),juce::Justification::centred);
+        text(g,n,labels.removeFromLeft(width),Type::label,Palette::muted(),juce::Justification::centred);
+        text(g,texts[i++],values.removeFromLeft(width),Type::label,Palette::secondary(),juce::Justification::centred);
     }
     area.removeFromTop(12);
     text(g,"FX ORDER",area.removeFromTop(28),10.0f,Palette::secondary());
     text(g,s.order==FxOrder::PreMaster ? "Voices > bus graphs > master gain (drive/limit before volume)."
-                                       : "Voices > master gain > bus graphs.",area.removeFromTop(24),8.5f,Palette::muted());
+                                       : "Voices > master gain > bus graphs.",area.removeFromTop(24),Type::secondary,Palette::muted());
     area.removeFromTop(6);
     text(g,"BYPASS MODE",area.removeFromTop(28),10.0f,Palette::secondary());
     text(g,s.bypass==FxBypassMode::Hard ? "Effect PWR switches instantly."
          : s.bypass==FxBypassMode::TailPreserve ? "Bypassed effects stop taking input; delay/reverb tails ring out."
-                                                : "Effect PWR crossfades over 10 ms.",area.removeFromTop(24),8.5f,Palette::muted());
+                                                : "Effect PWR crossfades over 10 ms.",area.removeFromTop(24),Type::secondary,Palette::muted());
 }
 
 // ================================================================ inspector
@@ -2340,13 +2340,13 @@ private:
         auto area=body.reduced(12,6).withTrimmedTop(6);
         if(!node_) {
             text(g,"NO NODE SELECTED",area.withTrimmedBottom(area.getHeight()/2),11.0f,Palette::secondary(),juce::Justification::centredBottom);
-            text(g,"Select a module in the routing canvas to edit it here.",area.withTrimmedTop(area.getHeight()/2+4),9.0f,Palette::muted(),juce::Justification::centredTop);
+            text(g,"Select a module in the routing canvas to edit it here.",area.withTrimmedTop(area.getHeight()/2+4),Type::secondary,Palette::muted(),juce::Justification::centredTop);
             return;
         }
         auto row=area.removeFromTop(26);
         const bool effect=node_->kind==FxNodeKind::Effect;
         text(g,node_->name,row.withTrimmedLeft(effect ? 52 : 0).withTrimmedRight(36),12.0f,Palette::text());
-        text(g,kindLabel(node_->kind),row.withTrimmedRight(38),8.5f,Palette::muted(),juce::Justification::centredRight);
+        text(g,kindLabel(node_->kind),row.withTrimmedRight(38),Type::secondary,Palette::muted(),juce::Justification::centredRight);
         area.removeFromTop(6);
         auto display=area.removeFromTop(60);
         if(effect) {
@@ -2356,14 +2356,14 @@ private:
             auto labels=area.removeFromBottom(14);
             const int width=labels.getWidth()/juce::jmax(1,int(params_.size()));
             for(const auto* p:params_) {
-                text(g,p->label,labels.removeFromLeft(width),9.0f,Palette::muted(),juce::Justification::centred);
-                text(g,valueText(*node_,*p),values.removeFromLeft(width),9.0f,Palette::secondary(),juce::Justification::centred);
+                text(g,p->label,labels.removeFromLeft(width),Type::label,Palette::muted(),juce::Justification::centred);
+                text(g,valueText(*node_,*p),values.removeFromLeft(width),Type::label,Palette::secondary(),juce::Justification::centred);
             }
             return;
         }
         well(g,display);
         auto lines=display.reduced(10,6);
-        const auto line=[&](const juce::String& s,juce::Colour c){text(g,s,lines.removeFromTop(16),9.0f,c);};
+        const auto line=[&](const juce::String& s,juce::Colour c){text(g,s,lines.removeFromTop(16),Type::secondary,c);};
         // Socket names come from the model's port descriptors.
         const auto names=[&](nodes::PortDirection direction) {
             juce::StringArray list;
@@ -2457,12 +2457,12 @@ public:
             g.fillEllipse(juce::Rectangle<float>(r*2,r*2).withCentre(c));
             g.setColour(b==selected_ ? signalSourceColour() : Palette::accent());
             g.drawEllipse(juce::Rectangle<float>(r*2,r*2).withCentre(c),1.4f);
-            text(g,juce::String(b+1),juce::Rectangle<float>(16,12).withCentre(c.translated(0,-12)).toNearestInt(),8.0f,Palette::muted(),juce::Justification::centred);
+            text(g,juce::String(b+1),juce::Rectangle<float>(18,13).withCentre(c.translated(0,-13)).toNearestInt(),Type::secondary,Palette::muted(),juce::Justification::centred);
         }
         auto row=controlsArea();
-        text(g,"FREQ "+juce::String(fxParameterText(*descriptor(selected_,3),value(selected_,3))),freq_.getBounds().translated(0,-13).withHeight(12),8.0f,Palette::muted());
-        text(g,"GAIN "+juce::String(fxParameterText(*descriptor(selected_,4),value(selected_,4))),gain_.getBounds().translated(0,-13).withHeight(12),8.0f,Palette::muted());
-        text(g,"Q "+juce::String(fxParameterText(*descriptor(selected_,5),value(selected_,5))),q_.getBounds().translated(0,-13).withHeight(12),8.0f,Palette::muted());
+        text(g,"FREQ "+juce::String(fxParameterText(*descriptor(selected_,3),value(selected_,3))),freq_.getBounds().translated(0,-14).withHeight(13),Type::secondary,Palette::muted());
+        text(g,"GAIN "+juce::String(fxParameterText(*descriptor(selected_,4),value(selected_,4))),gain_.getBounds().translated(0,-14).withHeight(13),Type::secondary,Palette::muted());
+        text(g,"Q "+juce::String(fxParameterText(*descriptor(selected_,5),value(selected_,5))),q_.getBounds().translated(0,-14).withHeight(13),Type::secondary,Palette::muted());
         (void)row;
     }
     void resized() override {
@@ -2648,26 +2648,26 @@ private:
             auto area=getLocalBounds();
             if(!node || node->kind!=FxNodeKind::Effect) {
                 text(g,node ? "Routing and terminal nodes have no parameters." : "Select a module to edit its parameters.",
-                     area.removeFromTop(26),9.5f,Palette::muted());
+                     area.removeFromTop(26),Type::label,Palette::muted());
                 return;
             }
             if(tab==1) {
                 text(g,modulation.empty() ? "No modulation. Drag a modulator onto any knob, or right-click a knob > Assign Modulator."
                                           : "Routes from Origami's modulation system targeting this effect:",
-                     area.removeFromTop(rowHeight),9.0f,Palette::muted());
+                     area.removeFromTop(rowHeight),Type::secondary,Palette::muted());
                 for(const auto& m:modulation) {
                     auto row=area.removeFromTop(rowHeight);
                     juce::String param="PARAM";
                     if(const auto* p=parameterDescriptor(*node,fxAddressParameter(m.route.destination))) param=p->label;
-                    text(g,juce::String(node->name)+" / "+param,row.removeFromLeft(130),9.5f,Palette::secondary());
+                    text(g,juce::String(node->name)+" / "+param,row.removeFromLeft(130),Type::label,Palette::secondary());
                     row.removeFromRight(36); // remove button
-                    text(g,(m.route.amount>=0.0f?"+":"")+juce::String(m.route.amount,2),row.removeFromRight(52),9.5f,
+                    text(g,(m.route.amount>=0.0f?"+":"")+juce::String(m.route.amount,2),row.removeFromRight(52),Type::label,
                          Palette::secondary(),juce::Justification::centredRight);
                 }
                 return;
             }
             if(node->effect==FxEffectType::Equalizer && tab==0) return; // band editor paints itself
-            if(entries.empty()) { text(g,"No advanced parameters for this effect.",area.removeFromTop(26),9.5f,Palette::muted()); return; }
+            if(entries.empty()) { text(g,"No advanced parameters for this effect.",area.removeFromTop(26),Type::label,Palette::muted()); return; }
             for(const auto& e:entries) {
                 auto line=area.removeFromTop(rowHeight);
                 text(g,e.descriptor->label,line.removeFromLeft(114),10.0f,Palette::secondary());
@@ -3009,18 +3009,18 @@ public:
     }
     void paint(juce::Graphics& g) override {
         auto area=getLocalBounds().reduced(12,8);
-        text(g,kind_,area.removeFromTop(16),8.5f,Palette::muted());
+        text(g,kind_,area.removeFromTop(16),Type::secondary,Palette::muted());
         text(g,title_,area.removeFromTop(24),12.0f,Palette::text());
         area.removeFromTop(8);
-        for(const auto& line:lines_) text(g,line,area.removeFromTop(16),9.0f,Palette::secondary());
+        for(const auto& line:lines_) text(g,line,area.removeFromTop(16),Type::label,Palette::secondary());
         if(op_!=0) {
-            text(g,liveValues_,area.removeFromTop(18),9.0f,Palette::text());
+            text(g,liveValues_,area.removeFromTop(18),Type::label,Palette::text());
             for(std::size_t i=0;i<params_.size();++i)
-                text(g,paramLabels_[i],params_[i]->getBounds().withX(params_[i]->getX()-84).withWidth(80),8.5f,Palette::muted());
+                text(g,paramLabels_[i],params_[i]->getBounds().withX(params_[i]->getX()-84).withWidth(80),Type::secondary,Palette::muted());
             if(!sequence_.empty()) {
-                text(g,"SEQUENCE",sequence_[0]->getBounds().withY(sequence_[0]->getY()-12).withHeight(11).withWidth(120),8.0f,Palette::muted());
+                text(g,"SEQUENCE",sequence_[0]->getBounds().withY(sequence_[0]->getY()-14).withHeight(13).withWidth(120),Type::secondary,Palette::muted());
                 for(std::size_t i=8;i<sequence_.size();++i)
-                    text(g,sequenceLabels_[int(i)],sequence_[i]->getBounds().withX(sequence_[i]->getX()-66).withWidth(62),8.5f,Palette::muted());
+                    text(g,sequenceLabels_[int(i)],sequence_[i]->getBounds().withX(sequence_[i]->getX()-66).withWidth(62),Type::secondary,Palette::muted());
             }
         }
     }
@@ -3262,13 +3262,13 @@ public:
 private:
     void paintContent(juce::Graphics& g,juce::Rectangle<int> body) override {
         auto area=body.reduced(12,6).withTrimmedTop(6);
-        text(g,"SHARED WITH SYNTH MACROS",area.removeFromTop(18),8.5f,Palette::muted());
+        text(g,"SHARED WITH SYNTH MACROS",area.removeFromTop(18),Type::secondary,Palette::muted());
         area.removeFromTop(2);
         const int cell=area.getWidth()/4;
         for(int i=0;i<4;++i) {
             if(ids_[std::size_t(i)]==0) continue;
             auto r=juce::Rectangle<int>(area.getX()+i*cell,area.getY(),cell,area.getHeight()).withTrimmedBottom(16);
-            text(g,"MACRO "+juce::String(int(ids_[std::size_t(i)])),r.removeFromBottom(16),9.0f,Palette::muted(),juce::Justification::centred);
+            text(g,"MACRO "+juce::String(int(ids_[std::size_t(i)])),r.removeFromBottom(16),Type::label,Palette::muted(),juce::Justification::centred);
         }
     }
     ModulationBindings bindings_;

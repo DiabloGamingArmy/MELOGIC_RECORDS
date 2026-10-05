@@ -179,6 +179,8 @@ bool ArpeggiatorPanel::held(const mct::origami::ArpeggiatorRuntimeSnapshot& snap
     return (snapshot.heldHigh & (std::uint64_t{1}<<(midi-64)))!=0;
 }
 
+// Pattern section rhythm: caption rows sized for Type::label.
+namespace { constexpr int captionHeight=14,captionGap=6,rowGap=8; }
 void ArpeggiatorPanel::resized() {
     auto area=getLocalBounds().reduced(18);
     area.removeFromTop(58);
@@ -210,7 +212,11 @@ void ArpeggiatorPanel::resized() {
     lower.removeFromLeft(12);
     auto variation=lower;
 
-    auto pp=pattern.reduced(16,36);
+    // PATTERN title, then [caption / row] x 3. paint() draws each caption
+    // directly above its row's buttons, so the two can never drift apart.
+    auto pp=pattern.reduced(16,10);
+    pp.removeFromTop(20+captionGap);
+    pp.removeFromTop(captionHeight);
     auto directionRow=pp.removeFromTop(30);
     const int dirW=directionRow.getWidth()/static_cast<int>(directionButtons_.size());
     for(std::size_t i=0;i<directionButtons_.size();++i) {
@@ -218,7 +224,7 @@ void ArpeggiatorPanel::resized() {
         directionButtons_[i].setBounds(cell.reduced(1,2));
     }
 
-    pp.removeFromTop(23);
+    pp.removeFromTop(rowGap+captionHeight);
     auto rateRow=pp.removeFromTop(30);
     const int rateW=rateRow.getWidth()/static_cast<int>(rateButtons_.size());
     for(std::size_t i=0;i<rateButtons_.size();++i) {
@@ -226,7 +232,7 @@ void ArpeggiatorPanel::resized() {
         rateButtons_[i].setBounds(cell.reduced(1,2));
     }
 
-    pp.removeFromTop(23);
+    pp.removeFromTop(rowGap+captionHeight);
     auto lowerPattern=pp.removeFromTop(76);
     auto oct=lowerPattern.removeFromLeft(275);
     const int octW=oct.getWidth()/static_cast<int>(octaveButtons_.size());
@@ -255,26 +261,26 @@ void ArpeggiatorPanel::paint(juce::Graphics& g) {
     auto heading=area.removeFromTop(58);
     text(g,"ARPEGGIATOR",heading.removeFromTop(28),17.0f,Palette::text());
     text(g,"Rhythmic note sequencing, performance variation and shared master clock",
-         heading.removeFromTop(18),9.0f,Palette::muted());
+         heading.removeFromTop(18),Type::secondary,Palette::muted());
 
     auto master=area.removeFromTop(70);
     well(g,master);
     auto labels=master.reduced(12,7).removeFromTop(12);
-    text(g,"PERFORMANCE",labels.removeFromLeft(350),7.0f,Palette::muted());
-    text(g,"CLOCK",labels.removeFromLeft(250),7.0f,Palette::muted(),juce::Justification::centred);
-    text(g,"TEMPO",labels,7.0f,Palette::muted(),juce::Justification::centredLeft);
+    text(g,"PERFORMANCE",labels.removeFromLeft(350),Type::label,Palette::muted());
+    text(g,"CLOCK",labels.removeFromLeft(250),Type::label,Palette::muted(),juce::Justification::centred);
+    text(g,"TEMPO",labels,Type::label,Palette::muted(),juce::Justification::centredLeft);
 
     area.removeFromTop(12);
     auto monitor=area.removeFromTop(100);
     well(g,monitor);
     auto inner=monitor.reduced(16,10);
     auto mh=inner.removeFromTop(20);
-    text(g,"LIVE SEQUENCE",mh.removeFromLeft(180),9.5f,Palette::secondary());
+    text(g,"LIVE SEQUENCE",mh.removeFromLeft(180),Type::label,Palette::secondary());
 
     const auto state=getter_?getter_():mct::origami::ArpeggiatorState{};
     const auto runtime=runtimeGetter_?runtimeGetter_():mct::origami::ArpeggiatorRuntimeSnapshot{};
     const juce::String clockText=state.syncToDaw ? "HOST SYNC" : ("INTERNAL  "+juce::String(state.internalTempo,1)+" BPM");
-    text(g,clockText,mh,7.5f,Palette::muted(),juce::Justification::centredRight);
+    text(g,clockText,mh,Type::secondary,Palette::muted(),juce::Justification::centredRight);
 
     std::array<int,32> preview{};
     int count=0;
@@ -289,7 +295,7 @@ void ArpeggiatorPanel::paint(juce::Graphics& g) {
     g.setColour(Palette::borderStrong().withAlpha(.55f));
     g.drawHorizontalLine(static_cast<int>(cy),float(lane.getX()),float(lane.getRight()));
     if(count==0) {
-        text(g,"HOLD NOTES TO PREVIEW THE ARP SEQUENCE",lane,8.2f,Palette::muted(),juce::Justification::centred);
+        text(g,"HOLD NOTES TO PREVIEW THE ARP SEQUENCE",lane,Type::secondary,Palette::muted(),juce::Justification::centred);
     } else {
         const float step=float(lane.getWidth())/float(juce::jmax(1,count));
         for(int i=0;i<count;++i) {
@@ -300,7 +306,7 @@ void ArpeggiatorPanel::paint(juce::Graphics& g) {
             g.setColour(active?Palette::text():Palette::muted());
             g.fillEllipse(x-radius,cy-radius,radius*2.0f,radius*2.0f);
             text(g,noteName(note),{static_cast<int>(x-step*.45f),static_cast<int>(cy+10),static_cast<int>(step*.9f),14},
-                 active?8.2f:7.2f,active?Palette::text():Palette::muted(),juce::Justification::centred);
+                 Type::secondary,active?Palette::text():Palette::muted(),juce::Justification::centred);
         }
     }
 
@@ -312,25 +318,24 @@ void ArpeggiatorPanel::paint(juce::Graphics& g) {
     well(g,pattern);well(g,variation);
 
     auto pp=pattern.reduced(16,10);
-    text(g,"PATTERN",pp.removeFromTop(20),10.0f,Palette::secondary());
-    pp.removeFromTop(8);
-    text(g,"DIRECTION",pp.removeFromTop(13),7.2f,Palette::muted());
-    pp.removeFromTop(35);
-    text(g,"RATE / DIVISION",pp.removeFromTop(13),7.2f,Palette::muted());
-    pp.removeFromTop(35);
-    auto lowerLabels=pp.removeFromTop(16);
-    text(g,"OCTAVE SPAN",lowerLabels.removeFromLeft(300),7.2f,Palette::muted());
-    text(g,"TRANSPOSE",lowerLabels,7.2f,Palette::muted());
+    text(g,"PATTERN",pp.removeFromTop(20),Type::control,Palette::secondary());
+    const auto caption=[&](const char* label,const juce::Component& row,int width) {
+        text(g,label,{row.getX()+1,row.getY()-2-captionHeight,width,captionHeight},Type::label,Palette::muted());
+    };
+    caption("DIRECTION",directionButtons_[0],300);
+    caption("RATE / DIVISION",rateButtons_[0],300);
+    caption("OCTAVE SPAN",octaveButtons_[0],260);
+    caption("TRANSPOSE",transpose_,120);
 
     auto vpaint=variation.reduced(16,10);
-    text(g,"FEEL / VARIATION",vpaint.removeFromTop(20),10.0f,Palette::secondary());
+    text(g,"FEEL / VARIATION",vpaint.removeFromTop(20),Type::control,Palette::secondary());
 
     auto labelsRow=vpaint.removeFromTop(122).removeFromBottom(16);
     const int cell=labelsRow.getWidth()/4;
-    text(g,"GATE",labelsRow.removeFromLeft(cell),7.8f,Palette::muted(),juce::Justification::centred);
-    text(g,"SWING",labelsRow.removeFromLeft(cell),7.8f,Palette::muted(),juce::Justification::centred);
-    text(g,"CHANCE",labelsRow.removeFromLeft(cell),7.8f,Palette::muted(),juce::Justification::centred);
-    text(g,"VELOCITY",labelsRow,7.8f,Palette::muted(),juce::Justification::centred);
+    text(g,"GATE",labelsRow.removeFromLeft(cell),Type::label,Palette::muted(),juce::Justification::centred);
+    text(g,"SWING",labelsRow.removeFromLeft(cell),Type::label,Palette::muted(),juce::Justification::centred);
+    text(g,"CHANCE",labelsRow.removeFromLeft(cell),Type::label,Palette::muted(),juce::Justification::centred);
+    text(g,"VELOCITY",labelsRow,Type::label,Palette::muted(),juce::Justification::centred);
 }
 
 } // namespace mct::origami::ui

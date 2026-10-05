@@ -95,7 +95,7 @@ public:
         g.drawHorizontalLine(getHeight()-1,0.0f,static_cast<float>(getWidth()));
         const auto widths=groupWidths();int x=0;
         const std::array<const char*,7> titles{{"EDIT","INSERT","MOVE","MORPH","ALIGN","PROCESS","IMPORT / EXPORT"}};
-        g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions("Arial",Type::label,juce::Font::bold)));
         for(std::size_t group=0;group<widths.size();++group) {
             if(group>0) {
                 g.setColour(juce::Colour(0xff424242));
@@ -108,7 +108,7 @@ public:
         const auto morphX=widths[0]+widths[1]+widths[2];
         const auto morphWidth=widths[3];
         const auto sx=[&](int offset){return morphX+juce::roundToInt(offset*static_cast<float>(morphWidth)/375.0f);};
-        g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions("Arial",Type::secondary,juce::Font::bold)));
         g.setColour(juce::Colours::white.withAlpha(.8f));
         g.drawText(mode()==MorphMode::Between?"STEPS":"TARGET",sx(134),67,sx(205)-sx(134),11,juce::Justification::centred,false);
         g.drawText("MODE",sx(60),67,sx(130)-sx(60),11,juce::Justification::centred,false);
@@ -218,7 +218,7 @@ private:
                     line(-8,6,-8,10);line(-8,10,8,10);line(8,10,8,6);break;
                 }
             }
-            g.setFont(juce::Font(juce::FontOptions("Arial",horizontal_?9.0f:9.2f,juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions("Arial",Type::secondary,juce::Font::bold)));
             g.drawText(label_,b.toNearestInt(),juce::Justification::centred,false);
         }
     private:Command command_;juce::String label_;bool horizontal_;
@@ -236,7 +236,9 @@ private:
     private:bool up_;
     };
     std::array<int,7> groupWidths() const noexcept {
-        const std::array<int,7> proportion{{225,115,115,375,125,350,135}};
+        // mct-origami-ui-legibility-cleanup: MORPH gets the room its four choice
+        // boxes need at Type::secondary (taken from groups with spare width).
+        const std::array<int,7> proportion{{225,105,105,435,105,350,115}};
         std::array<int,7> actual{};int used=0;
         for(std::size_t i=0;i<6;++i){actual[i]=getWidth()*proportion[i]/1440;used+=actual[i];}
         actual[6]=getWidth()-used;return actual;
@@ -272,8 +274,25 @@ private:
     class ToolLookAndFeel final : public juce::LookAndFeel_V4 {
     public:
         juce::Font getComboBoxFont(juce::ComboBox&) override {
-            return juce::Font(juce::FontOptions(10.0f));
+            return juce::Font(juce::FontOptions(Type::secondary));
         }
+        // Compact arrow (14 px instead of 30) so the value text gets the width.
+        void positionComboBoxText(juce::ComboBox& box,juce::Label& label) override {
+            label.setBounds(1,1,juce::jmax(0,box.getWidth()-arrowZone-1),juce::jmax(0,box.getHeight()-2));
+            label.setBorderSize({0,4,0,0});
+            label.setFont(getComboBoxFont(box));
+            label.setMinimumHorizontalScale(1.0f); // ellipsis, never squeezed text
+        }
+        void drawComboBox(juce::Graphics& g,int width,int height,bool,int,int,int,int,juce::ComboBox& box) override {
+            const auto bounds=juce::Rectangle<int>(0,0,width,height).toFloat().reduced(.5f);
+            g.setColour(box.findColour(juce::ComboBox::backgroundColourId)); g.fillRoundedRectangle(bounds,3.0f);
+            g.setColour(box.findColour(juce::ComboBox::outlineColourId)); g.drawRoundedRectangle(bounds,3.0f,1.0f);
+            const auto arrow=juce::Rectangle<float>(float(width-arrowZone),0.0f,float(arrowZone-3),float(height)).withSizeKeepingCentre(8.0f,5.0f);
+            juce::Path p; p.startNewSubPath(arrow.getX(),arrow.getY()); p.lineTo(arrow.getCentreX(),arrow.getBottom()); p.lineTo(arrow.getRight(),arrow.getY());
+            g.setColour(box.findColour(juce::ComboBox::arrowColourId).withAlpha(box.isEnabled() ? 0.9f : 0.2f));
+            g.strokePath(p,juce::PathStrokeType(1.6f));
+        }
+        static constexpr int arrowZone=14;
     } lookAndFeel_;
     int count_=256;
     Button copy_{Command::Copy,"COPY"},paste_{Command::Paste,"PASTE"},

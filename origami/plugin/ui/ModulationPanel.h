@@ -270,8 +270,11 @@ private:
 };
 
 // mct-origami-synth-dynamic-macros: the SYNTH macro editor. Two columns of
-// macro cards (name / remove, knob, assignment area) in a vertically
+// macro cells (name / remove, knob, assignment area) in a vertically
 // scrolling list with its own scrollbar gutter, plus + ADD MACRO.
+// mct-origami-ui-legibility-cleanup: ONE square container (the grid frame);
+// cells sit edge to edge and are separated only by the grid's straight
+// divider lines, which run to the frame. Cells and ASSIGN draw no frames.
 //
 // Every card is a view of one canonical macro (stable id, ModSource 200+id);
 // the assignment area is the SYNTH modulator row (drag grip + route rings),
@@ -296,11 +299,14 @@ public:
     bool canRedo() const noexcept { return !redo_.empty(); }
 
     // Layout / inspection (tests, snapshots).
-    static constexpr int columns=2,cardHeight=134,gap=4;
+    static constexpr int columns=2,cardHeight=134,gap=0,cellPadding=5;
     std::size_t cardCount() const noexcept { return cards_.size(); }
     juce::Component* card(std::size_t index) const noexcept;
     std::size_t cardId(std::size_t index) const noexcept;
     juce::Viewport& viewport() noexcept { return viewport_; }
+    // The grid's divider lines in content coordinates (vertical + horizontal).
+    std::vector<juce::Line<float>> gridDividers() const;
+    juce::Rectangle<int> gridFrame() const noexcept { return viewport_.getBounds().expanded(1); }
     juce::TextButton& addButton() noexcept { return add_; }
     juce::Slider* knob(std::size_t id) const noexcept;
     const ModulationSourceRow* assignment(std::size_t id) const noexcept;
@@ -309,7 +315,7 @@ public:
 private:
     struct Step { bool added=false; std::size_t id=0; float value=0.0f; std::vector<ModRoute> routes;
                   std::vector<std::pair<std::uint32_t,std::uint8_t>> inputs; }; // NODES inputs it fed
-    void paintContent(juce::Graphics&,juce::Rectangle<int>) override {}
+    void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     bool applyRemove(std::size_t id,Step&);
     bool applyAdd(const Step&);
     void rebuild(const ModulationState&);
@@ -318,7 +324,10 @@ private:
     void removeRoute(std::uint32_t);
     ModulationBindings bindings_;
     juce::Viewport viewport_;
-    juce::Component content_;
+    struct Grid final : juce::Component {
+        const MacroPanel* owner=nullptr;
+        void paint(juce::Graphics&) override;
+    } content_;
     juce::TextButton add_{"+ ADD MACRO"};
     std::vector<std::unique_ptr<Card>> cards_;
     // A card removed while one of its own buttons is running stays alive (off

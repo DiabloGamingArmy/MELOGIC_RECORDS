@@ -277,7 +277,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         addChildComponent(*label);
         label->setJustificationType(juce::Justification::centred);
         label->setColour(juce::Label::textColourId,Palette::muted());
-        label->setFont(juce::FontOptions(7.4f));
+        label->setFont(juce::FontOptions(Type::label));
         label->setInterceptsMouseClicks(false,false);
     }
     phaseAngleLabel_.setText("FIXED PHASE",juce::dontSendNotification);
@@ -417,7 +417,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             item.label->setText(item.text,juce::dontSendNotification);
             item.label->setJustificationType(juce::Justification::centred);
             item.label->setColour(juce::Label::textColourId,Palette::muted());
-            item.label->setFont(juce::FontOptions(7.8f));
+            item.label->setFont(juce::FontOptions(Type::label));
+            item.label->setBorderSize({});
             item.label->setInterceptsMouseClicks(false,false);
         }
         octaveSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscOctave),juce::dontSendNotification);
@@ -492,7 +493,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         for (auto* label : {&unisonLabel_, &detuneLabel_, &blendLabel_}) {
             label->setJustificationType(juce::Justification::centred);
             label->setColour(juce::Label::textColourId, Palette::muted());
-            label->setFont(juce::FontOptions(8.0f));
+            label->setFont(juce::FontOptions(Type::label));
             label->setInterceptsMouseClicks(false, false);
         }
         // V22.6: browser arrows are reserved for wavetable selection.
@@ -503,7 +504,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             addAndMakeVisible(label);
             label->setJustificationType(juce::Justification::centred);
             label->setColour(juce::Label::textColourId,Palette::muted());
-            label->setFont(juce::FontOptions(8.0f));
+            label->setFont(juce::FontOptions(Type::label));
         }
         panLabel_.setText("PAN",juce::dontSendNotification);
         levelLabel_.setText("LEVEL",juce::dontSendNotification);
@@ -596,7 +597,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         addAndMakeVisible(*label);
         label->setJustificationType(juce::Justification::centred);
         label->setColour(juce::Label::textColourId,Palette::muted());
-        label->setFont(juce::FontOptions(7.2f));
+        label->setFont(juce::FontOptions(Type::label));
         label->setInterceptsMouseClicks(false,false);
     }
     auto commitProcess=[this] {
@@ -676,7 +677,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         addAndMakeVisible(*label);
         label->setJustificationType(juce::Justification::centred);
         label->setColour(juce::Label::textColourId,Palette::muted());
-        label->setFont(juce::FontOptions(7.2f));
+        label->setFont(juce::FontOptions(Type::label));
         label->setInterceptsMouseClicks(false,false);
     }
 
@@ -760,7 +761,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         chainDeletes_[i].setButtonText("-");
         chainKinds_[i].setJustificationType(juce::Justification::centred);
         chainKinds_[i].setColour(juce::Label::textColourId,Palette::muted());
-        chainKinds_[i].setFont(juce::FontOptions(7.2f));
+        chainKinds_[i].setFont(juce::FontOptions(Type::secondary));
         chainKinds_[i].setInterceptsMouseClicks(false,false);
         chainDeletes_[i].onClick=[this,i] {
             if(i>=chainItemCount_)return;
@@ -839,7 +840,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     wtPositionSlider_.setTooltip("Continuous position through Basic Shapes");
     wtPositionLabel_.setText("WT POS",juce::dontSendNotification);
     wtPositionLabel_.setJustificationType(juce::Justification::centred);
-    wtPositionLabel_.setFont(juce::FontOptions(8.0f));
+    wtPositionLabel_.setFont(juce::FontOptions(Type::label));
     wtPositionLabel_.setColour(juce::Label::textColourId,Palette::muted());
     if(parameterGetter_)
         wtPositionSlider_.setValue(juce::jlimit(0.0,1.0,double(parameterGetter_(mct::origami::ParameterId::Waveform))/3.0),juce::dontSendNotification);
@@ -1274,33 +1275,48 @@ void OscillatorCard::setWorkspacePage(WorkspacePage page) {
     repaint();
 }
 
-void OscillatorCard::resized() {
+OscillatorCard::HeaderLayout OscillatorCard::headerLayout() const {
     // Persistent top bar: OSC identity | MODE | PHASE | ROUTE | PWR | remove.
-    // MODE is shifted left and all three configuration entries share the same
-    // compact rhythm so the bar remains readable at the fixed card width.
-    constexpr int headerY=6;
-    constexpr int headerH=21;
-    constexpr int edge=7;
-    constexpr int removeW=24;
-    constexpr int powerW=31;
-    constexpr int gap=3;
-    constexpr int identityW=54;
-    constexpr int labelW=24;
-
+    // The identity is exactly as wide as the Panel's "OSC N" title; each
+    // descriptor is exactly as wide as its word; each selector gets the width
+    // of its longest value, then the remaining width is shared equally.
+    constexpr int headerY=6,headerH=21,edge=7,removeW=22,powerW=30;
+    constexpr int titleX=10;          // Panel paints its title at x = 10
+    constexpr int afterTitle=10,labelGap=4,groupGap=8,beforePower=6;
+    HeaderLayout h;
     int right=getWidth()-edge;
-    remove_.setBounds(right-removeW,headerY,removeW,headerH); right-=removeW+gap;
-    power_.setBounds(right-powerW,headerY,powerW,headerH); right-=powerW+gap;
+    h.remove={right-removeW,headerY,removeW,headerH}; right-=removeW+3;
+    h.power={right-powerW,headerY,powerW,headerH}; right-=powerW+beforePower;
+    const int titleW=juce::roundToInt(std::ceil(textWidth(title_,Type::title)));
+    h.title={titleX,headerY,titleW,headerH};
+    const int left=titleX+titleW+afterTitle;
+    const std::array<const char*,3> words{"MODE","PHASE","ROUTE"};
+    const std::array<const char*,3> longest{"WAVETABLE","FIXED","MAIN +1"};
+    std::array<int,3> labelW{},minimum{};
+    int fixed=0;
+    for(std::size_t i=0;i<3;++i) {
+        labelW[i]=juce::roundToInt(std::ceil(textWidth(words[i],headerLabelSize)))+1;
+        minimum[i]=juce::roundToInt(std::ceil(textWidth(longest[i],Type::control)))+10;
+        fixed+=labelW[i]+labelGap+minimum[i];
+    }
+    fixed+=2*groupGap;
+    const int spare=juce::jmax(0,right-left-fixed)/3;
+    int x=left;
+    for(std::size_t i=0;i<3;++i) {
+        h.labels[i]={x,headerY,labelW[i],headerH}; x+=labelW[i]+labelGap;
+        const int w=minimum[i]+spare;
+        h.selectors[i]={x,headerY,w,headerH}; x+=w+groupGap;
+    }
+    return h;
+}
 
-    const int left=edge+identityW;
-    const int available=juce::jmax(0,right-left);
-    const int groupWidth=juce::jmax(1,(available-gap*2)/3);
-    auto placeHeaderSelector=[&](juce::TextButton& selector,int index) {
-        const int x=left+index*(groupWidth+gap);
-        selector.setBounds(x+labelW,headerY,juce::jmax(1,groupWidth-labelW),headerH);
-    };
-    placeHeaderSelector(modeSelector_,0);
-    placeHeaderSelector(phaseSelector_,1);
-    placeHeaderSelector(outputSelector_,2);
+void OscillatorCard::resized() {
+    const auto header=headerLayout();
+    remove_.setBounds(header.remove);
+    power_.setBounds(header.power);
+    modeSelector_.setBounds(header.selectors[0]);
+    phaseSelector_.setBounds(header.selectors[1]);
+    outputSelector_.setBounds(header.selectors[2]);
 
     if(!engineBacked_) return;
 
@@ -1508,12 +1524,12 @@ void OscillatorCard::resized() {
         component->setBounds({});component->setVisible(false);
     }
 
-    auto tuning=upper.removeFromBottom(30);
-    upper.removeFromBottom(4);
+    auto tuning=upper.removeFromBottom(32);
+    upper.removeFromBottom(2);
     const int tuningCellWidth=tuning.getWidth()/3;
     auto placeTuning=[&](int index,juce::Slider& slider,juce::Label& title) {
         auto cell=tuning.withX(tuning.getX()+index*tuningCellWidth).withWidth(tuningCellWidth).reduced(3,0);
-        auto titleArea=cell.removeFromTop(10);
+        auto titleArea=cell.removeFromTop(12);
         title.setBounds(titleArea);
         slider.setBounds(cell);
     };
@@ -1561,28 +1577,11 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     // source -> process -> tuning -> performance-control hierarchy.
 
     // Dedicated oscillator configuration strip. Child buttons own the selector
-    // surfaces; paint only the identity and compact vertical section labels here.
-    constexpr int headerY=6;
-    constexpr int headerH=21;
-    constexpr int edge=7;
-    constexpr int identityW=54;
-    constexpr int removeW=24;
-    constexpr int powerW=31;
-    constexpr int gap=3;
-    constexpr int labelW=24;
-
-    // Panel owns the original "OSC N" title. The three configuration groups
-    // begin immediately after that reserved identity region.
-    const int right=getWidth()-edge-removeW-gap-powerW-gap;
-    const int left=edge+identityW;
-    const int available=juce::jmax(0,right-left);
-    const int groupWidth=juce::jmax(1,(available-gap*2)/3);
-    auto headerLabel=[&](int index) {
-        return juce::Rectangle<int>(left+index*(groupWidth+gap),headerY,labelW,headerH);
-    };
-    text(g,"MODE",headerLabel(0),6.8f,Palette::muted(),juce::Justification::centred);
-    text(g,"PHASE",headerLabel(1),6.8f,Palette::muted(),juce::Justification::centred);
-    text(g,"ROUTE",headerLabel(2),6.8f,Palette::muted(),juce::Justification::centred);
+    // surfaces; paint only each descriptor, right next to its selector.
+    const auto header=headerLayout();
+    const std::array<const char*,3> words{"MODE","PHASE","ROUTE"};
+    for(std::size_t i=0;i<3;++i)
+        text(g,words[i],header.labels[i],headerLabelSize,Palette::muted(),juce::Justification::centredRight);
 
     // Patch 1 keeps the established oscillator body as the Main workspace.
     // Future Phase/Routing pages replace this body while the header above stays
@@ -1592,20 +1591,20 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         well(g,page);
         auto titleArea=page.removeFromTop(28);
         const auto title=workspacePage_==WorkspacePage::Phase ? "PHASE" : "ROUTING";
-        text(g,title,titleArea,9.0f,Palette::secondary(),juce::Justification::centred);
+        text(g,title,titleArea,Type::control,Palette::secondary(),juce::Justification::centred);
         g.setColour(Palette::borderSoft());
         g.drawHorizontalLine(titleArea.getBottom(),float(page.getX()+8),float(page.getRight()-8));
 
         auto section=body.reduced(12,10);
         section.removeFromTop(29);
         if(workspacePage_==WorkspacePage::Phase) {
-            text(g,"START MODE",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+            text(g,"START MODE",section.removeFromTop(13),Type::label,Palette::muted(),juce::Justification::centredLeft);
             section.removeFromTop(34);
-            text(g,"PHASE POSITION",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+            text(g,"PHASE POSITION",section.removeFromTop(13),Type::label,Palette::muted(),juce::Justification::centredLeft);
             section.removeFromTop(106);
-            text(g,"BEHAVIOR",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+            text(g,"BEHAVIOR",section.removeFromTop(13),Type::label,Palette::muted(),juce::Justification::centredLeft);
         } else {
-            text(g,"OUTPUT BUSES  /  POST OSC CHAIN + FILTER",section.removeFromTop(15),7.6f,Palette::muted(),juce::Justification::centredLeft);
+            text(g,"OUTPUT BUSES  /  POST OSC CHAIN + FILTER",section.removeFromTop(15),Type::label,Palette::muted(),juce::Justification::centredLeft);
             for(std::size_t i=0;i<busRowCount_;++i) {
                 const auto row=busRowBounds_[i];
                 if(row.isEmpty()) continue;
@@ -1614,11 +1613,11 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 g.setColour(Palette::borderSoft());
                 g.drawRect(row,1);
                 text(g,juce::String(busLevels_[i].getValue(),3),busLevels_[i].getBounds().translated(-58,0).withWidth(54),
-                     8.5f,Palette::secondary(),juce::Justification::centredRight);
+                     Type::secondary,Palette::secondary(),juce::Justification::centredRight);
             }
             auto note=section.withTop(busAdd_.getBottom()+8).withHeight(30);
             g.setColour(Palette::muted().withAlpha(.75f));
-            g.setFont(juce::FontOptions(7.6f));
+            g.setFont(juce::FontOptions(Type::label));
             g.drawFittedText("MAIN is the permanent output bus. Add buses in NODES > BUSES; each has its own node graph.",
                              note,juce::Justification::centredLeft,2,1.0f);
         }
@@ -1677,9 +1676,9 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     auto chainInner=chainBox.reduced(8);
     auto chainTitle=chainInner.removeFromTop(14);
     chainTitle.translate(0,-4);
-    text(g,"OSC CHAIN",chainTitle,8.5f,Palette::secondary(),juce::Justification::centred);
+    text(g,"OSC CHAIN",chainTitle,Type::label,Palette::secondary(),juce::Justification::centred);
     if(chainItemCount_==0)
-        text(g,"NO PROCESSING OR ROUTING",chainInner,7.2f,Palette::muted(),juce::Justification::centred);
+        text(g,"NO PROCESSING OR ROUTING",chainInner,Type::secondary,Palette::muted(),juce::Justification::centred);
 
 
     // Conventional oscillator pitch identity: OCT / SEM / FIN.
@@ -1691,8 +1690,8 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         if(!engineBacked_) {
             well(g,cell);
             auto labelArea=cell.removeFromTop(11);
-            text(g,tuneLabels[i],labelArea,7.6f,Palette::muted(),juce::Justification::centred);
-            text(g,tuneValues[i],cell,9.0f,Palette::text(),juce::Justification::centred);
+            text(g,tuneLabels[i],labelArea,Type::label,Palette::muted(),juce::Justification::centred);
+            text(g,tuneValues[i],cell,Type::control,Palette::text(),juce::Justification::centred);
         }
     }
 
@@ -2233,6 +2232,6 @@ void OscillatorRack::resized() {
     right_.setBounds(body.removeFromRight(25).reduced(0,5));body.removeFromRight(4);viewport_.setBounds(body);layoutCards();
 }
 void OscillatorRack::paintContent(juce::Graphics& g,juce::Rectangle<int>) {
-    text(g,juce::String(count())+" MODULES",{140,5,getWidth()-305,24},8.5f,Palette::muted(),juce::Justification::centredRight);
+    text(g,juce::String(count())+" MODULES",{140,5,getWidth()-305,24},Type::secondary,Palette::muted(),juce::Justification::centredRight);
 }
 }

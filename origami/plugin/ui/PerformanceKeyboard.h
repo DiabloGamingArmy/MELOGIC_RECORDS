@@ -168,10 +168,10 @@ public:
         arpEnable_.setTooltip("Enable arpeggiator");
         arpClockSummary_.setJustificationType(juce::Justification::centred);
         arpClockSummary_.setColour(juce::Label::textColourId,Palette::secondary());
-        arpClockSummary_.setFont(juce::FontOptions(9.0f));
+        arpClockSummary_.setFont(juce::FontOptions(Type::secondary));
         arpPatternSummary_.setJustificationType(juce::Justification::centred);
         arpPatternSummary_.setColour(juce::Label::textColourId,Palette::muted());
-        arpPatternSummary_.setFont(juce::FontOptions(8.2f));
+        arpPatternSummary_.setFont(juce::FontOptions(Type::secondary));
         syncArpFromModel();
         arpEnable_.onClick=[this]{
             if(!arpSetter_) return;
