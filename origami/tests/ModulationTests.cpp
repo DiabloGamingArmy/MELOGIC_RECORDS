@@ -675,6 +675,12 @@ void lfoStereoModulation() {
         st.routes[3]=route(4,ModSource::Lfo1,ModDestination::Level,.6f,2);
         st.routes[4]=route(5,ModSource::Lfo2,ModDestination::Level,.3f,2);
         st.routes[5]=route(6,ModSource::Lfo1,ModDestination::WtPosition,.5f,1);
+        // mct-origami-dsp-performance-stereo-chain: the plan follows STEREO.
+        {
+            auto atZero=std::make_unique<CompiledModulation>(); compileFrame(st,*atZero);
+            check(!atZero->hasStereoPlan(),"LFOs at STEREO 0 make a mono plan (the mono renderer), whatever they reach");
+        }
+        st.lfo1.stereo=st.lfo2.stereo=1.0f;
         auto c=std::make_unique<CompiledModulation>(); compileFrame(st,*c);
         check(c->hasStereoPlan(),"LFO -> CUTOFF / LEVEL makes a stereo plan");
         const float L=.2f,R=-.6f,L2=.5f,R2=.1f,M=.7f;
@@ -703,7 +709,7 @@ void lfoStereoModulation() {
         check(!c2->hasStereoPlan(),"stereo LFO routed only to scalar destinations: mono plan (fast path)");
     }
     {   // Per-voice (RETRIGGER) LFO -> LEVEL through voiceFrame.
-        ModulationState st; st.lfoActiveMask=0xF; st.lfo1.mode=LfoMode::Loop; st.nextRouteId=10;
+        ModulationState st; st.lfoActiveMask=0xF; st.lfo1.mode=LfoMode::Loop; st.lfo1.stereo=1.0f; st.nextRouteId=10;
         st.routes[0]=route(1,ModSource::Lfo1,ModDestination::Level,.5f,1);
         auto c=std::make_unique<CompiledModulation>(); compileFrame(st,*c);
         auto g=std::make_unique<ModulationFrame>(); g->modules=mods; c->globalFrame(*g,{},48000.0);
@@ -718,7 +724,7 @@ void lfoStereoModulation() {
     }
     {   // NODES: component-wise continuous operators; EVENT / GATE stay scalar.
         for(auto type:{ControlOpType::Add,ControlOpType::Multiply,ControlOpType::Clamp,ControlOpType::Curve,ControlOpType::ScaleOffset,ControlOpType::Remap,ControlOpType::Max,ControlOpType::Smooth,ControlOpType::Threshold}) {
-            ModulationState st; st.lfoActiveMask=0xF; st.nextRouteId=10;
+            ModulationState st; st.lfoActiveMask=0xF; st.lfo1.stereo=1.0f; st.nextRouteId=10;
             st.operators[0]=makeControlOperator(type,st.nextOperatorId++);
             st.operators[0].inputs[0]={ControlInput::Kind::Source,ModSource::Lfo1,0};
             st.operators[0].inputs[1]={ControlInput::Kind::Source,ModSource::Macro1,0}; // mono operand: promoted (x, x)

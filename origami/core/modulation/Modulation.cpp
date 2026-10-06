@@ -315,6 +315,9 @@ float Lfo::mseg(const LfoSettings& s,double phase) noexcept {
 }
 
 float Lfo::next(const LfoSettings& s,double sampleRate) noexcept {
+    // RIGHT's smoother restarts from LEFT whenever a stereo read resumes
+    // (STEREO turned back up, or the plan switched back to stereo).
+    smoothReadyRight_=false;
     return lfoFunctionsNeutral(s) ? legacyNext<false>(s,sampleRate,nullptr) : processedNext<false>(s,sampleRate,nullptr);
 }
 
@@ -1154,13 +1157,21 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     // Which operators can carry a right value (component-wise continuous
     // operators fed, directly or through others, by an LFO) and which
     // stereo-capable destinations read a source that may be stereo.
-    const auto lfoOfSlot=[](std::size_t slot)->int {
-        if(slot<4) return int(slot);                                    // global (FREE) LFO 1..4
-        if(slot>=globalSourceCount && slot<sourceSlotCount) {
+    // mct-origami-dsp-performance-stereo-chain: only an LFO whose STEREO is
+    // non-zero is a stereo source. STEREO is ModulationState, so changing it
+    // recompiles this plan; a patch whose LFOs are all at STEREO 0 renders
+    // through the mono instantiation (the pre-stereo path) instead of the
+    // stereo one with every right channel idle.
+    std::array<bool,4> lfoStereo{};
+    for(std::size_t l=0;l<4;++l) lfoStereo[l]=lfoSettings(state,l).stereo>0.0f;
+    const auto lfoOfSlot=[&lfoStereo](std::size_t slot)->int {
+        int l=-1;
+        if(slot<4) l=int(slot);                                         // global (FREE) LFO 1..4
+        else if(slot>=globalSourceCount && slot<sourceSlotCount) {
             const auto v=slot-globalSourceCount;
-            if(v>=3 && v<=6) return int(v-3);                           // per-voice LFO 1..4
+            if(v>=3 && v<=6) l=int(v-3);                                // per-voice LFO 1..4
         }
-        return -1;
+        return l>=0 && lfoStereo[std::size_t(l)] ? l : -1;
     };
     std::array<bool,operatorSlotCount> opStereo{};
     for(std::size_t i=0;i<opCount_;++i) {

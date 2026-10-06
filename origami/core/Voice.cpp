@@ -141,7 +141,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         stereoActive=effective->stereo.levelMask!=0 || effective->stereo.filterSplit() ||
                      (effective->stereo.rightMask&compiled.readStereoGroups())!=0;
         if(!stereoActive) rightFilterLive_=0;
-    }
+    } else rightFilterLive_=0; // a later stereo plan restarts RIGHT filters from LEFT
     // Modules no voice route writes are read from the global frame (N07).
     const std::uint16_t localModules=effective==&local && !observe ? compiled.voiceModuleMask() : (effective==&local ? 0xffffu : 0u);
     const float envelopeValue=envelope*velocity_*std::clamp(effective->envelopeScaling,0.0f,2.0f);
