@@ -103,6 +103,9 @@ public:
             slider.setColour(juce::Slider::textBoxBackgroundColourId,juce::Colours::transparentBlack);
             slider.setColour(juce::Slider::textBoxOutlineColourId,juce::Colours::transparentBlack);
             slider.setColour(juce::Slider::textBoxTextColourId,Palette::text());
+            // mct-origami-manual-qa-ui-wavetable-fixes: a number field (drag /
+            // type the value), not a bar: no position marker under the digits.
+            slider.getProperties().set("mct.origami.numberOnly",true);
         };
         styleBend(bendRange_);
         styleBend(bendDownRange_);

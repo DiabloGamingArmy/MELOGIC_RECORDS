@@ -110,7 +110,8 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
                                             [&owner]{return owner.addUiBus();},
                                             [&owner](mct::origami::BusId id){return owner.removeUiBus(id);},
                                             &owner.getUiFxViewState(),
-                                            &owner.getUiControlLayout()}),
+                                            &owner.getUiControlLayout(),
+                                            [&owner](mct::origami::BusId bus){return owner.consumeUiFxInputPeaks(bus);}}),
       globalFx_(std::make_unique<mct::origami::ui::FxGlobalFxEditor>(owner.getUiFxWorkspace())) {
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,13> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_}};
@@ -162,6 +163,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
             if(action==Action::Previous) stepWavetable(id,-1);
             if(action==Action::Next) stepWavetable(id,1);
         };
+        oscillators_.wavetableData=[this](unsigned id){ return processor_.getUiOscillatorWavetable(id).data; };
         oscillators_.wavetableName=[this](unsigned id)->juce::String {
             const auto source=processor_.getUiOscillatorWavetable(id);
             return source.data ? source.data->name : juce::String("BASIC SHAPES");
@@ -802,6 +804,7 @@ void OrigamiAudioProcessorEditor::closeWavetableEditor() {
         const bool unchanged=reference.samples==data.samples;
         const auto contentId=unchanged ? (source.data ? source.contentId : juce::String(mct::origami::content::ContentLibrary::basicShapesId)) : juce::String();
         if(unchanged) data.name=reference.name;
+        else if(!data.name.endsWithIgnoreCase("(EDITED)")) data.name=data.name.trim()+" (EDITED)"; // never claims to be the library table
         processor_.setUiOscillatorWavetable(targetOscillator,std::move(data),contentId);
     }
 

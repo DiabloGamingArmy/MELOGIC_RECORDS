@@ -33,6 +33,9 @@ public:
     void sync(const std::vector<BusGraph>& slots,const FxGlobalSettings& globals);
     std::uint64_t compileCount() const noexcept;
     std::pair<float,float> consumePeaks() noexcept;
+    // mct-origami-manual-qa-ui-wavetable-fixes: the peak (L, R) of the signal
+    // entering `bus`'s graph (what its IN node emits) since the last call.
+    std::pair<float,float> consumeInputPeaks(FxBusId bus) noexcept;
     const FxRenderer& renderer(std::size_t slot) const noexcept { return *renderers_[slot]; }
 
     // ---- realtime. aux: 2*(maxRenderBuses-1) planar pointers (may be null).
@@ -51,6 +54,13 @@ private:
     float smoothing_=0.999f;
     std::vector<float> dry_; // 2*chunk
     std::atomic<float> peakLeft_{0.0f},peakRight_{0.0f};
+    // Per render slot: max |x| of the bus input since the UI last read it.
+    // Audio thread: relaxed loads / stores of floats only.
+    std::array<std::atomic<float>,maxRenderBuses*2> inputPeak_{};
+    void noteInputPeak(std::size_t slot,float left,float right) noexcept {
+        if(left>inputPeak_[2*slot].load(std::memory_order_relaxed)) inputPeak_[2*slot].store(left,std::memory_order_relaxed);
+        if(right>inputPeak_[2*slot+1].load(std::memory_order_relaxed)) inputPeak_[2*slot+1].store(right,std::memory_order_relaxed);
+    }
 };
 
 }

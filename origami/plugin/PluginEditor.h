@@ -93,6 +93,12 @@ public:
     mct::origami::ui::PresetSaveDialog& presetSaveDialog() noexcept { return *saveDialog_; }
     juce::String oscillatorLabel(unsigned oscillatorId) const;
     bool isInterestedInFileDrag(const juce::StringArray&) override;
+    // mct-origami-manual-qa-ui-wavetable-fixes: the wavetable editor as a
+    // user drives it (open from an oscillator, edit, close with the X).
+    void openWavetableEditorForOscillator(unsigned oscillatorId) { openWavetableEditor(oscillatorId); }
+    void closeWavetableEditorWithX() { if(wavetableEditor_.onClose) wavetableEditor_.onClose(); }
+    bool wavetableEditorOpen() const noexcept { return wavetableEditorSelected_; }
+    auto& wavetableEditorForTesting() noexcept { return wavetableEditor_; }
     void filesDropped(const juce::StringArray&,int x,int y) override;
 private:
     void beginWavetableImport(unsigned oscillatorId);
@@ -2002,6 +2008,18 @@ private:
             refreshHistoryButtons();
             header_.setDocumentName(document_.name);
         }
+        // Tests drive the same commands the toolbar / frame strip / canvas do.
+        void runFrameCommandForTesting(mct::origami::ui::FrameTools::Command c) { runFrameCommand(c); }
+        void selectFramesForTesting(const std::vector<unsigned>& frames,unsigned primary) {
+            document_.selectedFrame=primary; frameStrip_.selectRange(frames,primary); updateFrameTools();
+        }
+        void drawSampleForTesting(std::size_t frame,std::size_t index,float value) {
+            if(frame>=document_.frames.size()) return;
+            const auto before=document_.frames[frame].samples;
+            document_.setFrameSample(frame,index,value);
+            commitEdit(document_.frames[frame].id,before,document_.frames[frame].samples);
+        }
+        const mct::origami::ui::WavetableDocument& documentForTesting() const noexcept { return document_; }
         mct::origami::content::WavetableData documentData() const {
             mct::origami::content::WavetableData data;
             data.name=document_.name;

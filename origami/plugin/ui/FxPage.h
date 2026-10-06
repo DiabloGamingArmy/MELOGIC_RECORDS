@@ -443,6 +443,9 @@ struct FxPageHost {
     std::function<bool(BusId)> removeBus;
     fx::FxViewState* view=nullptr;
     nodes::ControlLayout* controlLayout=nullptr; // N03 CONTROL view metadata (processor-owned)
+    // mct-origami-manual-qa-ui-wavetable-fixes: peak (L, R) of the signal
+    // entering a bus's graph (its IN node) since the last read.
+    std::function<std::pair<float,float>(BusId)> inputPeaks;
 };
 
 class FxPage final : public juce::Component, private juce::Timer {
@@ -534,6 +537,9 @@ public:
     void selectParameterTab(int);
     std::size_t modulationRowCount() const;
     std::pair<float,float> meterLevels() const noexcept { return {meterLeft_,meterRight_}; }
+    // The IN node meters (displayed L / R) and one telemetry tick (tests).
+    std::pair<float,float> inputMeterLevels(fx::FxNodeId id) const { const auto it=inputMeters_.find(id); return it!=inputMeters_.end() ? it->second : std::pair<float,float>{0.0f,0.0f}; }
+    void meterTickForTesting() { updateMeters(); }
     void updateMeters();
     void zoomIn();
     void zoomOut();
@@ -708,6 +714,7 @@ private:
     fx::FxGraphDocument* document_=nullptr;
     ModulationBindings bindings_;
     PeakSource peaks_;
+    std::map<fx::FxNodeId,std::pair<float,float>> inputMeters_; // IN-node ballistics (UI thread)
     HostBindings host_;
     fx::FxViewState* viewState_=nullptr;
     std::vector<std::pair<BusId,juce::String>> busNames_;
