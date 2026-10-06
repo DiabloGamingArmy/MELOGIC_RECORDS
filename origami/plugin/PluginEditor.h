@@ -69,6 +69,8 @@ public:
     bool globalFxVisible() const noexcept { return globalOverlay_.isShowing(); }
     // Shared knob menu actions (also used by tests).
     bool assignModulator(mct::origami::ModSource,juce::Slider&);
+    // Test access: the route whose depth a drop at this editor point targets (0: none).
+    std::uint32_t modulationDepthTargetAt(juce::Point<int> p) const { return modulationDropAt(p).depthRoute; }
 private:
     class WavetableEditorSurface final : public juce::Component {
         static constexpr int editorHeaderHeight=30;
@@ -2417,10 +2419,25 @@ private:
     void openKnobValueEditor(juce::Slider&);
     void openKnobProperties(juce::Slider&);
     juce::Slider* modulationDropTargetAt(juce::Point<int>) const noexcept;
+    // mct-origami-nested-modulation-manual-qa: X / Y drop targets. X is a
+    // knob's parameter (its body); Y is the DEPTH of an existing route: the
+    // modulation ring around a routed knob, or the route's ring on a source
+    // card (the ring whose vertical drag already edits that depth).
+    struct ModulationDropTarget {
+        juce::Slider* slider=nullptr;      // the knob under the pointer
+        juce::Component* ring=nullptr;     // the source card whose route ring is targeted
+        std::uint32_t depthRoute=0;        // non-zero: the drop targets this route's depth
+    };
+    ModulationDropTarget modulationDropAt(juce::Point<int>) const;
+    std::uint32_t knobDepthRoute(const juce::Slider&) const;
     static bool decodeDraggedModSource(const juce::var&,mct::origami::ModSource&) noexcept;
     bool createDraggedRoute(mct::origami::ModSource,juce::Slider&);
+    bool createRouteTo(mct::origami::ModSource,const mct::origami::ModAddress&);
     mct::origami::ui::ModulationBindings dragBindings_;
     juce::Component::SafePointer<juce::Slider> dragPreviewTarget_;
+    juce::Component::SafePointer<juce::Component> dragPreviewRing_;
+    std::uint32_t dragPreviewDepthRoute_=0;
+    mct::origami::ModSource dragPreviewSource_=mct::origami::ModSource::None;
     float dragPreviewAmount_=0.5f;
     mct::origami::ModulationState lastModulationView_{};
 

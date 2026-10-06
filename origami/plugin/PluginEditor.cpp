@@ -21,6 +21,8 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "ui/NativeChoiceMenu.h"
+#include "ui/ModulationDestinations.h"
+#include "ui/ModulationUiTelemetry.h"
 #include <cmath>
 #include <cstring>
 using namespace mct::origami::ui;
@@ -189,6 +191,51 @@ juce::Slider* OrigamiAudioProcessorEditor::modulationDropTargetAt(
     return nullptr;
 }
 
+std::uint32_t OrigamiAudioProcessorEditor::knobDepthRoute(const juce::Slider& slider) const {
+    if(!dragBindings_.snapshot) return 0;
+    const auto& p=slider.getProperties();
+    const mct::origami::ModAddress address{
+        static_cast<mct::origami::ModDestination>(static_cast<int>(p["mct.mod.destination"])),
+        p.contains("mct.mod.oscillator") ? static_cast<unsigned>(static_cast<int>(p["mct.mod.oscillator"])) : 0u,
+        p.contains("mct.mod.itemId") ? static_cast<std::uint32_t>(static_cast<int>(p["mct.mod.itemId"])) : 0u};
+    // The ring shows the selected source's route when it has one, otherwise
+    // every route: the first (Matrix order) is the one the ring stands for.
+    const auto state=dragBindings_.snapshot();
+    const auto selected=mct::origami::ui::modulationUiTelemetry().selectedSource;
+    std::uint32_t first=0;
+    for(const auto& r:state.modulation.routes) {
+        if(!r.id || !r.enabled || !(r.destination==address)) continue;
+        if(r.source==selected) return r.id;
+        if(!first) first=r.id;
+    }
+    return first;
+}
+
+OrigamiAudioProcessorEditor::ModulationDropTarget OrigamiAudioProcessorEditor::modulationDropAt(juce::Point<int> point) const {
+    ModulationDropTarget out;
+    juce::Component* component=const_cast<OrigamiAudioProcessorEditor*>(this)->getComponentAt(point);
+    while(component!=nullptr && component!=this) {
+        if(auto* row=dynamic_cast<mct::origami::ui::ModulationSourceRow*>(component)) {
+            if(const auto route=row->routeAt(row->getLocalPoint(this,point).toFloat())) { out.ring=row; out.depthRoute=route; }
+            return out;
+        }
+        if(auto* slider=dynamic_cast<juce::Slider*>(component))
+            if(slider->getProperties().contains("mct.mod.destination")) {
+                out.slider=slider;
+                if(slider->isRotary()) {
+                    // Outside 62 % of the radius: the modulation ring (Y).
+                    const auto b=slider->getLocalBounds().toFloat();
+                    const float radius=0.5f*juce::jmin(b.getWidth(),b.getHeight());
+                    if(slider->getLocalPoint(this,point).toFloat().getDistanceFrom(b.getCentre())>=0.62f*radius)
+                        out.depthRoute=knobDepthRoute(*slider);
+                }
+                return out;
+            }
+        component=component->getParentComponent();
+    }
+    return out;
+}
+
 bool OrigamiAudioProcessorEditor::isInterestedInDragSource(const SourceDetails& details) {
     mct::origami::ModSource source{};
     // FILTER 1 drags are accepted only so a deliberate tab hover can carry
@@ -212,9 +259,13 @@ void OrigamiAudioProcessorEditor::itemDragMove(const SourceDetails& details) {
     modulation_.revealSourceAtParentPoint(details.localPosition.toInt());
     // Keep the JUCE drag alive while source tabs also act as navigation targets.
     modulation_.revealSourceAtParentPoint(details.localPosition);
-    auto* target=modulationDropTargetAt(details.localPosition);
-    if(target!=dragPreviewTarget_.getComponent()) {
-        dragPreviewTarget_=target;
+    const auto target=modulationDropAt(details.localPosition);
+    if(target.slider!=dragPreviewTarget_.getComponent() || target.ring!=dragPreviewRing_.getComponent()
+       || target.depthRoute!=dragPreviewDepthRoute_ || source!=dragPreviewSource_) {
+        dragPreviewTarget_=target.slider;
+        dragPreviewRing_=target.ring;
+        dragPreviewDepthRoute_=target.depthRoute;
+        dragPreviewSource_=source;
         repaint();
     }
 }
@@ -222,31 +273,33 @@ void OrigamiAudioProcessorEditor::itemDragMove(const SourceDetails& details) {
 void OrigamiAudioProcessorEditor::itemDragExit(const SourceDetails&) {
     endModulationDrag();
     dragPreviewTarget_=nullptr;
+    dragPreviewRing_=nullptr;
+    dragPreviewDepthRoute_=0;
     repaint();
 }
 
 bool OrigamiAudioProcessorEditor::createDraggedRoute(
     mct::origami::ModSource source,juce::Slider& target) {
-    if(!dragBindings_.addRoute || !dragBindings_.snapshot || !dragBindings_.route)
-        return false;
-
     const int destinationRaw=static_cast<int>(
         target.getProperties()["mct.mod.destination"]);
     const int oscillatorRaw=target.getProperties().contains("mct.mod.oscillator")
         ? static_cast<int>(target.getProperties()["mct.mod.oscillator"]) : 0;
     const auto itemId=target.getProperties().contains("mct.mod.itemId")
         ? static_cast<std::uint32_t>(static_cast<int>(target.getProperties()["mct.mod.itemId"])) : 0u;
+    return createRouteTo(source,{static_cast<mct::origami::ModDestination>(destinationRaw),static_cast<unsigned>(oscillatorRaw),itemId});
+}
 
-    const auto destination=static_cast<mct::origami::ModDestination>(destinationRaw);
+bool OrigamiAudioProcessorEditor::createRouteTo(
+    mct::origami::ModSource source,const mct::origami::ModAddress& address) {
+    if(!dragBindings_.addRoute || !dragBindings_.snapshot || !dragBindings_.route)
+        return false;
+
     const auto stateBefore=dragBindings_.snapshot();
 
     // If this exact source -> destination edge already exists, select/update it
     // rather than creating duplicate Matrix rows.
     for(const auto& existing:stateBefore.modulation.routes) {
-        if(existing.id!=0 && existing.source==source &&
-           existing.destination.parameter==destination &&
-           existing.destination.oscillator==static_cast<unsigned>(oscillatorRaw) &&
-           existing.destination.itemId==itemId) {
+        if(existing.id!=0 && existing.source==source && existing.destination==address) {
             auto route=existing;
             route.enabled=true;
             route.bipolar=false;
@@ -255,30 +308,37 @@ bool OrigamiAudioProcessorEditor::createDraggedRoute(
         }
     }
 
+    mct::origami::ModRoute candidate;
+    candidate.source=source;
+    candidate.destination=address;
+    candidate.enabled=true;
+    candidate.bipolar=(source>=mct::origami::ModSource::Lfo1
+                       && source<=mct::origami::ModSource::Lfo4);
+    candidate.amount=dragPreviewAmount_;
+    // mct-origami-nested-modulation-manual-qa: a nested drop that would close
+    // a feedback loop (MACRO 1 onto MACRO 1, LFO 1 onto its own RATE...) is
+    // rejected before anything is created.
+    if(mct::origami::routeClosesCycle(stateBefore.modulation,candidate)) return false;
+
     const unsigned id=dragBindings_.addRoute();
     if(id==0) return false;
-
-    const auto state=dragBindings_.snapshot();
-    for(const auto& existing:state.modulation.routes) {
-        if(existing.id!=id) continue;
-        auto route=existing;
-        route.source=source;
-        route.destination={destination,static_cast<unsigned>(oscillatorRaw),itemId};
-        route.enabled=true;
-        route.bipolar=(source>=mct::origami::ModSource::Lfo1
-                        && source<=mct::origami::ModSource::Lfo4);
-        route.amount=dragPreviewAmount_;
-        return dragBindings_.route(route);
-    }
+    candidate.id=id;
+    if(dragBindings_.route(candidate)) return true;
+    // Never leave an empty Matrix row behind a rejected drop.
+    if(dragBindings_.removeRoute) dragBindings_.removeRoute(id);
     return false;
 }
 
 void OrigamiAudioProcessorEditor::itemDropped(const SourceDetails& details) {
     mct::origami::ModSource source{};
-    auto* target=modulationDropTargetAt(details.localPosition);
-    if(target!=nullptr && decodeDraggedModSource(details.description,source))
-        createDraggedRoute(source,*target);
+    const auto target=modulationDropAt(details.localPosition);
+    if(decodeDraggedModSource(details.description,source)) {
+        if(target.depthRoute) createRouteTo(source,mct::origami::routeDepthAddress(target.depthRoute)); // Y
+        else if(target.slider!=nullptr) createDraggedRoute(source,*target.slider);                      // X
+    }
     dragPreviewTarget_=nullptr;
+    dragPreviewRing_=nullptr;
+    dragPreviewDepthRoute_=0;
     endModulationDrag();
     refreshModulationViews();
     repaint();
@@ -322,6 +382,38 @@ void OrigamiAudioProcessorEditor::refreshModulationViews() {
 
 void OrigamiAudioProcessorEditor::paintOverChildren(juce::Graphics& g) {
     auto* slider=dragPreviewTarget_.getComponent();
+    auto* ring=dragPreviewRing_.getComponent();
+    if(slider==nullptr && ring==nullptr) return;
+    namespace ui=mct::origami::ui;
+
+    // Y: the drop targets the DEPTH of an existing route. Its ring is
+    // outlined and the route is named ("Y · DEPTH OF LFO 2 → OSC 2 LEVEL").
+    if(dragPreviewDepthRoute_!=0 && dragBindings_.snapshot) {
+        const auto state=dragBindings_.snapshot();
+        mct::origami::ModRoute probe;
+        probe.source=dragPreviewSource_;
+        probe.destination=mct::origami::routeDepthAddress(dragPreviewDepthRoute_);
+        const bool loop=mct::origami::routeClosesCycle(state.modulation,probe);
+        juce::String target;
+        const auto catalog=ui::modulationDestinationCatalog(state,dragBindings_);
+        for(const auto& r:state.modulation.routes)
+            if(r.id==dragPreviewDepthRoute_) target=ui::modulationRouteLabel(catalog,state.modulation,r);
+        juce::Rectangle<float> hit;
+        if(auto* row=dynamic_cast<ui::ModulationSourceRow*>(ring)) {
+            for(std::size_t k=0;k<row->routes().size() && k<row->visibleRings();++k)
+                if(row->routes()[k].id==dragPreviewDepthRoute_) hit=getLocalArea(row,row->ringBounds(k)).expanded(3.0f);
+        } else if(slider!=nullptr) {
+            const auto b=getLocalArea(slider,slider->getLocalBounds()).toFloat();
+            const float d=juce::jmin(b.getWidth(),b.getHeight())+6.0f;
+            hit=juce::Rectangle<float>(d,d).withCentre(b.getCentre());
+        }
+        g.setColour(loop ? ui::Palette::muted() : ui::signalSourceColour().withAlpha(.94f));
+        if(!hit.isEmpty()) g.drawEllipse(hit,2.4f);
+        const auto dot=juce::String(juce::CharPointer_UTF8(" \xc2\xb7 "));
+        ui::paintModulationRouteTooltip(g,loop ? "Y"+dot+"DEPTH: FEEDBACK LOOP, NOT ALLOWED" : "Y"+dot+"DEPTH OF "+target,
+                                        hit.getCentre(),getLocalBounds().toFloat());
+        return;
+    }
     if(slider==nullptr) return;
 
     const auto b=getLocalArea(slider,slider->getLocalBounds()).toFloat();
@@ -357,6 +449,12 @@ void OrigamiAudioProcessorEditor::paintOverChildren(juce::Graphics& g) {
 
     g.setColour(juce::Colours::white.withAlpha(.95f));
     g.drawRoundedRectangle(b.expanded(3.0f),4.0f,1.0f);
+    // X: the parameter. A knob that already carries a route also offers its
+    // ring as the Y (depth) target.
+    if(slider->isRotary() && knobDepthRoute(*slider)!=0) {
+        const auto dot=juce::String(juce::CharPointer_UTF8(" \xc2\xb7 "));
+        ui::paintModulationRouteTooltip(g,"X"+dot+"PARAMETER   RING: Y"+dot+"DEPTH",b.getCentre(),getLocalBounds().toFloat());
+    }
 }
 
 void OrigamiAudioProcessorEditor::timerCallback() {
@@ -491,19 +589,8 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
             matches.push_back(route);
     }
 
-    auto sourceName=[](mct::origami::ModSource s)->juce::String {
-        using S=mct::origami::ModSource;
-        if(const auto id=mct::origami::macroIdOf(s)) return "MACRO "+juce::String(int(id));
-        switch(s) {
-            case S::Env1:return "ENV 1"; case S::Env2:return "ENV 2"; case S::Env3:return "ENV 3";
-            case S::Lfo1:return "LFO 1"; case S::Lfo2:return "LFO 2"; case S::Lfo3:return "LFO 3"; case S::Lfo4:return "LFO 4";
-            case S::Random:return "RANDOM"; case S::Function:return "FUNCTION";
-            case S::Chaos:return "CHAOS"; case S::Drift:return "DRIFT"; case S::Sequencer:return "SEQUENCER";
-            case S::ModWheel:return "MOD WHEEL"; case S::Velocity:return "VELOCITY"; case S::Keytrack:return "KEYTRACK";
-            case S::Aftertouch:return "AFTERTOUCH"; case S::PitchBend:return "PITCH BEND"; case S::NoteGate:return "NOTE GATE";
-            default:break;
-        }
-        return "MODULATOR";
+    auto sourceName=[&state](mct::origami::ModSource s)->juce::String {
+        return mct::origami::ui::modulationSourceLabel(state.modulation,s); // a renamed macro shows its name
     };
     auto groupName=[](mct::origami::ModSource s)->juce::String {
         const auto raw=static_cast<std::uint32_t>(s);
