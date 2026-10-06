@@ -163,7 +163,7 @@ private:
     bool active_ = false, releasing_ = false;
     // Reuse storage; default construction of this large editable-state snapshot
     // must not run for every voice/sample when no voice modulation is present.
-    ModulationFrame localFrame_{};
+    alignas(64) ModulationFrame localFrame_{}; // aligned: its module copies run every sample
     dsp::OscProcessPlan processScratch_{};
     VoiceVisualizationSnapshot visualization_{};
     // mct-origami-stereo-modulation: RIGHT's filter state, cold data kept at the end of the voice (the mono hot
@@ -174,5 +174,20 @@ private:
     // mct-origami-dsp-performance-stereo-chain: RIGHT's spectral read hints per
     // module (a stereo OSC CHAIN reads a second spectral table key). Cold.
     std::array<std::array<dsp::SpectralReadHint,2>,maxOscillatorModules> rightSpectralHints_{};
+    // mct-origami-nested-modulation-manual-qa: RIGHT cross-oscillator taps.
+    // previousOscillatorSamples_ is LEFT; bit m of rightTapMask_ says module
+    // m's RIGHT tap differs (then previousOscillatorSamplesRight_[m] holds
+    // it), so a downstream PM / FM / PSK / RM / AM / XF / WF / XOR / RECT
+    // consumes the source channel by channel. Bit m of rightPhaseModules_:
+    // module m's oscillators run a separate RIGHT phase (stereo FM; kept
+    // for the rest of the note, so RIGHT never jumps back). Cold.
+    std::array<float,maxOscillatorModules> previousOscillatorSamplesRight_{};
+    std::uint16_t rightTapMask_=0,rightPhaseModules_=0;
+    template<bool Stereo> void runVoiceProgram(const CompiledModulation&,const ModulationState&,const ModulationFrame& global,
+        ModulationFrame& local,std::array<float,CompiledModulation::voiceSourceCount>& voiceSources,
+        StereoSourceValues& voiceStereo,float sourceLfoScale,bool observe) noexcept;
+    float rightTap(std::size_t source) const noexcept {
+        return ((rightTapMask_>>source)&1u) ? previousOscillatorSamplesRight_[source] : previousOscillatorSamples_[source];
+    }
 };
 }

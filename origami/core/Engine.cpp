@@ -39,6 +39,7 @@ bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, uns
     sampleRate_ = sampleRate; outputChannels_ = outputChannels;
     compiledModulation_.prepare(sampleRate_);
     hostModules_=oscillatorModules_.snapshot();
+    dezipModules_=hostModules_; dezipActive_=0;
     rebuildHostWavetables();
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
     for (auto& voice : voices_) voice.prepare(sampleRate);
@@ -147,6 +148,7 @@ void OrigamiEngine::reset() noexcept {
     publishNodesDiagnostics();
     compiledModulation_.resetOperatorState();
     oscillatorPlan_.compile(resetModules);
+    dezipModules_=resetModules; dezipActive_=0; // a reset never glides
     for(std::size_t i=0;i<resetModules.size();++i) compiledModuleIds_[i]=resetModules[i].id;
     for (auto& voice : voices_) { voice.reset(); voice.restartLifecycles(); }
     lastVoiceSamples_.fill({});
@@ -383,8 +385,10 @@ bool OrigamiEngine::setPitchBendRange(float semitones) noexcept {
     return setPitchBendRanges(semitones,semitones);
 }
 bool OrigamiEngine::setPitchBendRanges(float upSemitones,float downSemitones) noexcept {
+    // Signed endpoints (semitones at full up / full down), any direction.
+    constexpr float maxBend=PerformanceState::maxBendSemitones;
     if(!std::isfinite(upSemitones) || !std::isfinite(downSemitones) ||
-       upSemitones<1.0f || upSemitones>48.0f || downSemitones<1.0f || downSemitones>48.0f) return false;
+       std::abs(upSemitones)>maxBend || std::abs(downSemitones)>maxBend) return false;
     pitchBendRange_.store(upSemitones,std::memory_order_relaxed);
     pitchBendDownRange_.store(downSemitones,std::memory_order_relaxed);
     return true;
@@ -417,6 +421,85 @@ void OrigamiEngine::latchParameters() noexcept {
         else s.value = target;
     }
 }
+namespace {
+// mct-origami-nested-modulation-manual-qa: the continuous module values a
+// manual edit glides (everything else is structure and applies at once).
+template<class Module> auto* dezipField(Module& m,std::size_t i) noexcept {
+    switch(i) {
+        case 0: return &m.wtPosition; case 1: return &m.fineCents; case 2: return &m.detuneCents;
+        case 3: return &m.blend; case 4: return &m.pan; case 5: return &m.level;
+        case 6: return &m.process1Amount; case 7: return &m.process2Amount;
+        case 8: return &m.route1Amount; case 9: return &m.route2Amount;
+        default: break;
+    }
+    if(i<10+maxOscProcesses) return &m.processes[i-10].amount;
+    return &m.routes[i-10-maxOscProcesses].amount;
+}
+bool sameDezipStructure(const OscillatorModuleState& a,const OscillatorModuleState& b) noexcept {
+    if(a.id!=b.id || a.enabled!=b.enabled || a.tableId!=b.tableId || a.waveform!=b.waveform || a.octave!=b.octave ||
+       a.semitone!=b.semitone || a.unison!=b.unison || a.process1!=b.process1 || a.process1Seed!=b.process1Seed ||
+       a.process2!=b.process2 || a.process2Seed!=b.process2Seed || a.route1SourceId!=b.route1SourceId ||
+       a.route1Type!=b.route1Type || a.route2SourceId!=b.route2SourceId || a.route2Type!=b.route2Type ||
+       a.processCount!=b.processCount || a.routeCount!=b.routeCount || a.busRouteCount!=b.busRouteCount) return false;
+    for(std::size_t i=0;i<a.processes.size();++i) {
+        const auto& x=a.processes[i]; const auto& y=b.processes[i];
+        if(x.id!=y.id || x.type!=y.type || x.seed!=y.seed || x.enabled!=y.enabled) return false;
+    }
+    for(std::size_t i=0;i<a.routes.size();++i) {
+        const auto& x=a.routes[i]; const auto& y=b.routes[i];
+        if(x.id!=y.id || x.sourceId!=y.sourceId || x.type!=y.type || x.enabled!=y.enabled) return false;
+    }
+    for(std::size_t i=0;i<a.busRoutes.size();++i)
+        if(a.busRoutes[i].bus!=b.busRoutes[i].bus || a.busRoutes[i].level!=b.busRoutes[i].level) return false;
+    return true;
+}
+}
+// Audio thread, block boundary, after a new module snapshot.
+void OrigamiEngine::startDezip() noexcept {
+    const auto length=static_cast<std::uint32_t>(std::max(1.0,std::round(sampleRate_*dezipSeconds)));
+    for(std::size_t m=0;m<hostModules_.size();++m) {
+        const auto& target=hostModules_[m];
+        auto& current=dezipModules_[m];
+        auto& ramp=dezipRamps_[m];
+        const auto bit=std::uint32_t(1u<<m);
+        if(target.id==0 || !sameDezipStructure(current,target)) {
+            current=target; ramp.remaining=0; dezipActive_&=~bit;
+            continue;
+        }
+        // Same structure: glide every changed continuous value from where the
+        // render is now (a drag in progress continues smoothly).
+        bool changed=false;
+        std::array<float,dezipFieldCount> from{};
+        for(std::size_t i=0;i<dezipFieldCount;++i) from[i]=*dezipField(current,i);
+        current=target;
+        for(std::size_t i=0;i<dezipFieldCount;++i) {
+            float& value=*dezipField(current,i);
+            ramp.step[i]=0.0f;
+            if(from[i]!=value && std::isfinite(from[i]) && std::isfinite(value)) {
+                ramp.step[i]=(value-from[i])/static_cast<float>(length);
+                value=from[i];
+                changed=true;
+            }
+        }
+        if(changed) { ramp.remaining=length; dezipActive_|=bit; }
+        else { ramp.remaining=0; dezipActive_&=~bit; }
+    }
+}
+// Audio thread, once per sample while something glides.
+void OrigamiEngine::advanceDezip(std::array<OscillatorModuleState,OscillatorModuleBank::capacity>& modules) noexcept {
+    for(std::uint32_t bits=dezipActive_;bits!=0;bits&=bits-1u) {
+        const auto m=static_cast<std::size_t>(__builtin_ctz(bits));
+        auto& current=dezipModules_[m];
+        auto& ramp=dezipRamps_[m];
+        if(--ramp.remaining==0) {
+            current=hostModules_[m]; // exact target at the end
+            dezipActive_&=~std::uint32_t(1u<<m);
+        } else {
+            for(std::size_t i=0;i<dezipFieldCount;++i) if(ramp.step[i]!=0.0f) *dezipField(current,i)+=ramp.step[i];
+        }
+        for(std::size_t i=0;i<dezipFieldCount;++i) *dezipField(modules[m],i)=*dezipField(current,i);
+    }
+}
 bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     if(hostBlockActive_ || !prepared_ || channels<1 || channels>2 || channels!=outputChannels_) return false;
     latchParameters();
@@ -427,7 +510,13 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
         ? wavetableIncoming_.exchange(nullptr,std::memory_order_acquire) : nullptr;
     const bool oscillatorGenerationChanged=
         oscillatorModules_.consumeSnapshot(hostModules_,hostModuleGeneration_);
+    if(oscillatorGenerationChanged) startDezip();
     const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
+    if(hostMacrosValid_)
+        for(std::size_t i=0;i<maxMacros;++i) {
+            const float v=hostMacros_[i];
+            if(std::isfinite(v)) audioModulation_.macros[i]=std::clamp(v,0.0f,1.0f);
+        }
     bool moduleTopologyChanged=false;
     for(std::size_t i=0;i<hostModules_.size();++i) {
         if(compiledModuleIds_[i]!=hostModules_[i].id) {
@@ -514,16 +603,17 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
     if(!output || channels<1 || channels>2) return false;
     for(unsigned c=0;c<channels;++c) if(!output[c]) return false;
     for(unsigned c=0;c<channels;++c) std::fill_n(output[c],sampleCount,0.f);
-    auto modules=hostModules_;
+    auto modules=dezipModules_; // == hostModules_ unless a manual edit glides
     const double normalization=hostNormalization_;
     const float bendUpRange=hostBendRange_;
     const float bendDownRange=hostBendDownRange_;
-    ModulationFrame frame;
+    alignas(64) ModulationFrame frame;
     OscillatorProcessPlans sharedProcesses;
     const auto visualizationPeriod=std::max<std::size_t>(1,
         static_cast<std::size_t>(std::lround(sampleRate_/1000.0))) * (reduceVisualizationRate_ ? 4u : 1u);
 
     for(std::size_t sample=0;sample<sampleCount;++sample) {
+        if(dezipActive_) advanceDezip(modules);
         for(auto& s:smooth_) if(s.remaining) {
             s.value+=static_cast<float>(s.step);
             if(--s.remaining==0) s.value=s.target;
@@ -542,13 +632,25 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         modules[0].pan=value(ParameterId::OscPan);
         modules[0].level=value(ParameterId::OscLevel);
 
+        // mct-origami-nested-modulation-manual-qa: GLOBAL nested targets read
+        // the newest voice's per-voice sources of the previous sample.
+        if(compiledModulation_.needsNewestVoiceSources()) {
+            const Voice* newestVoice=nullptr;
+            for(const auto& voice:voices_)
+                if(voice.active() && (newestVoice==nullptr || voice.order()>newestVoice->order())) newestVoice=&voice;
+            newestVoiceValid_=newestVoice!=nullptr;
+            if(newestVoice!=nullptr) newestVoiceSources_=newestVoice->lastSources();
+        } else newestVoiceValid_=false;
         std::array<float,CompiledModulation::globalSourceCount> sources{};
         // mct-origami-stereo-modulation: a stereo plan asks each FREE LFO for
         // its RIGHT value too (LEFT is bit-identical either way).
         const bool stereoPlan=compiledModulation_.hasStereoPlan();
         auto& globalStereo=frame.stereo.globalLfo;
         globalStereo.mask=0;
-        for(std::size_t i=0;i<4;++i) {
+        // mct-origami-nested-modulation-manual-qa: with nested modulation the
+        // FREE LFOs run in the prepared dependency order (below).
+        const bool nested=compiledModulation_.hasNestedPlan();
+        if(!nested) for(std::size_t i=0;i<4;++i) {
             if(!compiledModulation_.usesGlobalSource(i)) continue;
             const auto& l=lfoSettings(audioModulation_,i);
             if(l.mode!=LfoMode::Free) { sources[i]=0.0f; continue; }
@@ -603,7 +705,46 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         beats_+=beatsPerSample;
         // N04 global CONTROL operators: once per sample, before the global
         // frame reads their outputs (compiled plan; never when unused).
-        if(compiledModulation_.hasOperators()) {
+        if(nested) {
+            // The prepared global program: FREE LFOs (at their effective
+            // rate), macros with incoming modulation (effective value; the
+            // stored base never moves), global NODES operators and route
+            // depths, each after everything it reads.
+            using Step=CompiledModulation::ProgramStep::Kind;
+            const auto* newest=newestVoiceValid_ ? &newestVoiceSources_ : nullptr;
+            for(std::size_t p=0;p<compiledModulation_.globalProgramSize();++p) {
+                const auto& step=compiledModulation_.globalProgramStep(p);
+                switch(step.kind) {
+                    case Step::Lfo: {
+                        const std::size_t i=step.index;
+                        const auto& l=lfoSettings(audioModulation_,i);
+                        if(l.mode!=LfoMode::Free) { sources[i]=0.0f; break; }
+                        const float rate=compiledModulation_.globalLfoRate(i,l.rateHz,sources,frame,newest);
+                        if(stereoPlan && l.stereo>0.0f) {
+                            float right=0.0f;
+                            sources[i]=globalLfos_[i].nextStereo(l,sampleRate_,rate,right)*currentLfoScaling_;
+                            globalStereo.lfo[i]=right*currentLfoScaling_;
+                            globalStereo.mask|=std::uint8_t(1u<<i);
+                        } else sources[i]=globalLfos_[i].next(l,sampleRate_,rate)*currentLfoScaling_;
+                        break;
+                    }
+                    case Step::Macro: {
+                        const std::size_t id=step.index;
+                        sources[CompiledModulation::macroSlot(id)]=compiledModulation_.macroValue(id,smoothedMacros_[id-1],sources,frame,newest);
+                        break;
+                    }
+                    case Step::Operator:
+                        compiledModulation_.evaluateGlobalOperator(step.index,frame,sources);
+                        if(compiledModulation_.hasSequencerNode()) sources[12]=frame.globalSources[12];
+                        break;
+                    case Step::Depth:
+                        compiledModulation_.globalRouteDepth(step.index,frame,sources,newest);
+                        break;
+                }
+            }
+            frame.globalSources=sources; // per-voice nested terms read the global sources here
+            for(std::size_t id=1;id<=maxMacros;++id) effectiveMacros_[id-1]=sources[CompiledModulation::macroSlot(id)];
+        } else if(compiledModulation_.hasOperators()) {
             compiledModulation_.evaluateGlobalOperators(frame,sources);
             if(compiledModulation_.hasSequencerNode()) sources[12]=frame.globalSources[12]; // SEQ = the node's VALUE
         }
@@ -621,6 +762,12 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             runtimeVisualization_.sourceValues[9]=sources[10];
             runtimeVisualization_.sourceValues[10]=sources[11];
             runtimeVisualization_.sourceValues[11]=sources[12];
+            runtimeVisualization_.modulatedMacros=0;
+            for(std::size_t id=1;id<=maxMacros;++id) {
+                const bool modulated=compiledModulation_.macroModulated(id);
+                runtimeVisualization_.effectiveMacros[id-1]=modulated ? effectiveMacros_[id-1] : smoothedMacros_[id-1];
+                if(modulated) runtimeVisualization_.modulatedMacros|=1u<<(id-1);
+            }
             runtimeVisualization_.sourcePhases[7]=static_cast<float>(globalFunction_.phase());
             runtimeVisualization_.sourcePhases[8]=static_cast<float>(globalRandom_.phase());
             runtimeVisualization_.sourcePhases[9]=std::clamp(globalChaos_.xNormalized()*0.5f+0.5f,0.0f,1.0f);
@@ -691,7 +838,9 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             if(observe) observedInfo=voices_[v].info();
             const auto channel=std::min<std::size_t>(voices_[v].channel(),15);
             const float normalizedBend=pitchBendNormalized_[channel];
-            const float bend=normalizedBend*(normalizedBend>=0.0f ? bendUpRange : bendDownRange);
+            // mct-origami-nested-modulation-manual-qa: signed wheel ENDPOINTS:
+            // centre 0, full up = BEND UP, full down = BEND DOWN (default -2).
+            const float bend=normalizedBend>=0.0f ? normalizedBend*bendUpRange : (-normalizedBend)*bendDownRange;
             auto fresh=voices_[v].nextModules(hostWavetables_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
                                                 modWheel_[channel],aftertouch_[channel],oscillatorPlan_,sharedProcesses,observe);

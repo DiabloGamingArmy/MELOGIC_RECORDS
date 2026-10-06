@@ -3,6 +3,7 @@
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #include "FxPage.h"
+#include "UserPreferences.h"
 #include "SourceEntity.h"
 #include "core/fx/FxFilter.h"
 #include <cmath>
@@ -84,11 +85,16 @@ juce::String sourceName(ModSource s) {
     // N07: a processed route's source is a NODES output, never an anonymous "MODULATOR".
     return isOperatorSource(s) ? "NODES" : "UNKNOWN SOURCE";
 }
+// mct-origami-nested-modulation-manual-qa: a renamed macro shows its name.
+juce::String sourceName(const ModulationState& m,ModSource s) {
+    if(const auto id=macroIdOf(s)) return macroLabel(m,id);
+    return sourceName(s);
+}
 
 // N07: the label of any route source, with the graph when it is processed
 // ("NODES: SCALE / OFFSET", "NODES: SEQUENCER STEP"), as the Matrix names it.
 juce::String routeSourceLabel(const ModulationState& m,ModSource s) {
-    if(!isOperatorSource(s)) return sourceName(s);
+    if(!isOperatorSource(s)) return sourceName(m,s);
     juce::String label="NODES";
     if(const auto* op=findControlOperator(m,operatorIdOf(s)))
         if(const auto* info=controlOpInfo(op->type)) {
@@ -2770,7 +2776,7 @@ private:
         if(!bindings_.snapshot) return;
         const auto state=bindings_.snapshot();
         std::vector<NativeChoiceItem> items;
-        for(const auto& s:availableSources(state.modulation)) items.push_back({int(s.source),sourceName(s.source),true,s.group});
+        for(const auto& s:availableSources(state.modulation)) items.push_back({int(s.source),sourceName(state.modulation,s.source),true,s.group});
         juce::Component::SafePointer<ParametersPanel> safe(this);
         showNativeChoiceMenu(anchor,"SOURCE",items,0,[safe,id](int choice) {
             if(safe==nullptr || choice<=0) return;
@@ -3239,6 +3245,9 @@ public:
             s.setName("FX Macro "+juce::String(int(i)+1));
             // The first four EXISTING canonical macros (by stable id): no second engine.
             s.onValueChange=[this,i]{if(bindings_.macro && ids_[i]!=0) bindings_.macro(unsigned(ids_[i]-1),float(sliders_[i].getValue()));};
+            // mct-origami-nested-modulation-manual-qa: one DAW gesture per drag.
+            s.onDragStart=[this,i]{ if(bindings_.macroGesture && ids_[i]!=0) bindings_.macroGesture(unsigned(ids_[i]-1),true); };
+            s.onDragEnd=[this,i]{ if(bindings_.macroGesture && ids_[i]!=0) bindings_.macroGesture(unsigned(ids_[i]-1),false); };
             addAndMakeVisible(s);
         }
     }
@@ -3248,6 +3257,8 @@ public:
         for(std::size_t i=0;i<sliders_.size();++i) {
             const auto id=i<macros.size() ? macroIdOf(macros[i]) : std::size_t(0);
             changed|=ids_[i]!=id; ids_[i]=id;
+            const auto label=id!=0 ? macroLabel(state.modulation,id) : juce::String();
+            changed|=labels_[i]!=label; labels_[i]=label;
             sliders_[i].setVisible(id!=0);
             if(id!=0 && !sliders_[i].isMouseButtonDown()) sliders_[i].setValue(state.modulation.macros[id-1],juce::dontSendNotification);
         }
@@ -3268,11 +3279,12 @@ private:
         for(int i=0;i<4;++i) {
             if(ids_[std::size_t(i)]==0) continue;
             auto r=juce::Rectangle<int>(area.getX()+i*cell,area.getY(),cell,area.getHeight()).withTrimmedBottom(16);
-            text(g,"MACRO "+juce::String(int(ids_[std::size_t(i)])),r.removeFromBottom(16),Type::label,Palette::muted(),juce::Justification::centred);
+            text(g,labels_[std::size_t(i)],r.removeFromBottom(16),Type::label,Palette::muted(),juce::Justification::centred);
         }
     }
     ModulationBindings bindings_;
     std::array<juce::Slider,4> sliders_;
+    std::array<juce::String,4> labels_; // custom macro names (stable id)
     std::array<std::size_t,4> ids_{{1,2,3,4}};
 };
 
@@ -3479,13 +3491,22 @@ void FxPage::timerCallback() {
 bool FxPage::keyPressed(const juce::KeyPress& key) {
     const auto mods=key.getModifiers();
     const bool command=mods.isCommandDown() || mods.isCtrlDown();
+    // mct-origami-nested-modulation-manual-qa: Escape is used only when it
+    // closes or cancels something of Origami's (palette, overlay, a wire being
+    // drawn; with CAPTURE KEYBOARD INPUT also a multi-selection). Otherwise
+    // it stays with the host.
     if(key==juce::KeyPress::escapeKey) {
         if(palette_.isOpen()) { palette_.dismiss(); return true; }
-        if(overlay_.isShowing()) overlay_.dismiss();
-        canvas_.cancelWire();
-        if(controlMulti_.size()>1) setControlNodeSelection({});
-        return true;
+        bool used=false;
+        if(overlay_.isShowing()) { overlay_.dismiss(); used=true; }
+        if(canvas_.wireSource()) { canvas_.cancelWire(); used=true; }
+        if(captureKeyboardInput() && controlMulti_.size()>1) { setControlNodeSelection({}); used=true; }
+        return used;
     }
+    // CAPTURE KEYBOARD INPUT OFF (default): no NODES shortcut takes a key.
+    // Returning false hands it back through the window to the host (Logic's
+    // Musical Typing), rather than receiving it and doing nothing.
+    if(!captureKeyboardInput()) return false;
     const auto ch=juce::CharacterFunctions::toLowerCase(key.getTextCharacter()!=0 ? key.getTextCharacter() : juce::juce_wchar(key.getKeyCode()));
     // N07 shortcuts (the palette's search field has focus while it is open,
     // so these never steal typing).
@@ -3608,7 +3629,7 @@ void FxPage::refreshSidebar(bool includeControl) {
     const char* lastGroup="";
     for(const auto& s:availableSources(state.modulation)) {
         if(std::strcmp(lastGroup,s.group)!=0) { modulators.push_back({s.group,{},{},{},true,false,true,{}}); lastGroup=s.group; }
-        Row row{sourceName(s.source),{},{},juce::String(sourceDragPrefix)+juce::String(int(s.source)),true,false,false,{}};
+        Row row{sourceName(state.modulation,s.source),{},{},juce::String(sourceDragPrefix)+juce::String(int(s.source)),true,false,false,{}};
         for(const auto& r:modulationSourceRoutes(state.modulation,s.source)) row.magnitudes.push_back({r.id,r.amount});
         row.active=!row.magnitudes.empty();
         row.modulationSource=s.source;
@@ -4052,11 +4073,11 @@ std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
         primary.push_back(ModSource::Random);
         for(const auto s:primary)
             if(nodes::controlSourceActive(s,state.modulation))
-                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","SOURCES"},"Already on the canvas"));
+                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(state.modulation,s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","SOURCES"},"Already on the canvas"));
         for(const auto s:{ModSource::Function,ModSource::Chaos,ModSource::Drift,ModSource::Sequencer,
                           ModSource::Velocity,ModSource::ModWheel,ModSource::Keytrack,ModSource::Aftertouch,ModSource::PitchBend,ModSource::NoteGate})
             if(nodes::controlSourceActive(s,state.modulation))
-                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","SOURCES"},"Already on the canvas"));
+                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(state.modulation,s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","SOURCES"},"Already on the canvas"));
         // Processing nodes: family (CONTROL / EVENT / SEQUENCING), then the
         // node's own category from its ControlOpInfo.
         const auto addOps=[&](const auto& catalog,const char* family) {
@@ -4119,7 +4140,7 @@ juce::String FxPage::controlNodeTitle(const nodes::ControlNodeKey& key) const {
             if(const auto* info=controlOpInfo(op->type)) return juce::String(info->label);
         return "OPERATOR";
     }
-    return key.kind==nodes::ControlNodeKind::Source ? sourceName(key.source) : juce::String("PARAMETER");
+    return key.kind==nodes::ControlNodeKind::Source ? sourceName(controlModulation_,key.source) : juce::String("PARAMETER");
 }
 
 juce::String FxPage::controlNodeDetail(const nodes::ControlNodeKey& key) const {
@@ -4649,7 +4670,7 @@ std::vector<NativeChoiceItem> FxPage::controlCreateItems(const nodes::ControlEnd
         feeds.push_back(ModSource::Random); feeds.push_back(ModSource::Sequencer);
         for(const auto s:feeds)
             if(nodes::controlSourceExposed(s) && nodes::controlSourceActive(s,m))
-                { NativeChoiceItem item{FxModuleMenu::controlSourceBase+int(s),sourceName(s),true,"CONTROL / SOURCES"}; item.path={"CONTROL","SOURCES"}; items.push_back(item); }
+                { NativeChoiceItem item{FxModuleMenu::controlSourceBase+int(s),sourceName(m,s),true,"CONTROL / SOURCES"}; item.path={"CONTROL","SOURCES"}; items.push_back(item); }
     }
     return items;
 }
@@ -4790,6 +4811,9 @@ std::vector<NativeChoiceItem> FxPage::parameterPickerItems(std::optional<ModSour
     std::vector<NativeChoiceItem> items;
     for(std::size_t i=0;i<catalog.size();++i) {
         const auto& e=catalog[i];
+        // Nested targets (LFO RATE, MACRO, route DEPTH) are routed from the
+        // Matrix and SYNTH; the NODES PARAMETER picker is unchanged.
+        if(e.group==nestedDestinationGroup) continue;
         // Synth parameters first, then this instrument's NODES parameters.
         const auto group=e.group.startsWith("NODES") ? e.group : "SYNTH / "+e.group.toUpperCase();
         bool enabled=true;

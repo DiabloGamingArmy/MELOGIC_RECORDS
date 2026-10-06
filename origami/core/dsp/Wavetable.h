@@ -171,7 +171,16 @@ bool prepareSpectralCompiler() noexcept;
 void assignWavetableGeneration(struct Wavetable&) noexcept;
 struct SpectralCompilerStats {
     std::uint64_t requests=0,prepared=0,fallbackReads=0,droppedRequests=0;
+    // mct-origami-nested-modulation-manual-qa: reads served by the previous
+    // table of the same frame / band while the new one is built, and table
+    // switches crossfaded.
+    std::uint64_t heldReads=0,transitions=0;
 };
+// Every read the cache could not serve with the requested table (held or dry).
+inline std::uint64_t spectralMisses(const SpectralCompilerStats& s) noexcept { return s.fallbackReads+s.heldReads; }
+// Length of a spectral table transition (a crossfade between two cached
+// tables of the same frame / band): 2 ms.
+inline constexpr double spectralTransitionSeconds=0.002;
 SpectralCompilerStats spectralCompilerStats() noexcept;
 // Owned, immutable during rendering. Samples contain one cycle (no guard sample).
 // Frames share band limits and table length. Future importers can populate this
@@ -197,6 +206,16 @@ struct SpectralReadHint {
     std::uint64_t generation=0,revision=0;
     std::uint32_t frame=0,band=0,slot=0;
     unsigned hits=0;
+    // mct-origami-nested-modulation-manual-qa: transition state. A new table
+    // for the same frame / band is crossfaded in from the previous one
+    // (fromSlot); while a new table is still being built the previous one is
+    // held (never the dry fallback). `quantized`: the hint slot holds the
+    // quantized key of a chain whose phase-stage amounts are moving; `print`
+    // / `stable` detect when the exact plan settles again.
+    std::uint64_t fromRevision=0;
+    std::uint32_t fromSlot=0,print=0;
+    std::uint16_t fade=0,fadeLength=0,stable=0;
+    bool quantized=false;
 };
 class WavetableOscillator {
 public:
@@ -216,21 +235,26 @@ public:
     // Stereo modulation of the READ side (WT position, OSC CHAIN amounts,
     // PM / PSK): one phase advance, a second read at the same phase into
     // `right`. LEFT is bit-identical to next() / nextSimple().
+    // frequencyRight > 0 (stereo FM): RIGHT advances its own phase at that
+    // frequency, seeded from LEFT's phase the first time; otherwise RIGHT
+    // reads at LEFT's phase and any separate RIGHT phase is dropped.
     float nextStereo(const Wavetable&,double frequency,double sampleRate,
                      float position,const OscProcessPlan&,double phaseOffsetCycles,double phaseSkew,
                      float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
-                     std::array<SpectralReadHint,2>& rightHints,float& right) noexcept;
+                     std::array<SpectralReadHint,2>& rightHints,float& right,double frequencyRight=0.0) noexcept;
     float nextStereoSimple(const Wavetable&,double frequency,double sampleRate,float position,float positionRight,
                            std::array<SpectralReadHint,2>& rightHints,float& right) noexcept;
     double phase() const noexcept { return phase_; }
+    // The next separate RIGHT phase (stereo FM) starts again from LEFT's.
+    void restartRightPhase() noexcept { rightPhaseLive_=false; }
 private:
     void preparePitch(const Wavetable&,double frequency,double sampleRate) noexcept;
     template<bool Simple> float readAt(const Wavetable&,float position,const OscProcessPlan&,double,double,
-                                       std::array<SpectralReadHint,2>&) noexcept;
+                                       std::array<SpectralReadHint,2>&,double phase,std::size_t band,double sampleRate) noexcept;
     template<bool Simple> float nextImpl(const Wavetable&,double,double,float,
         const OscProcessPlan&,double,double) noexcept;
     template<bool Simple> float nextStereoImpl(const Wavetable&,double,double,float,const OscProcessPlan&,double,double,
-        float,const OscProcessPlan&,double,double,std::array<SpectralReadHint,2>&,float&) noexcept;
+        float,const OscProcessPlan&,double,double,std::array<SpectralReadHint,2>&,float&,double frequencyRight) noexcept;
     double phase_ = 0;
     // Pitch metadata is independent of phase and chain amounts. Exact keys
     // keep FM, glide and sample-rate changes audio-rate without rescanning
@@ -240,6 +264,8 @@ private:
     double pitchFrequency_=0,pitchSampleRate_=0,increment_=0;
     std::size_t bandIndex_=0;
     std::array<SpectralReadHint,2> spectralHints_{};
+    double phaseRight_ = 0;      // cold: stereo FM only
+    bool rightPhaseLive_=false;
 };
 double midiFrequency(int note) noexcept;
 }

@@ -375,10 +375,16 @@ void spectralCacheConcurrentEviction() {
     for(std::size_t key=0;key<keys;++key)
         renderProcessedFrame2048(dry.data(),expected[key].data(),makePlan(key));
     std::atomic<bool> start{false},failed{false};
+    std::atomic<std::uint64_t> exactReads{0};
     std::array<std::thread,4> readers;
     for(std::size_t r=0;r<readers.size();++r) readers[r]=std::thread([&,r] {
         WavetableOscillator oscillator;oscillator.reset(0.137);
         while(!start.load(std::memory_order_acquire)) std::this_thread::yield(); // test barrier only
+        // mct-origami-nested-modulation-manual-qa: a miss holds the table this
+        // reader last adopted (never torn data). 400 Hz makes the table
+        // transition one read long (2 ms x 400 Hz < 1) so every output is a
+        // whole waveform: the requested one, a recently adopted one, or dry.
+        // (1 Hz at 400 Hz reads band 7, like 93.75 Hz at 48 kHz.)
         for(std::size_t sample=0;sample<32000;++sample) {
             const auto key=(sample/8+r*97)%keys;
             const double position=oscillator.phase()*2048.0;
@@ -387,15 +393,18 @@ void spectralCacheConcurrentEviction() {
             const auto lookup=[&](const auto& wave) {
                 return wave[index]+fraction*(wave[(index+1)%2048]-wave[index]);
             };
-            const float output=oscillator.next(table,93.75,48000,1.0f/3.0f,makePlan(key));
-            if(!std::isfinite(output) || (std::abs(output-lookup(expected[key]))>1.0e-6f &&
-                                        std::abs(output-lookup(dry))>1.0e-6f))
-                failed.store(true,std::memory_order_relaxed);
+            const float output=oscillator.next(table,1.0,400,1.0f/3.0f,makePlan(key));
+            bool valid=std::isfinite(output) && (std::abs(output-lookup(expected[key]))<=1.0e-6f || std::abs(output-lookup(dry))<=1.0e-6f);
+            if(valid && std::abs(output-lookup(expected[key]))<=1.0e-6f) exactReads.fetch_add(1,std::memory_order_relaxed);
+            for(std::size_t back=1;!valid && back<=sample/8 && back<=512;++back)
+                valid=std::abs(output-lookup(expected[(key+keys-back)%keys]))<=1.0e-6f;
+            if(!valid) failed.store(true,std::memory_order_relaxed);
         }
     });
     start.store(true,std::memory_order_release);
     for(auto& reader:readers) reader.join();
-    check(!failed.load(),"concurrent eviction returns only the requested seeded waveform or dry fallback");
+    check(!failed.load(),"concurrent eviction returns only whole seeded waveforms (requested, held previous) or dry fallback");
+    check(exactReads.load()>0,"concurrent eviction still serves requested waveforms");
     // Requests own their source samples; table destruction is safe even if
     // the worker still has queued requests from this temporary generation.
 }
@@ -959,14 +968,156 @@ void wavetableHandoffConcurrencyAudit() {
     check(blocks.load()>=240,"the audio thread rendered throughout");
 }
 
+// mct-origami-nested-modulation-manual-qa: spectral table transitions. A new
+// cached table of the same frame / band is crossfaded in over 2 ms
+// (exact: b + w (a - b), w = remaining / length); a table still being built
+// is preceded by the previous one held, never the dry fallback.
+void spectralTransitionAudit() {
+    using namespace mct::origami::dsp;
+    check(prepareSpectralCompiler(),"spectral worker for transition audit");
+    const auto table=Wavetable::builtIns();
+    const auto planOf=[](float amount,std::uint32_t seed) { OscProcessPlan p; p.count=1; p.stages[0]={OscProcessType::RandAmp,amount,seed}; return p; };
+    const auto a=planOf(12.0f/32.0f,0x5eed01u),b=planOf(13.0f/32.0f,0x5eed01u);
+    // Warm both keys: a fresh oscillator hits each from its first read.
+    const auto warm=[&](const OscProcessPlan& plan) {
+        for(int attempt=0;attempt<400;++attempt) {
+            const auto before=spectralMisses(spectralCompilerStats());
+            WavetableOscillator o; o.reset(0.21);
+            for(int i=0;i<64;++i) (void)o.next(table,93.75,48000,1.0f/3.0f,plan);
+            if(spectralMisses(spectralCompilerStats())==before) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    check(warm(a) && warm(b),"transition audit keys cached");
+    WavetableOscillator oa,ob,ox; oa.reset(0.21); ob.reset(0.21); ox.reset(0.21);
+    for(int i=0;i<100;++i) { (void)oa.next(table,93.75,48000,1.0f/3.0f,a); (void)ob.next(table,93.75,48000,1.0f/3.0f,b); (void)ox.next(table,93.75,48000,1.0f/3.0f,a); }
+    const int length=static_cast<int>(std::lround(48000*spectralTransitionSeconds));
+    bool exact=true;
+    for(int k=0;k<length+64;++k) {
+        const float va=oa.next(table,93.75,48000,1.0f/3.0f,a),vb=ob.next(table,93.75,48000,1.0f/3.0f,b);
+        const float vx=ox.next(table,93.75,48000,1.0f/3.0f,b);
+        const float w=k<length ? static_cast<float>(length-k)/static_cast<float>(length) : 0.0f;
+        const float expected=k<length ? vb+w*(va-vb) : vb;
+        exact=exact && std::abs(vx-expected)<=1.0e-6f;
+    }
+    check(exact,"a cached key switch crossfades linearly over 2 ms, then reads the new table exactly");
+    // An uncached key: the previous table is held (no dry read) until built,
+    // then crossfaded in.
+    const auto c=planOf(20.0f/32.0f,0xc0ffeeu+static_cast<std::uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()&0xffff));
+    const auto dryBefore=spectralCompilerStats().fallbackReads,heldBefore=spectralCompilerStats().heldReads;
+    bool heldExactly=true,arrived=false;
+    for(int i=0;i<200000 && !arrived;++i) {
+        const float vb=ob.next(table,93.75,48000,1.0f/3.0f,b);
+        const float vx=ox.next(table,93.75,48000,1.0f/3.0f,c);
+        if(spectralCompilerStats().transitions>0 && std::abs(vx-vb)>1.0e-6f) arrived=true;
+        else heldExactly=heldExactly && std::abs(vx-vb)<=1.0e-6f;
+        if(i%4096==4095) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check(heldExactly,"while the new table is built the previous one is held exactly");
+    check(arrived && spectralCompilerStats().heldReads>heldBefore,"the new table arrives and is crossfaded in");
+    check(spectralCompilerStats().fallbackReads==dryBefore,"no dry fallback read during a table change");
+}
+
+// mct-origami-nested-modulation-manual-qa: manual-edit dezipper. A UI value
+// edit glides linearly over 10 ms; internal modulation (here a FREE LFO on
+// the same LEVEL) stays sample-accurate, with no added latency; structural
+// edits apply at once.
+void manualEditDezipperAudit() {
+    struct Rig { std::unique_ptr<OrigamiEngine> e; OscillatorModuleId osc2=0; };
+    const auto make=[](float baseLevel,bool lfoRoute) {
+        Rig r; r.e=std::make_unique<OrigamiEngine>(); auto& e=*r.e;
+        check(e.prepare(48000,512,1),"dezip rig prepare");
+        r.osc2=e.addOscillatorModule();
+        set(e,ParameterId::OscLevel,0.0f); set(e,ParameterId::Attack,0.001f); set(e,ParameterId::Sustain,1.0f);
+        auto m=e.oscillatorModuleState(r.osc2); m.enabled=true; m.level=baseLevel; m.wtPosition=0.0f; m.unison=1; m.pan=0.0f;
+        check(e.setOscillatorModuleState(r.osc2,m),"dezip rig OSC 2");
+        auto mod=e.instrumentState().modulation; mod.filterEnabled=false;
+        mod.lfo1.mode=LfoMode::Free; mod.lfo1.rateHz=3.0f;
+        if(lfoRoute) { mod.routes[0]={1,true,ModSource::Lfo1,{ModDestination::Level,r.osc2,0},0.2f,true}; mod.nextRouteId=2; }
+        check(e.setModulationState(mod),"dezip rig modulation");
+        e.reset(); check(e.noteOn(69,1.0f),"dezip rig note");
+        return r;
+    };
+    auto A=make(0.5f,true),B=make(0.5f,true),C=make(1.0f,false);
+    std::vector<float> a(4096),b(4096),c(4096);
+    const auto play=[](OrigamiEngine& e,float* out,std::size_t n) { for(std::size_t i=0;i<n;i+=256) { float* p=out+i; check(e.process(&p,1,256),"dezip rig render"); } };
+    play(*A.e,a.data(),2048); play(*B.e,b.data(),2048); play(*C.e,c.data(),2048);
+    auto edit=A.e->oscillatorModuleState(A.osc2); edit.level=0.6f;
+    check(A.e->setOscillatorModuleState(A.osc2,edit),"UI edit of OSC 2 LEVEL");
+    play(*A.e,a.data()+2048,2048); play(*B.e,b.data()+2048,2048); play(*C.e,c.data()+2048,2048);
+    const auto N=static_cast<std::size_t>(std::lround(48000*OrigamiEngine::dezipSeconds));
+    bool ramp=true,lfoExact=true; std::size_t checked=0;
+    double phase=0.0;
+    for(std::size_t n=0;n<4096;++n) {
+        const double lfo=dsp::fastSinCycle(phase); phase+=3.0/48000.0; phase-=std::floor(phase);
+        if(std::abs(c[n])<0.05f) continue; // where the oscillator itself is near zero the ratio is ill-conditioned
+        ++checked;
+        // B / C = 0.5 + 0.1 LFO(n) (a bipolar route of depth 0.2 spans
+        // +/-0.1): the LFO acts on the very sample it is computed for.
+        lfoExact=lfoExact && std::abs(b[n]/c[n]-(0.5+0.1*lfo))<2.0e-4;
+        const double expected=n<2048 ? 0.0 : 0.1*std::min(1.0,static_cast<double>(n-2048+1)/static_cast<double>(N));
+        ramp=ramp && std::abs((a[n]-b[n])/c[n]-expected)<2.0e-4;
+    }
+    check(checked>2000,"dezip audit has enough well-conditioned samples");
+    check(lfoExact,"LFO -> LEVEL is sample-accurate (no UI smoothing on modulation)");
+    check(ramp,"a manual LEVEL edit glides linearly over 10 ms on top of the unchanged modulation");
+    // Value edit -> glide; structural edit -> immediate.
+    edit.level=0.3f; check(A.e->setOscillatorModuleState(A.osc2,edit),"second value edit");
+    float* p=a.data(); check(A.e->process(&p,1,128),"render");
+    check(A.e->dezipping(),"a value edit glides");
+    edit.processCount=1; edit.nextProcessId=2; edit.processes[0]={1,dsp::OscProcessType::BendPlus,0.4f,7u,true};
+    check(A.e->setOscillatorModuleState(A.osc2,edit),"structural edit");
+    check(A.e->process(&p,1,128),"render");
+    check(!A.e->dezipping(),"a structural edit applies at once (no glide)");
+}
+
+// mct-origami-nested-modulation-manual-qa: nested modulation renders without
+// allocating (prepared programs; nothing is traversed or built per sample).
+void nestedModulationRealtimeAudit() {
+    auto owner=std::make_unique<OrigamiEngine>(); auto& e=*owner;
+    check(e.prepare(48000,512,2),"nested realtime prepare");
+    const auto osc2=e.addOscillatorModule();
+    auto mod=e.instrumentState().modulation;
+    mod.lfo1.mode=LfoMode::Free; mod.lfo2.mode=LfoMode::Loop; mod.lfo3.mode=LfoMode::Free; mod.lfo3.stereo=0.5f;
+    const auto route=[](std::uint32_t id,ModSource src,ModAddress dst,float amount,bool bipolar=true) { ModRoute r; r.id=id; r.enabled=true; r.source=src; r.destination=dst; r.amount=amount; r.bipolar=bipolar; return r; };
+    mod.routes[0]=route(1,ModSource::Lfo1,{ModDestination::Level,osc2,0},0.3f);
+    mod.routes[1]=route(2,ModSource::Macro1,routeDepthAddress(1),0.4f,false);
+    mod.routes[2]=route(3,ModSource::Lfo3,lfoRateAddress(0),0.3f);
+    mod.routes[3]=route(4,ModSource::Macro2,macroValueAddress(1),0.5f,false);
+    mod.routes[4]=route(5,ModSource::Lfo2,{ModDestination::Cutoff,0,0},0.3f);
+    mod.routes[5]=route(6,ModSource::Env2,lfoRateAddress(1),0.4f,false);
+    mod.routes[6]=route(7,ModSource::Env3,routeDepthAddress(5),0.3f,false);
+    mod.routes[7]=route(8,ModSource::Velocity,macroValueAddress(2),0.2f,false);
+    mod.nextRouteId=9;
+    check(e.setModulationState(mod),"dense nested patch accepted");
+    e.reset();
+    for(int n:{48,55,60,64,67}) check(e.noteOn(n,.8f),"nested realtime notes");
+    std::vector<float> l(512),r(512); float* io[2]{l.data(),r.data()};
+    e.process(io,2,512);
+#ifndef ORIGAMI_SANITIZED
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+#endif
+    bool finite=true;
+    for(int b=0;b<64;++b) { e.process(io,2,512); for(int i=0;i<512;++i) finite=finite && std::isfinite(l[i]) && std::isfinite(r[i]); }
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(allocations.load()==0 && frees.load()==0,"nested modulation (route depth, LFO / ENV -> LFO RATE, MACRO -> MACRO, per-voice programs) allocates nothing");
+#endif
+    check(finite,"nested modulation renders finite audio");
+}
+
 // mct-origami-dsp-performance-stereo-chain: every optimised path renders the
 // pre-optimisation output bit for bit (hashes captured on 378ad97), at block
 // sizes 32 / 256 / 1000, deterministically.
 void optimizedPathGoldenAudit() {
     const bool print=std::getenv("ORIGAMI_PRINT_GOLDEN")!=nullptr;
+    // Scenario 3 re-baselined deliberately by mct-origami-nested-modulation-
+    // manual-qa: a spectral key switch now crossfades over 2 ms instead of
+    // stepping (was 0x0186663dd655c3d1). The other five are unchanged.
     static constexpr std::uint64_t expected[golden::scenarioCount]{
         0x8b54461996998697ull,0xf2cb0320aab297acull,0x69eb600ae29a68dbull,
-        0x0186663dd655c3d1ull,0x47585a3f316d4135ull,0xa740b1d6675595c3ull};
+        0x004177b6dc1873d3ull,0x47585a3f316d4135ull,0xa740b1d6675595c3ull};
     for(int s=0;s<golden::scenarioCount;++s) {
         const auto a=golden::render(s,32),b=golden::render(s,256),c=golden::render(s,1000),again=golden::render(s,256);
         if(print) std::cout<<"GOLDEN "<<golden::scenarioName(s)<<" 0x"<<std::hex<<b.hash<<std::dec<<"\n";
@@ -1086,6 +1237,9 @@ int main() {
         std::cerr<<"wavetable handoff\n";wavetableHandoffAudit();
         std::cerr<<"wavetable handoff concurrency\n";wavetableHandoffConcurrencyAudit();
         std::cerr<<"optimised-path golden renders\n";optimizedPathGoldenAudit();
+        std::cerr<<"spectral transitions\n";spectralTransitionAudit();
+        std::cerr<<"manual-edit dezipper\n";manualEditDezipperAudit();
+        std::cerr<<"nested modulation realtime\n";nestedModulationRealtimeAudit();
         std::cerr<<"registry and patches\n";registryAndPatches();
         std::cerr<<"envelope timing\n";envelopeTiming();
         std::cerr<<"pitch and blocks\n";pitchAndBlocks();

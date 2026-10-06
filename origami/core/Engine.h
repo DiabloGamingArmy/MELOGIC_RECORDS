@@ -34,6 +34,10 @@ struct RuntimeVisualizationSnapshot {
     std::array<float,16> oscillatorPhases{};
     std::array<std::array<float,waveformBins>,16> oscillatorWaveforms{};
     std::array<std::array<std::uint8_t,waveformBins>,16> oscillatorWaveformValid{};
+    // mct-origami-nested-modulation-manual-qa: each macro's EFFECTIVE value
+    // (base + incoming modulation) and which macros are modulated (bit id-1).
+    std::array<float,maxMacros> effectiveMacros{};
+    std::uint32_t modulatedMacros=0;
     bool active=false;
 };
 class OrigamiEngine {
@@ -221,6 +225,42 @@ private:
     bool adoptWavetableHandoffs(WavetableHandoff* list) noexcept;
     OscillatorWavetableSlot* wavetableSlotFor(OscillatorModuleId id) noexcept;
     std::array<OscillatorWavetableSlot,OscillatorModuleBank::capacity> oscillatorWavetables_{};
+    // mct-origami-nested-modulation-manual-qa: manual-edit dezipper. A
+    // published module state that changes only continuous values (a UI knob
+    // drag: same ids, types, sources, counts) glides from the rendered value
+    // to the new one over `dezipSeconds`, per sample. Structural changes
+    // jump. dezipModules_ is the module state the render reads (equal to
+    // hostModules_ when nothing glides). Modulation is applied on top of it,
+    // so LFO / ENV / macro / NODES modulation is never delayed.
+public:
+    static constexpr double dezipSeconds=0.010;
+    static constexpr std::size_t dezipFieldCount=10+maxOscProcesses+maxOscRoutes;
+    bool dezipping() const noexcept { return dezipActive_!=0; }
+private:
+    std::array<OscillatorModuleState,OscillatorModuleBank::capacity> dezipModules_{};
+    // mct-origami-nested-modulation-manual-qa: the newest voice's per-voice
+    // sources (previous sample) for GLOBAL nested targets, and the effective
+    // (modulated) macro values for the UI.
+    std::array<float,CompiledModulation::voiceSourceCount> newestVoiceSources_{};
+    bool newestVoiceValid_=false;
+    std::array<float,maxMacros> effectiveMacros_{};
+public:
+    // Effective macro value (base + incoming modulation), audio-thread value
+    // published for the UI via the visualization snapshot.
+    const std::array<float,maxMacros>& effectiveMacros() const noexcept { return effectiveMacros_; }
+    // Audio thread, before beginHostBlock(): the host-automatable macro BASE
+    // values (the DAW parameters). They replace the model's macro values
+    // after every modulation-state hand-over, so a UI publication can never
+    // momentarily restore an older automated value.
+    void setHostMacroBases(const std::array<float,maxMacros>& values) noexcept { hostMacros_=values; hostMacrosValid_=true; }
+private:
+    std::array<float,maxMacros> hostMacros_{};
+    bool hostMacrosValid_=false;
+    struct DezipRamp { std::uint32_t remaining=0; std::array<float,dezipFieldCount> step{}; };
+    std::array<DezipRamp,OscillatorModuleBank::capacity> dezipRamps_{};
+    std::uint32_t dezipActive_=0;
+    void startDezip() noexcept;
+    void advanceDezip(std::array<OscillatorModuleState,OscillatorModuleBank::capacity>& modules) noexcept;
     std::array<const dsp::Wavetable*,OscillatorModuleBank::capacity> hostWavetables_{};
     void rebuildHostWavetables() noexcept;
     double sampleRate_ = 48000;
@@ -236,7 +276,7 @@ private:
     std::array<float,16> modWheel_{},aftertouch_{};
     std::array<std::atomic<float>,17> modEnvelopeTargets_{};
     std::atomic<float> pitchBendRange_{2.0f};
-    std::atomic<float> pitchBendDownRange_{2.0f};
+    std::atomic<float> pitchBendDownRange_{-2.0f}; // signed endpoint (full wheel down)
     PerformanceState performance_{};
     BusState buses_{}; // non-realtime model; the renderer only reads BUS 1 sends
     std::array<float,CompiledModulation::globalSourceCount> lastGlobalSources_{};

@@ -6,6 +6,7 @@
 #include "core/InstrumentState.h"
 #include "core/Voice.h"
 #include "core/Engine.h"
+#include <JuceHeader.h>
 #include <functional>
 #include <string>
 #include <vector>
@@ -36,5 +37,31 @@ struct ModulationBindings {
     std::function<std::uint64_t()> modelRevision;
     // N07: the engine's NODES diagnostics counters (compiles, updates, skips...).
     std::function<OrigamiEngine::NodesDiagnostics()> nodesDiagnostics;
+    // mct-origami-nested-modulation-manual-qa: a macro knob drag is one DAW
+    // gesture (index = stable id - 1; true = begin, false = end), and macro
+    // renaming (empty = the default name).
+    std::function<void(unsigned,bool)> macroGesture;
+    std::function<bool(unsigned,const juce::String&)> macroName;
 };
+// The macro's label everywhere (SYNTH, Matrix, NODES): its custom name or
+// "MACRO n". Stable id, never a position.
+inline juce::String macroLabel(const ModulationState& state,std::size_t id) {
+    if(id>=1 && id<=maxMacros && state.macroNames[id-1][0]!='\0') return juce::String(state.macroNames[id-1].data()).toUpperCase();
+    return "MACRO "+juce::String(int(id));
+}
+// Any direct route source's label ("LFO 2", "MOD WHEEL", a macro's name).
+inline juce::String modulationSourceLabel(const ModulationState& state,ModSource s) {
+    using S=ModSource;
+    if(const auto id=macroIdOf(s)) return macroLabel(state,id);
+    switch(s) {
+        case S::Env1:return "ENV 1"; case S::Env2:return "ENV 2"; case S::Env3:return "ENV 3";
+        case S::Lfo1:return "LFO 1"; case S::Lfo2:return "LFO 2"; case S::Lfo3:return "LFO 3"; case S::Lfo4:return "LFO 4";
+        case S::Random:return "RANDOM"; case S::Function:return "FUNCTION";
+        case S::Chaos:return "CHAOS"; case S::Drift:return "DRIFT"; case S::Sequencer:return "SEQUENCER";
+        case S::ModWheel:return "MOD WHEEL"; case S::Velocity:return "VELOCITY"; case S::Keytrack:return "KEYTRACK";
+        case S::Aftertouch:return "AFTERTOUCH"; case S::PitchBend:return "PITCH BEND"; case S::NoteGate:return "NOTE GATE";
+        default:break;
+    }
+    return isOperatorSource(s) ? "NODES" : "MODULATOR";
+}
 }

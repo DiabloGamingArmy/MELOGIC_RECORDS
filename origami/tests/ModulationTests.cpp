@@ -803,8 +803,22 @@ void lfoStereoModulation() {
         auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000,256,2); e->setModulationState(s1); e->reset();
         std::array<float,256> l{},r{}; float* p[]{l.data(),r.data()}; e->process(p,2,256);
         const auto before=e->nodesDiagnostics();
-        for(int i=0;i<10;++i) { auto m=s1; m.lfo1.stereo=float(i)/10.0f; e->setModulationState(m); e->process(p,2,256); }
-        check(e->nodesDiagnostics().compiles==before.compiles,"STEREO knob changes never recompile");
+        for(int i=1;i<=10;++i) { auto m=s1; m.lfo1.stereo=float(i)/10.0f; e->setModulationState(m); e->process(p,2,256); }
+        check(e->nodesDiagnostics().compiles==before.compiles,"STEREO knob changes above zero never recompile (crossing zero is a plan change)");
+        // mct-origami-nested-modulation-manual-qa: raising STEREO from 0 during
+        // playback (no reset) makes the plan stereo at once.
+        {
+            auto e2=std::make_unique<OrigamiEngine>(); e2->prepare(48000,256,2);
+            auto m0=s1; m0.lfo1.stereo=0.0f; e2->setModulationState(m0); e2->reset(); e2->noteOn(57,.8f);
+            for(int b=0;b<20;++b) e2->process(p,2,256);
+            auto m1=m0; m1.lfo1.stereo=1.0f; e2->setModulationState(m1);
+            double diff=0; for(int b=0;b<40;++b) { e2->process(p,2,256); for(int i=0;i<256;++i) diff=std::max(diff,double(std::abs(l[i]-r[i]))); }
+            check(diff>1e-3,"STEREO 0 -> 100% while playing takes effect without a reset");
+            auto m2=m1; m2.lfo1.stereo=0.0f; e2->setModulationState(m2);
+            for(int b=0;b<4;++b) e2->process(p,2,256);
+            bool same=true; for(int b=0;b<8;++b) { e2->process(p,2,256); for(int i=0;i<256;++i) same=same && l[i]==r[i]; }
+            check(same,"STEREO back to 0 while playing: mono again");
+        }
     }
     {   // State: v33 only when STEREO is used; older states load mono.
         auto e=std::make_unique<OrigamiEngine>();
@@ -837,9 +851,9 @@ ChainRender renderChain(OrigamiEngine& e,const InstrumentState& st,int block,std
 // served from the cache (no fallback reads), so measured renders are exact.
 bool settleSpectral(OrigamiEngine& e,const InstrumentState& st,std::size_t total) {
     for(int attempt=0;attempt<400;++attempt) {
-        const auto before=dsp::spectralCompilerStats().fallbackReads;
+        const auto before=dsp::spectralMisses(dsp::spectralCompilerStats());
         renderChain(e,st,256,total);
-        if(dsp::spectralCompilerStats().fallbackReads==before) return true;
+        if(dsp::spectralMisses(dsp::spectralCompilerStats())==before) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(4));
     }
     return false;
@@ -924,7 +938,9 @@ void oscChainStereo() {
             {"WAVE FOLD (post route)",withRoute(OscRouteType::WaveFold),true},
             {"PM (pre route)",withRoute(OscRouteType::PhaseMod),true},
             {"PSK (pre route)",withRoute(OscRouteType::PhaseSkew),true},
-            {"FM (pre route, scalar)",withRoute(OscRouteType::FrequencyMod),false}};
+            // mct-origami-nested-modulation-manual-qa: FM is stereo too (RIGHT
+            // runs its own phase while its frequency differs).
+            {"FM (pre route)",withRoute(OscRouteType::FrequencyMod),true}};
         for(const auto& c:cases) {
             auto st=base; c.setup(st);
             auto mono=st; const auto m0=renderChain(*e,mono,256,total);
@@ -937,8 +953,458 @@ void oscChainStereo() {
                 check(match>=0.99,(std::string(c.name)+": RIGHT = LFO at +180 deg (match "+std::to_string(match)+")").c_str());
                 bool differs=false; for(std::size_t i=0;i<a.left.size();++i) differs|=std::abs(a.left[i]-a.right[i])>1e-3f;
                 check(differs,(std::string(c.name)+": channels differ at 180 deg").c_str());
-            } else check(a.right==a.left,(std::string(c.name)+": scalar (FM changes the phase increment): RIGHT follows LEFT").c_str());
+            } else check(a.right==a.left,(std::string(c.name)+": scalar: RIGHT follows LEFT").c_str());
         }
+    }
+}
+
+// ---- mct-origami-nested-modulation-manual-qa: cross-oscillator stereo -------
+// Gino's manual case: OSC 1 carries a stereo RAND AMP (LFO 1, STEREO) but is
+// silent (LEVEL 0); OSC 2 is audible and phase-distorted by OSC 1. The L / R
+// difference inside OSC 1 must reach OSC 2 through the cross-oscillator tap:
+// downstream RIGHT equals the whole patch rendered with the LFO at +angle.
+void crossOscillatorStereo() {
+    check(dsp::prepareSpectralCompiler(),"spectral worker running");
+    constexpr std::size_t total=9600;
+    auto e=std::make_unique<OrigamiEngine>(); check(e->prepare(48000,1024,2),"cross-osc engine");
+    const auto osc2=e->addOscillatorModule();
+    const auto osc3=e->addOscillatorModule();
+    check(osc2!=0 && osc3!=0,"OSC 2 / OSC 3 exist");
+    check(e->setParameter(ParameterId::OscLevel,0.0f),"OSC 1 LEVEL 0 (still a cross-mod source)");
+    auto base=e->instrumentState();
+    base.parameters[static_cast<std::size_t>(ParameterId::OscLevel)]=0.0f;
+    auto& o1=base.oscillators[0];
+    o1.processCount=1; o1.nextProcessId=2; o1.processes[0]={1,dsp::OscProcessType::RandAmp,0.5f,0x1234u,true};
+    std::size_t s2=0,s3=0; for(std::size_t i=0;i<base.oscillators.size();++i) { if(base.oscillators[i].id==osc2) s2=i; if(base.oscillators[i].id==osc3) s3=i; }
+    base.oscillators[s3].enabled=false;
+    base.modulation.lfo1.mode=LfoMode::Loop; base.modulation.lfo1.rateHz=5.0f;
+    base.modulation.nextRouteId=2;
+    base.modulation.routes[0]={1,true,ModSource::Lfo1,{ModDestination::ProcessAmount,o1.id,1},0.9f,true};
+    const auto withRoute=[&](InstrumentState st,OscRouteType type,float amount) {
+        auto& o=st.oscillators[s2]; o.routeCount=1; o.nextRouteId=2; o.routes[0]={1,o1.id,type,amount,true}; o.level=0.8f;
+        return st;
+    };
+    const auto differs=[](const ChainRender& r) { for(std::size_t i=0;i<r.left.size();++i) if(std::abs(r.left[i]-r.right[i])>1e-3f) return true; return false; };
+    // The exact manual case: PD from a silent stereo RAND AMP oscillator.
+    const auto pd=withRoute(base,OscRouteType::PhaseMod,0.6f);
+    auto mono=pd; check(settleSpectral(*e,mono,total),"spectral settles (mono)");
+    const auto m0=renderChain(*e,mono,256,total);
+    check(m0.left==m0.right,"cross-osc PD, STEREO 0 deg: L == R");
+    for(int angle:{90,180}) {
+        auto s=pd; s.modulation.lfo1.stereo=float(angle)/180.0f;
+        auto ref=pd; ref.modulation.lfo1.phase=float(angle)/360.0f;
+        check(settleSpectral(*e,s,total) && settleSpectral(*e,ref,total),"spectral settles (stereo)");
+        const auto a=renderChain(*e,s,256,total),again=renderChain(*e,s,256,total),rr=renderChain(*e,ref,256,total);
+        const std::string label=" ("+std::to_string(angle)+" deg)";
+        check(a.left==again.left && a.right==again.right,("cross-osc PD stereo is deterministic"+label).c_str());
+        check(a.left==m0.left,("cross-osc PD: LEFT unchanged by STEREO"+label).c_str());
+        check(differs(a),("cross-osc PD: OSC 2 output L != R (the stereo source survives)"+label).c_str());
+        const double match=matchFraction(a.right,rr.left,2e-3f);
+        check(match>=0.97,("cross-osc PD: RIGHT = the patch with LFO 1 at +"+std::to_string(angle)+" deg (match "+std::to_string(match)+")").c_str());
+        const auto b64=renderChain(*e,s,64,total),b1024=renderChain(*e,s,1024,total);
+        check(b64.left==a.left && b64.right==a.right && b1024.left==a.left && b1024.right==a.right,("cross-osc PD stereo: block-size independent"+label).c_str());
+    }
+    // Every other cross-oscillator route, from a stereo phase-warp source
+    // (no spectral cache: exact references).
+    auto warp=base;
+    warp.oscillators[0].processes[0]={1,dsp::OscProcessType::BendPlus,0.4f,7u,true};
+    struct RouteCase { const char* name; OscRouteType type; };
+    for(const auto& c:std::array<RouteCase,9>{{{"PD",OscRouteType::PhaseMod},{"FM",OscRouteType::FrequencyMod},{"PSK",OscRouteType::PhaseSkew},
+            {"RING MOD",OscRouteType::RingMod},{"AMP MOD",OscRouteType::AmpMod},{"CROSSFADE",OscRouteType::Crossfade},
+            {"WAVE FOLD",OscRouteType::WaveFold},{"XOR",OscRouteType::LogicXor},{"RECTIFY",OscRouteType::RectifyMod}}}) {
+        const auto st=withRoute(warp,c.type,0.7f);
+        const auto r0=renderChain(*e,st,256,total);
+        auto s=st; s.modulation.lfo1.stereo=1.0f;
+        auto ref=st; ref.modulation.lfo1.phase=0.5f;
+        const auto a=renderChain(*e,s,256,total),rr=renderChain(*e,ref,256,total);
+        check(r0.left==r0.right && a.left==r0.left,(std::string("cross-osc ")+c.name+": STEREO 0 mono, LEFT unchanged").c_str());
+        check(differs(a),(std::string("cross-osc ")+c.name+": OSC 2 output L != R at 180 deg").c_str());
+        const double match=matchFraction(a.right,rr.left,1e-3f);
+        check(match>=0.99,(std::string("cross-osc ")+c.name+": RIGHT = the patch with LFO 1 at +180 deg (match "+std::to_string(match)+")").c_str());
+    }
+    // A chain of taps: OSC 1 (stereo) -> PD -> OSC 2 (silent) -> RM -> OSC 3.
+    {
+        auto st=withRoute(warp,OscRouteType::PhaseMod,0.6f);
+        st.oscillators[s2].level=0.0f;
+        auto& o3=st.oscillators[s3]; o3.enabled=true; o3.level=0.8f; o3.routeCount=1; o3.nextRouteId=2; o3.routes[0]={1,osc2,OscRouteType::RingMod,0.8f,true};
+        auto s=st; s.modulation.lfo1.stereo=1.0f;
+        auto ref=st; ref.modulation.lfo1.phase=0.5f;
+        const auto a=renderChain(*e,s,256,total),rr=renderChain(*e,ref,256,total);
+        const double match=matchFraction(a.right,rr.left,1e-3f);
+        check(differs(a) && match>=0.99,("cross-osc chain OSC 1 -> OSC 2 -> OSC 3: stereo survives two taps (match "+std::to_string(match)+")").c_str());
+    }
+}
+
+// ---- mct-origami-nested-modulation-manual-qa: OSC CHAIN manual-edit stability
+// Manual QA: dragging RANDOM AMP / SPARSE crackled. Each new quantized amount
+// was a new spectral key, and until the worker built it every read played the
+// dry fallback; the switch itself stepped. Now the previous table is held and
+// switches crossfade: a drag must produce no dry read and no jump larger than
+// the patch produces when held still.
+void oscChainManualEditStability() {
+    check(dsp::prepareSpectralCompiler(),"spectral worker running");
+    for(const auto type:{dsp::OscProcessType::RandAmp,dsp::OscProcessType::RandSparse,dsp::OscProcessType::SpectralComb}) {
+        const std::string name=dsp::oscProcessName(type);
+        auto e=std::make_unique<OrigamiEngine>(); check(e->prepare(48000,1024,2),"drag engine");
+        auto st=e->instrumentState();
+        auto& osc=st.oscillators[0];
+        osc.processCount=1; osc.nextProcessId=2; osc.processes[0]={1,type,0.2f,0x4242u,true};
+        // Static references at the drag endpoints and between them: the
+        // largest sample-to-sample step a held amount produces.
+        double heldStep=0.0;
+        for(float amount:{0.2f,0.35f,0.5f,0.65f,0.8f}) {
+            auto h=st; h.oscillators[0].processes[0].amount=amount;
+            check(settleSpectral(*e,h,9600),("held "+name+" settles").c_str());
+            const auto r=renderChain(*e,h,256,9600);
+            for(std::size_t i=1;i<r.left.size();++i) heldStep=std::max(heldStep,double(std::abs(r.left[i]-r.left[i-1])));
+        }
+        // The drag: a UI edit before every other 256-sample block, 0.2 -> 0.8.
+        e->restoreInstrumentState(st); e->reset(); e->noteOn(57,.8f);
+        std::array<float,256> l{},r{}; float* io[]{l.data(),r.data()};
+        for(int b=0;b<40;++b) e->process(io,2,256); // settle at 0.2 (cached above)
+        const auto before=dsp::spectralCompilerStats();
+        double dragStep=0.0; float previous=l[255];
+        for(int b=0;b<80;++b) {
+            if(b%2==0) {
+                auto m=e->oscillatorModuleState(osc.id); m.processes[0].amount=0.2f+0.6f*float(b)/78.0f;
+                check(e->setOscillatorModuleState(osc.id,m),"drag edit");
+            }
+            e->process(io,2,256);
+            for(float x:l) { dragStep=std::max(dragStep,double(std::abs(x-previous))); previous=x; }
+        }
+        const auto after=dsp::spectralCompilerStats();
+        check(after.fallbackReads==before.fallbackReads,(name+" drag: no dry fallback read (the previous table is held)").c_str());
+        check(after.transitions>before.transitions,(name+" drag: table changes are crossfaded").c_str());
+        check(dragStep<=heldStep*1.25+1e-4,(name+" drag: no jump beyond a held patch's own steps (drag "+std::to_string(dragStep)+", held "+std::to_string(heldStep)+")").c_str());
+    }
+}
+// The known miss storm: an LFO on a PHASE stage (BEND+) in a chain with a
+// spectral stage made a new spectral key every sample, so every read missed
+// and the spectral stage vanished. The moving chain now reads its quantized
+// key (bounded keys): the cache settles and the spectral stage stays audible.
+void spectralChainPhaseModulation() {
+    check(dsp::prepareSpectralCompiler(),"spectral worker running");
+    auto e=std::make_unique<OrigamiEngine>(); check(e->prepare(48000,1024,2),"storm engine");
+    auto st=e->instrumentState();
+    auto& osc=st.oscillators[0];
+    osc.processCount=2; osc.nextProcessId=3;
+    osc.processes[0]={1,dsp::OscProcessType::BendPlus,0.35f,7u,true};
+    osc.processes[1]={2,dsp::OscProcessType::RandAmp,0.5f,0x1234u,true};
+    st.modulation.lfo1.mode=LfoMode::Loop; st.modulation.lfo1.rateHz=4.0f;
+    st.modulation.routes[0]={1,true,ModSource::Lfo1,{ModDestination::ProcessAmount,osc.id,1},0.5f,true};
+    st.modulation.nextRouteId=2;
+    check(settleSpectral(*e,st,9600),"LFO -> BEND+ before RAND AMP: the spectral cache settles (no miss storm)");
+    const auto a=renderChain(*e,st,256,9600),b=renderChain(*e,st,256,9600);
+    check(a.left==b.left,"LFO -> BEND+ before RAND AMP: deterministic once settled");
+    for(int block:{64,1024}) { const auto c=renderChain(*e,st,block,9600); check(c.left==a.left,"LFO -> BEND+ before RAND AMP: block-size independent"); }
+    auto dry=st; dry.oscillators[0].processCount=1; // the same moving BEND+ without RAND AMP
+    const auto d=renderChain(*e,dry,256,9600);
+    check(matchFraction(a.left,d.left,1e-3f)<0.5,"the RAND AMP stage stays audible under BEND+ modulation");
+    // A held plan still uses its exact key (static patches keep their sound).
+    auto held=st; held.modulation.routes[0]={};
+    check(settleSpectral(*e,held,9600),"held chain settles");
+    const auto before=dsp::spectralCompilerStats();
+    const auto h=renderChain(*e,held,256,9600);
+    check(dsp::spectralMisses(dsp::spectralCompilerStats())==dsp::spectralMisses(before) && !h.left.empty(),"held chain reads its exact cached key");
+}
+
+// ---- mct-origami-nested-modulation-manual-qa: modulation of modulation -----
+namespace nested {
+ModRoute nestedRoute(std::uint32_t id,ModSource source,ModAddress destination,float amount,bool bipolar=false) {
+    ModRoute r; r.id=id; r.enabled=true; r.source=source; r.destination=destination; r.amount=amount; r.bipolar=bipolar; return r;
+}
+// A measurement rig: OSC 2 a pure sine, OSC 1 silent, filter off, sustain 1;
+// output / output of the same rig at LEVEL 1 = OSC 2's effective LEVEL.
+struct Rig { std::unique_ptr<OrigamiEngine> e; OscillatorModuleId osc2=0; };
+Rig rig() {
+    Rig r; r.e=std::make_unique<OrigamiEngine>(); auto& e=*r.e;
+    check(e.prepare(48000,1024,1),"nested rig prepare");
+    r.osc2=e.addOscillatorModule();
+    e.setParameter(ParameterId::OscLevel,0.0f); e.setParameter(ParameterId::Attack,0.001f); e.setParameter(ParameterId::Sustain,1.0f);
+    auto m=e.oscillatorModuleState(r.osc2); m.enabled=true; m.level=0.5f; m.wtPosition=0.0f; m.unison=1; m.pan=0.0f;
+    check(e.setOscillatorModuleState(r.osc2,m),"nested rig OSC 2");
+    return r;
+}
+std::vector<float> render(Rig& r,ModulationState mod,std::size_t total,std::size_t block=256,float osc2Level=0.5f) {
+    auto& e=*r.e;
+    auto m=e.oscillatorModuleState(r.osc2); m.level=osc2Level; e.setOscillatorModuleState(r.osc2,m);
+    mod.filterEnabled=false;
+    check(e.setModulationState(mod),"nested rig modulation accepted");
+    e.reset(); e.noteOn(69,1.0f);
+    std::vector<float> out(total);
+    for(std::size_t i=0;i<total;i+=block) { float* p=out.data()+i; e.process(&p,1,std::min(block,total-i)); }
+    return out;
+}
+double maxRelativeError(const std::vector<float>& a,const std::vector<float>& b,const std::vector<float>& reference) {
+    double worst=0.0;
+    for(std::size_t i=0;i<a.size();++i) if(std::abs(reference[i])>0.05f) worst=std::max(worst,std::abs(double(a[i])-double(b[i]))/std::abs(double(reference[i])));
+    return worst;
+}
+}
+void nestedModulation() {
+    using namespace nested;
+    // LFO RATE mapping: equal ratios per equal travel over 0.01..40 Hz.
+    check(std::abs(lfoRateToNormalized(0.01f))<1e-6f && std::abs(lfoRateToNormalized(40.0f)-1.0f)<1e-6f,"LFO RATE mapping endpoints");
+    check(std::abs(lfoRateToNormalized(1.0f)-0.555f)<0.002f,"1 Hz sits at ~55.5 % (low rates stay controllable)");
+    bool roundTrip=true; for(float hz:{0.01f,0.1f,0.5f,1.0f,3.3f,10.0f,25.0f,40.0f}) roundTrip=roundTrip && std::abs(lfoRateFromNormalized(lfoRateToNormalized(hz))-hz)<=hz*2e-5f;
+    check(roundTrip,"LFO RATE mapping round trip");
+    check(std::abs(lfoRateToNormalized(20.0f)-lfoRateToNormalized(10.0f)-(lfoRateToNormalized(2.0f)-lfoRateToNormalized(1.0f)))<1e-5f,"an octave is the same travel everywhere");
+
+    auto C=rig(); auto base=C.e->instrumentState().modulation;
+    const auto reference=render(C,base,9600,256,1.0f); // K(t): OSC 2 at LEVEL 1, nothing modulated
+    check(!C.e->instrumentState().modulation.routes[0].id,"rig starts with no routes");
+
+    // 1. Route depth is modulatable: MACRO 1 -> depth of (LFO 2 -> OSC 2 LEVEL)
+    //    renders exactly like that route at the resulting fixed depth.
+    {
+        auto A=rig(),B=rig();
+        auto m=base; m.lfo2.mode=LfoMode::Free; m.lfo2.rateHz=3.0f; m.macros[0]=0.3f;
+        m.routes[0]=nestedRoute(1,ModSource::Lfo2,{ModDestination::Level,A.osc2,0},0.0f,true);
+        m.routes[1]=nestedRoute(2,ModSource::Macro1,routeDepthAddress(1),0.5f);
+        m.nextRouteId=3;
+        check(validModulation(m,A.e->instrumentState().oscillators),"MACRO 1 -> ROUTE DEPTH accepted");
+        const auto a=render(A,m,9600);
+        // depth = -1 + 2 (0.5 + 0.5 * 0.3) = 0.3
+        auto fixed=base; fixed.lfo2=m.lfo2; fixed.macros[0]=0.3f;
+        fixed.routes[0]=nestedRoute(1,ModSource::Lfo2,{ModDestination::Level,B.osc2,0},0.3f,true); fixed.nextRouteId=2;
+        const auto b=render(B,fixed,9600);
+        check(maxRelativeError(a,b,reference)<2e-4,"MACRO 1 -> depth of LFO 2 -> LEVEL equals that route at the resulting depth");
+        bool moved=false; for(std::size_t i=0;i<a.size();++i) moved|=std::abs(a[i]-reference[i]*0.5f)>1e-3f;
+        check(moved,"the modulated depth (0 base) makes the route audible");
+    }
+    // 2. Evaluation order: LFO 3 -> LFO 1 RATE (a higher index feeds a lower
+    //    one), LFO 1 -> LEVEL. Simulated sample by sample with the public LFO
+    //    API: any one-sample ordering lag would diverge.
+    {
+        auto A=rig();
+        auto m=base; m.lfo1.mode=LfoMode::Free; m.lfo1.rateHz=2.0f; m.lfo3.mode=LfoMode::Free; m.lfo3.rateHz=0.7f;
+        m.routes[0]=nestedRoute(1,ModSource::Lfo1,{ModDestination::Level,A.osc2,0},0.4f,true);
+        m.routes[1]=nestedRoute(2,ModSource::Lfo3,lfoRateAddress(0),0.3f,true);
+        m.nextRouteId=3;
+        const auto a=render(A,m,9600);
+        Lfo l1,l3; l1.reset(); l3.reset();
+        l1.setStreams(Lfo::globalStream(0),Lfo::fractureSeed(0)); l3.setStreams(Lfo::globalStream(2),Lfo::fractureSeed(2));
+        double worst=0.0;
+        for(std::size_t n=0;n<a.size();++n) {
+            const float v3=l3.next(m.lfo3,48000.0);
+            const float rate=lfoRateFromNormalized(lfoRateToNormalized(m.lfo1.rateHz)+0.3f*(v3*0.5f));
+            const float v1=l1.next(m.lfo1,48000.0,rate);
+            const double level=0.5+0.4*(v1*0.5);
+            if(std::abs(reference[n])>0.05f) worst=std::max(worst,std::abs(double(a[n])/double(reference[n])-level));
+        }
+        check(worst<2e-4,("LFO 3 -> LFO 1 RATE evaluates in dependency order, same sample (worst "+std::to_string(worst)+")").c_str());
+        const auto b64=render(A,m,9600,64),b1000=render(A,m,9600,1000);
+        check(b64==a && b1000==a,"LFO -> LFO RATE: block-size independent");
+        const auto again=render(A,m,9600);
+        check(again==a,"LFO -> LFO RATE: deterministic");
+    }
+    // 3. MACRO 1 -> LFO 2 RATE equals LFO 2 at that fixed rate.
+    {
+        auto A=rig(),B=rig();
+        auto m=base; m.lfo2.mode=LfoMode::Free; m.lfo2.rateHz=1.0f; m.macros[0]=0.6f;
+        m.routes[0]=nestedRoute(1,ModSource::Lfo2,{ModDestination::Level,A.osc2,0},0.4f,true);
+        m.routes[1]=nestedRoute(2,ModSource::Macro1,lfoRateAddress(1),0.25f);
+        m.nextRouteId=3;
+        const auto a=render(A,m,9600);
+        auto fixed=m; fixed.routes[1]={}; fixed.nextRouteId=3;
+        fixed.lfo2.rateHz=lfoRateFromNormalized(lfoRateToNormalized(1.0f)+0.25f*0.6f);
+        const auto b=render(B,fixed,9600);
+        check(maxRelativeError(a,b,reference)<2e-4,"MACRO 1 -> LFO 2 RATE equals LFO 2 at the resulting rate");
+        // 0.25 x 0.6 = 0.15 of the ~12-octave span = ~1.8 octaves: 1 Hz -> ~3.48 Hz.
+        check(std::abs(fixed.lfo2.rateHz-3.475f)<0.02f,"MACRO 60 % x 25 % moves 1 Hz up ~1.8 octaves");
+    }
+    // 4. MACRO 1 -> MACRO 2 (base vs effective) and LFO -> MACRO.
+    {
+        auto A=rig(),B=rig();
+        auto m=base; m.macros[0]=0.4f; m.macros[1]=0.2f;
+        m.routes[0]=nestedRoute(1,ModSource::Macro2,{ModDestination::Level,A.osc2,0},0.5f);
+        m.routes[1]=nestedRoute(2,ModSource::Macro1,macroValueAddress(2),0.5f);
+        m.nextRouteId=3;
+        const auto a=render(A,m,4800);
+        auto fixed=m; fixed.routes[1]={}; fixed.macros[1]=0.2f+0.5f*0.4f; fixed.nextRouteId=3;
+        const auto b=render(B,fixed,4800);
+        check(maxRelativeError(a,b,std::vector<float>(reference.begin(),reference.begin()+4800))<2e-4,"MACRO 1 -> MACRO 2: MACRO 2's effective value is base + modulation");
+        check(A.e->instrumentState().modulation.macros[1]==0.2f,"incoming modulation never rewrites the stored MACRO 2 base");
+        check(std::abs(A.e->effectiveMacros()[1]-0.4f)<1e-5f,"the engine publishes MACRO 2's effective value (0.4)");
+        auto lfo=base; lfo.lfo1.mode=LfoMode::Free; lfo.lfo1.rateHz=2.0f; lfo.macros[0]=0.0f;
+        lfo.routes[0]=nestedRoute(1,ModSource::Macro1,{ModDestination::Level,A.osc2,0},0.6f);
+        lfo.routes[1]=nestedRoute(2,ModSource::Lfo1,macroValueAddress(1),0.5f);
+        lfo.nextRouteId=3;
+        const auto c=render(A,lfo,9600);
+        auto direct=base; direct.lfo1=lfo.lfo1;
+        direct.routes[0]=nestedRoute(1,ModSource::Lfo1,{ModDestination::Level,B.osc2,0},0.6f*0.5f); direct.nextRouteId=2;
+        const auto d=render(B,direct,9600);
+        check(maxRelativeError(c,d,reference)<2e-4,"LFO 1 -> MACRO 1 -> LEVEL equals LFO 1 -> LEVEL at the product depth");
+    }
+    // 5. Cycles: direct, indirect, through route depths, self.
+    {
+        const auto mods=C.e->instrumentState().oscillators;
+        auto a=base; a.routes[0]=nestedRoute(1,ModSource::Macro1,macroValueAddress(2),0.5f);
+        a.routes[1]=nestedRoute(2,ModSource::Macro2,macroValueAddress(1),0.5f); a.nextRouteId=3;
+        check(modulationGraphHasCycle(a) && !validModulation(a,mods) && !C.e->setModulationState(a),"MACRO 1 -> MACRO 2 -> MACRO 1 rejected");
+        auto self=base; self.routes[0]=nestedRoute(1,ModSource::Macro1,macroValueAddress(1),0.5f); self.nextRouteId=2;
+        check(!validModulation(self,mods),"MACRO 1 -> MACRO 1 rejected");
+        auto b=base; b.lfo1.mode=b.lfo2.mode=LfoMode::Free;
+        b.routes[0]=nestedRoute(1,ModSource::Lfo1,lfoRateAddress(1),0.5f);
+        b.routes[1]=nestedRoute(2,ModSource::Lfo2,lfoRateAddress(0),0.5f); b.nextRouteId=3;
+        check(!validModulation(b,mods),"LFO 1 -> LFO 2 RATE, LFO 2 -> LFO 1 RATE rejected");
+        auto c=base; c.lfo1.mode=LfoMode::Free;
+        c.routes[0]=nestedRoute(1,ModSource::Lfo1,macroValueAddress(1),0.5f);
+        c.routes[1]=nestedRoute(2,ModSource::Macro1,macroValueAddress(2),0.5f);
+        c.routes[2]=nestedRoute(3,ModSource::Macro2,lfoRateAddress(0),0.5f); c.nextRouteId=4;
+        check(!validModulation(c,mods),"indirect LFO 1 -> MACRO 1 -> MACRO 2 -> LFO 1 RATE rejected");
+        auto d=base;
+        d.routes[0]=nestedRoute(1,ModSource::Macro1,{ModDestination::Level,C.osc2,0},0.5f);
+        d.routes[1]=nestedRoute(2,ModSource::Macro2,{ModDestination::Pan,C.osc2,0},0.5f);
+        d.routes[2]=nestedRoute(3,ModSource::Macro3,routeDepthAddress(4),0.5f);
+        d.routes[3]=nestedRoute(4,ModSource::Macro4,routeDepthAddress(3),0.5f); d.nextRouteId=5;
+        check(!validModulation(d,mods),"route depth A <- B, B <- A rejected");
+        auto ok=base; ok.routes[0]=nestedRoute(1,ModSource::Macro1,macroValueAddress(2),0.5f);
+        ok.routes[1]=nestedRoute(2,ModSource::Macro2,macroValueAddress(3),0.5f); ok.nextRouteId=3;
+        check(validModulation(ok,mods) && !routeClosesCycle(ok,nestedRoute(9,ModSource::Macro4,macroValueAddress(1),0.5f)) &&
+              routeClosesCycle(ok,nestedRoute(9,ModSource::Macro3,macroValueAddress(1),0.5f)),"chains are fine; the closing edge is detected before it is added");
+        auto dangling=base; dangling.routes[0]=nestedRoute(1,ModSource::Macro1,routeDepthAddress(7),0.5f); dangling.nextRouteId=2;
+        check(!validModulation(dangling,mods),"a depth route needs an existing target route");
+        auto removedMacro=base; removedMacro.macroMask=0x7u; removedMacro.routes[0]=nestedRoute(1,ModSource::Macro1,macroValueAddress(4),0.5f); removedMacro.nextRouteId=2;
+        check(!validModulation(removedMacro,mods),"a removed macro is no destination");
+        check(pruneRoutesOfRemovedMacros(removedMacro)==1 && !removedMacro.routes[0].id,"macro deletion prunes routes to it");
+    }
+    // 6. Cascade: removing a route removes the routes on its depth.
+    {
+        auto m=base;
+        m.routes[0]=nestedRoute(1,ModSource::Lfo1,{ModDestination::Level,C.osc2,0},0.5f);
+        m.routes[1]=nestedRoute(2,ModSource::Macro1,routeDepthAddress(1),0.5f);
+        m.routes[2]=nestedRoute(3,ModSource::Macro2,routeDepthAddress(2),0.5f);
+        m.routes[3]=nestedRoute(4,ModSource::Macro3,{ModDestination::Pan,C.osc2,0},0.5f); m.nextRouteId=5;
+        check(validModulation(m,C.e->instrumentState().oscillators),"depth-of-depth chain valid");
+        check(removeRouteCascade(m,1)==3 && m.routes[0].id==4 && !m.routes[1].id,"removing a route removes its depth routes (transitively), compacted");
+    }
+    // 7. Save / load: v34 only when used, exact round trip.
+    {
+        auto st=C.e->instrumentState();
+        st.modulation.routes[0]=nestedRoute(1,ModSource::Lfo1,{ModDestination::Level,C.osc2,0},0.5f);
+        st.modulation.routes[1]=nestedRoute(2,ModSource::Macro1,routeDepthAddress(1),0.5f);
+        st.modulation.routes[2]=nestedRoute(3,ModSource::Lfo3,lfoRateAddress(0),-0.25f,true);
+        st.modulation.routes[3]=nestedRoute(4,ModSource::Macro2,macroValueAddress(1),0.5f);
+        st.modulation.nextRouteId=5;
+        const auto bytes=encodeInstrumentState(st);
+        InstrumentState back;
+        check(bytes[7]==34 && decodeInstrumentState(bytes.data(),bytes.size(),back),"nested routes save as v34 and load");
+        check(encodeInstrumentState(back)==bytes,"nested modulation: exact round trip");
+        check(back.modulation.routes[1].destination==routeDepthAddress(1) && back.modulation.routes[2].destination==lfoRateAddress(0),"nested addresses (stable ids) survive save / load");
+        auto plain=C.e->instrumentState();
+        check(encodeInstrumentState(plain)[7]<34,"a state without new features keeps its older format");
+    }
+    // 8. No nested route: the plan has no nested program (unchanged paths).
+    {
+        auto e=std::make_unique<CompiledModulation>(); e->prepare(48000);
+        auto m=base; m.routes[0]=nestedRoute(1,ModSource::Lfo1,{ModDestination::Level,C.osc2,0},0.5f); m.nextRouteId=2;
+        e->compile(m,C.e->instrumentState().oscillators,true);
+        check(!e->hasNestedPlan() && !e->hasVoiceNestedPlan() && !e->needsNewestVoiceSources(),"no nested route: no nested program");
+        m.routes[1]=nestedRoute(2,ModSource::Env1,routeDepthAddress(1),0.5f); m.nextRouteId=3;
+        e->compile(m,C.e->instrumentState().oscillators,true);
+        check(e->hasNestedPlan() && e->hasVoiceNestedPlan(),"ENV -> depth: a per-voice depth (voice program)");
+    }
+    // 9. Per-voice LFO rate from a per-voice source (ENV 2 -> LFO 2 RATE,
+    //    RETRIGGER LFO): renders, deterministic, block-size independent.
+    {
+        auto A=rig();
+        auto m=base; m.lfo2.mode=LfoMode::Loop; m.lfo2.rateHz=1.0f;
+        m.routes[0]=nestedRoute(1,ModSource::Lfo2,{ModDestination::Level,A.osc2,0},0.4f,true);
+        m.routes[1]=nestedRoute(2,ModSource::Env2,lfoRateAddress(1),0.5f);
+        m.nextRouteId=3;
+        const auto a=render(A,m,9600),b=render(A,m,9600,64),c=render(A,m,9600,1000);
+        check(a==b && a==c,"ENV 2 -> LFO 2 RATE (per voice): block-size independent, deterministic");
+        auto none=m; none.routes[1]={}; none.nextRouteId=3;
+        const auto d=render(A,none,9600);
+        check(maxRelativeError(a,d,reference)>1e-3,"ENV 2 -> LFO 2 RATE changes the per-voice LFO");
+    }
+}
+
+// ---- mct-origami-nested-modulation-manual-qa: pitch wheel + main tuning -----
+namespace pitch {
+// Frequency of a pure sine voice (OSC 1 sine frame, filter off) from rising
+// zero crossings over one second after a short settle.
+double measure(OrigamiEngine& e,const std::function<void(OrigamiEngine&)>& setup,int note=57) {
+    e.reset();
+    setup(e);
+    e.noteOn(note,1.0f);
+    std::vector<float> out(48000+4800);
+    for(std::size_t i=0;i<out.size();i+=256) { float* p=out.data()+i; e.process(&p,1,std::min<std::size_t>(256,out.size()-i)); }
+    int rising=0; for(std::size_t i=4801;i<out.size();++i) rising+=out[i-1]<0.0f && out[i]>=0.0f;
+    return rising; // per second
+}
+std::unique_ptr<OrigamiEngine> sineEngine() {
+    auto e=std::make_unique<OrigamiEngine>(); check(e->prepare(48000,1024,1),"pitch engine");
+    e->setParameter(ParameterId::Waveform,0.0f); e->setParameter(ParameterId::Sustain,1.0f); e->setParameter(ParameterId::Attack,0.001f);
+    auto mod=e->instrumentState().modulation; mod.filterEnabled=false; check(e->setModulationState(mod),"pitch engine filter off");
+    return e;
+}
+bool near(double hz,double expected) { return std::abs(hz-expected)<=std::max(1.5,expected*0.004); }
+}
+void pitchWheelAndTuning() {
+    using namespace pitch;
+    auto e=sineEngine();
+    const double f0=440.0*std::exp2((57-69)/12.0); // 220 Hz
+    // Defaults: signed endpoints +2 / -2; centre exactly 0.
+    check(e->pitchBendRange()==2.0f && e->pitchBendDownRange()==-2.0f,"BEND UP default +2, BEND DOWN default -2");
+    check(PerformanceState{}.pitchBendRangeSemitones==2.0f && PerformanceState{}.pitchBendDownSemitones==-2.0f,"model defaults +2 / -2");
+    e->pitchWheel(0,8192);
+    check(near(measure(*e,[](OrigamiEngine& x){ x.pitchWheel(0,8192); }),f0),"pitch wheel centre: exactly no bend");
+    const auto at=[&](float up,float down,int wheel) {
+        check(e->setPitchBendRanges(up,down),"signed endpoints accepted");
+        return measure(*e,[wheel](OrigamiEngine& x){ x.pitchWheel(0,wheel); });
+    };
+    check(near(at(2,-2,16383),f0*std::exp2(2/12.0)) && near(at(2,-2,0),f0*std::exp2(-2/12.0)),"+2 / -2: full up +2 st, full down -2 st");
+    check(near(at(12,5,16383),f0*2.0) && near(at(12,5,0),f0*std::exp2(5/12.0)),"UP +12 / DOWN +5: both directions raise pitch");
+    check(near(at(-7,-12,16383),f0*std::exp2(-7/12.0)) && near(at(-7,-12,0),f0*0.5),"UP -7 / DOWN -12: both directions lower pitch");
+    check(near(at(-12,12,16383),f0*0.5) && near(at(-12,12,0),f0*2.0),"UP -12 / DOWN +12: reversed wheel");
+    check(near(at(-12,12,12288),f0*std::exp2(-6/12.0)),"half wheel reaches half the endpoint (continuous at the centre)");
+    check(!e->setPitchBendRanges(49.0f,-2.0f) && !e->setPitchBendRanges(2.0f,-49.0f),"endpoints beyond +/-48 st rejected");
+    // Legacy migration: older formats stored DOWN as a magnitude.
+    {
+        auto st=e->instrumentState(); st.performance.pitchBendRangeSemitones=7.0f; st.performance.pitchBendDownSemitones=-3.0f;
+        const auto bytes=encodeInstrumentState(st);
+        InstrumentState back;
+        check(bytes[7]<34 && decodeInstrumentState(bytes.data(),bytes.size(),back) && back.performance.pitchBendDownSemitones==-3.0f,
+              "UP 7 / DOWN -3 still saves in the older format (DOWN as the magnitude 3) and loads as -3");
+        check(encodeInstrumentState(back)==bytes,"older-format bend: byte-identical re-save");
+        st.performance.pitchBendRangeSemitones=12.0f; st.performance.pitchBendDownSemitones=5.0f;
+        const auto v34=encodeInstrumentState(st);
+        check(v34[7]==34 && decodeInstrumentState(v34.data(),v34.size(),back) && back.performance.pitchBendDownSemitones==5.0f,"non-legacy endpoints save as v34");
+    }
+    // MAIN TUNING: +/-48 st (4 octaves), centre 0. MACRO 1 at 100 % drives it.
+    {
+        const auto tuned=[&](float semitones) {
+            return measure(*e,[semitones](OrigamiEngine& x) {
+                x.setPitchBendRanges(2,-2);
+                auto mod=x.instrumentState().modulation; mod.filterEnabled=false; mod.macros[0]=1.0f; mod.nextRouteId=2;
+                mod.routes[0]={1,true,ModSource::Macro1,{ModDestination::MainTuning,0,0},semitones/96.0f,false};
+                check(x.setModulationState(mod),"MAIN TUNING route accepted");
+                x.reset();
+            });
+        };
+        bool ratios=true;
+        for(int st:{-48,-24,-12,0,12,24,48}) ratios=ratios && near(tuned(float(st)),f0*std::exp2(st/12.0));
+        check(ratios,"MAIN TUNING -48 / -24 / -12 / 0 / +12 / +24 / +48 st = f/16, f/4, f/2, f, 2f, 4f, 16f");
+        // A pre-v34 state's MAIN TUNING route (+/-1 st span) keeps its sound.
+        auto st=e->instrumentState(); st.modulation.macros[0]=1.0f; st.modulation.nextRouteId=2;
+        st.modulation.routes[0]={1,true,ModSource::Macro1,{ModDestination::Cutoff,0,0},0.5f,false};
+        auto other=st; other.modulation.routes[0].destination.parameter=ModDestination::Transpose;
+        auto a=encodeInstrumentState(st),b=encodeInstrumentState(other);
+        check(a[7]<34 && a.size()==b.size(),"older-format probes");
+        std::size_t at=a.size(); for(std::size_t i=0;i<a.size();++i) if(a[i]!=b[i]) { at=i; break; }
+        check(at<a.size(),"destination word located");
+        // Patch the destination to MAIN TUNING (4) in the same byte order.
+        const std::uint32_t cutoff=1u,mainTuning=4u;
+        std::size_t word=at-(at%4); (void)cutoff;
+        for(std::size_t k=0;k<4;++k) if(a[word+k]==1) a[word+k]=static_cast<std::uint8_t>(mainTuning);
+        InstrumentState legacy;
+        check(decodeInstrumentState(a.data(),a.size(),legacy),"legacy MAIN TUNING state decodes");
+        check(legacy.modulation.routes[0].destination.parameter==ModDestination::MainTuning &&
+              std::abs(legacy.modulation.routes[0].amount-0.5f/48.0f)<1e-7f,"legacy MAIN TUNING amount rescaled to the +/-48 st span");
+        const double hz=measure(*e,[&legacy](OrigamiEngine& x){ x.restoreInstrumentState(legacy); auto mod=x.instrumentState().modulation; mod.filterEnabled=false; x.setModulationState(mod); x.reset(); });
+        check(near(hz,f0*std::exp2(1.0/12.0)),"legacy MAIN TUNING +50 % of +/-1 st still plays +1 st");
     }
 }
 
@@ -991,11 +1457,16 @@ int main() {
         lfoFunctionProcessing();
         lfoStereoModulation();
         oscChainStereo();
+        crossOscillatorStereo();
+        oscChainManualEditStability();
+        spectralChainPhaseModulation();
+        nestedModulation();
+        pitchWheelAndTuning();
         if(std::getenv("ORIGAMI_LFO_BENCH")) lfoFunctionBenchmark();
-        std::cout<<"PASS: "<<checks<<" modulation foundation checks\\n";
+        std::cout<<"PASS: "<<checks<<" modulation foundation checks\n";
         return 0;
     } catch(const std::exception& e) {
-        std::cerr<<"FAIL: "<<e.what()<<'\\n';
+        std::cerr<<"FAIL: "<<e.what()<<'\n';
         return 1;
     }
 }

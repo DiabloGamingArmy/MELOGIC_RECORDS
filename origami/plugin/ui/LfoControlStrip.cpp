@@ -1,5 +1,6 @@
 // mct-origami-lfo-editor-controls
 #include "LfoControlStrip.h"
+#include "ModulationUiTelemetry.h"
 #include "OrigamiStyle.h"
 #include <cmath>
 
@@ -352,6 +353,10 @@ double LfoControlStrip::currentBpm() const {
 
 void LfoControlStrip::setLfo(std::size_t index,const LfoSettings& lfo) {
     index_=index; lfo_=lfo;
+    // mct-origami-nested-modulation-manual-qa: the RATE knob is the canonical
+    // LFO RATE destination of the shown LFO (drop a source here, knob menu).
+    rate_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::LfoRate));
+    rate_.getProperties().set("mct.mod.itemId",static_cast<int>(index+1));
     for(auto m:{LfoMode::Loop,LfoMode::Envelope,LfoMode::Free})
         modeButton(m).setToggleState(lfo.mode==m,juce::dontSendNotification);
     customPath_.setToggleState(lfo.pointCount>=2,juce::dontSendNotification);
@@ -441,6 +446,36 @@ void LfoControlStrip::commitRateText() {
 }
 
 void LfoControlStrip::paint(juce::Graphics&) {}
+
+// mct-origami-nested-modulation-manual-qa: incoming LFO RATE modulation on the
+// RATE knob, in the SYNTH knob language. Modulation moves the canonical rate
+// on its log scale; each view (HZ / SECONDS / BEATS) maps that to its knob.
+float LfoControlStrip::rateKnobProportion(float hz) {
+    double value=hz;
+    if(rateUnit()==RateUnit::Seconds) value=1.0/juce::jmax(1.0e-6,double(hz));
+    else if(rateUnit()==RateUnit::Beats) {
+        std::size_t best=0; double bestError=1.0e9;
+        for(std::size_t i=0;i<beatChoices_.size();++i) {
+            const double e=std::abs(std::log(divisionHz(divisions()[beatChoices_[i]],beatBpm_)/juce::jmax(1.0e-6,double(hz))));
+            if(e<bestError) { bestError=e; best=i; }
+        }
+        value=double(best);
+    }
+    return static_cast<float>(juce::jlimit(0.0,1.0,rate_.valueToProportionOfLength(juce::jlimit(rate_.getMinimum(),rate_.getMaximum(),value))));
+}
+bool LfoControlStrip::rateModulated() const noexcept {
+    return modulationUiHasAnyRoute(ModDestination::LfoRate,0,static_cast<std::uint32_t>(index_+1));
+}
+void LfoControlStrip::paintOverChildren(juce::Graphics& g) {
+    if(page()!=Page::Tools || !rate_.isShowing() || !rateModulated()) return;
+    const auto id=static_cast<std::uint32_t>(index_+1);
+    const float base=lfoRateToNormalized(lfo_.rateHz);
+    const auto range=knobModulationRange(base,ModDestination::LfoRate,0,id);
+    const float lo=rateKnobProportion(lfoRateFromNormalized(range.lo)),hi=rateKnobProportion(lfoRateFromNormalized(range.hi));
+    const float effective=rateKnobProportion(lfoRateFromNormalized(juce::jlimit(0.0f,1.0f,base+modulationUiEffectiveNormalizedOffset(ModDestination::LfoRate,0,id))));
+    paintKnobModulationOverlay(g,getLocalArea(&rate_,rate_.getLocalBounds()).toFloat(),juce::jmin(lo,hi),juce::jmax(lo,hi),
+                               range.hasDepth,range.anyRoute,modulationUiTelemetry().synthActive,effective,range.selected);
+}
 
 void LfoControlStrip::Content::paint(juce::Graphics& g) {
     // Dark raised group cells; no outline on individual controls.

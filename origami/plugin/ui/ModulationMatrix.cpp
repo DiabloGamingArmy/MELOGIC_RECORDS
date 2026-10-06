@@ -84,7 +84,7 @@ public:
 
         // The instrument's macros by stable id (dynamic set; MACRO 1..4 by default).
         for(const auto macro:activeMacroSources(state.modulation))
-            sourceItem("Macros","MACRO "+juce::String(int(macroIdOf(macro))),macro);
+            sourceItem("Macros",macroLabel(state.modulation,macroIdOf(macro)),macro);
 
         sourceItem("Performance","VELOCITY",ModSource::Velocity);
         sourceItem("Performance","MOD WHEEL",ModSource::ModWheel);
@@ -112,8 +112,22 @@ public:
         remove_.setName("MATRIX ROUTE DELETE");remove_.setTooltip("Delete this modulation route");
         amount_.setName("MATRIX ROUTE AMOUNT");amount_.setSliderStyle(juce::Slider::LinearHorizontal);
         amount_.setTextBoxStyle(juce::Slider::TextBoxRight,false,compact_ ? 58 : 75,compact_ ? 18 : 22);
-        amount_.setRange(-100,100,.1);amount_.setTextValueSuffix(" %");amount_.setScrollWheelEnabled(false);
-        amount_.setTooltip("Signed fraction of destination range; cutoff uses a logarithmic range");
+        amount_.setRange(-100,100,.1);amount_.setScrollWheelEnabled(false);
+        amount_.setTooltip("Signed fraction of destination range; cutoff and LFO rate use a logarithmic range");
+        // mct-origami-nested-modulation-manual-qa: pitch-domain destinations
+        // read in semitones (the stored amount stays the fraction of range).
+        amount_.textFromValueFunction=[this](double percent) {
+            const double span=semitoneSpan();
+            if(span<=0.0) return juce::String(percent,1)+" %";
+            const double st=percent/100.0*span;
+            return (route_.bipolar ? juce::String(juce::CharPointer_UTF8("\xc2\xb1")) : juce::String(st>=0.0 ? "+" : ""))
+                   +juce::String(route_.bipolar ? std::abs(st) : st,2)+" st";
+        };
+        amount_.valueFromTextFunction=[this](const juce::String& text) {
+            const double span=semitoneSpan();
+            const double v=text.retainCharacters("+-.0123456789").getDoubleValue();
+            return span>0.0 ? v/span*100.0 : v;
+        };
         sync(route,state.modulation);
         source_.onChange=[this] {
             auto edited=route_;
@@ -186,7 +200,15 @@ public:
             // Destinations already fed by this source are unavailable.
             auto probe=route;probe.destination=addresses_[i];
             const bool taken=route.source!=ModSource::None && routeDuplicates(modulation,probe);
-            destination_.setNativeItemUnavailable(itemId,taken ? "Already routed from "+source_.getText() : juce::String());
+            juce::String reason=taken ? "Already routed from "+source_.getText() : juce::String();
+            // Nested targets: never this route's own depth, never a feedback loop.
+            if(reason.isEmpty() && isNestedDestination(probe.destination.parameter)) {
+                if(probe.destination.parameter==ModDestination::RouteDepth && probe.destination.itemId==route.id)
+                    reason="A route cannot modulate its own depth";
+                else if(route.source!=ModSource::None && routeClosesCycle(modulation,probe))
+                    reason="Would create a modulation feedback loop";
+            }
+            destination_.setNativeItemUnavailable(itemId,reason);
         }
         destination_.setSelectedId(selected,juce::dontSendNotification);
         if(!selected) destination_.setText(route.destination.parameter==ModDestination::None
@@ -196,6 +218,15 @@ public:
         enabled_.setButtonText("");
         bipolar_.setButtonText(route.bipolar?"BIPOLAR":"UNIPOLAR");
         if(!amount_.isMouseButtonDown() && !amount_.hasKeyboardFocus(true)) amount_.setValue(route.amount*100.0,juce::dontSendNotification);
+        amount_.updateText(); // the unit follows the destination and polarity
+    }
+    // Full-scale semitones of a pitch-domain destination (0: shown as %).
+    // Unipolar 100 % spans the whole range; bipolar 100 % swings +/- half of it.
+    double semitoneSpan() const noexcept {
+        double span=0.0;
+        if(route_.destination.parameter==ModDestination::MainTuning) span=96.0;
+        else if(route_.destination.parameter==ModDestination::Transpose) span=48.0;
+        return route_.bipolar ? span*0.5 : span;
     }
     bool destinationAvailable(const ModAddress& address) const {
         for(std::size_t i=0;i<addresses_.size();++i)
@@ -310,6 +341,16 @@ void ModulationMatrix::syncFromModel() {
                 static_cast<std::uint32_t>(module.routes[i].type)});
     }
     for(const auto& r:state.modulation.routes) if(r.id) ids.push_back(r.id);
+    // Nested destinations: each complete route's DEPTH (labelled by its source
+    // and destination) and each macro's name are catalog entries too.
+    for(const auto& r:state.modulation.routes) if(r.id && routeComplete(r))
+        dynamicDestinations.push_back({routeDepthAddress(r.id),static_cast<std::uint32_t>(r.source)*2654435761u
+                                       ^static_cast<std::uint32_t>(r.destination.parameter)*40503u
+                                       ^r.destination.oscillator*97u^r.destination.itemId*131071u});
+    for(const auto macro:activeMacroSources(state.modulation)) {
+        const auto id=macroIdOf(macro);
+        dynamicDestinations.push_back({macroValueAddress(id),static_cast<std::uint32_t>(macroLabel(state.modulation,id).hashCode())});
+    }
     if(bindings_.fxDestinations)
         for(const auto& fx:bindings_.fxDestinations())
             dynamicDestinations.push_back({fx.address,static_cast<std::uint32_t>(std::hash<std::string>{}(fx.group+fx.label))});

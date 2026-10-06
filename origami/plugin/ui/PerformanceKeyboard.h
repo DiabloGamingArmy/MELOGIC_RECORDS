@@ -77,21 +77,24 @@ public:
         bendRange_.setName("Pitch bend up range");
         bendRange_.setSliderStyle(juce::Slider::LinearBarVertical);
         bendRange_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,62,18);
-        bendRange_.setRange(1.0,48.0,1.0);
+        // mct-origami-nested-modulation-manual-qa: signed wheel ENDPOINTS
+        // (semitones at full up / full down; any sign: UP +12 / DOWN +5 raise
+        // both ways, UP -12 / DOWN +12 reverse the wheel). Centre is always 0.
+        bendRange_.setRange(-48.0,48.0,1.0);
         // V23.3.4: relative drag. Clicking does not teleport the value.
         bendRange_.setSliderSnapsToMousePosition(false);
         bendRange_.setScrollWheelEnabled(false);
         bendRange_.setDoubleClickReturnValue(true,2.0);
-        bendRange_.setTooltip("Bend Up — click/drag vertically or type a semitone value");
+        bendRange_.setTooltip("Bend Up: pitch at the wheel's top, in semitones (-48..+48; default +2)");
         bendDownRange_.setName("Pitch bend down range");
         bendDownRange_.setSliderStyle(juce::Slider::LinearBarVertical);
         bendDownRange_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,62,18);
-        bendDownRange_.setRange(1.0,48.0,1.0);
+        bendDownRange_.setRange(-48.0,48.0,1.0);
         bendDownRange_.setSliderSnapsToMousePosition(false);
         bendDownRange_.setScrollWheelEnabled(false);
-        bendDownRange_.setDoubleClickReturnValue(true,2.0);
-        bendDownRange_.setTooltip("Bend Down — click/drag vertically or type a semitone value");
-        bendDownRange_.textFromValueFunction=[](double value){return juce::String(juce::roundToInt(value));};
+        bendDownRange_.setDoubleClickReturnValue(true,-2.0);
+        bendDownRange_.setTooltip("Bend Down: pitch at the wheel's bottom, in semitones (-48..+48; default -2)");
+        bendDownRange_.textFromValueFunction=[](double value){ const int v=juce::roundToInt(value); return (v>0 ? "+" : "")+juce::String(v); };
         bendDownRange_.valueFromTextFunction=[](const juce::String& value){return value.retainCharacters("0123456789.-").getDoubleValue();};
         auto styleBend=[](juce::Slider& slider) {
             slider.setColour(juce::Slider::backgroundColourId,juce::Colour(0xff1b1b1b));
@@ -104,12 +107,13 @@ public:
         styleBend(bendRange_);
         styleBend(bendDownRange_);
         bendRange_.textFromValueFunction=[](double value) {
-            return juce::String(juce::roundToInt(value));
+            const int v=juce::roundToInt(value);
+            return (v>0 ? "+" : "")+juce::String(v);
         };
         bendRange_.valueFromTextFunction=[](const juce::String& value) {
             return value.retainCharacters("0123456789.-").getDoubleValue();
         };
-        const auto bendRanges=rangeGetter_?rangeGetter_():std::pair<float,float>{2.0f,2.0f};
+        const auto bendRanges=rangeGetter_?rangeGetter_():std::pair<float,float>{2.0f,-2.0f};
         bendRange_.setValue(bendRanges.first,juce::dontSendNotification);
         bendDownRange_.setValue(bendRanges.second,juce::dontSendNotification);
         bendRange_.onValueChange=[this]{

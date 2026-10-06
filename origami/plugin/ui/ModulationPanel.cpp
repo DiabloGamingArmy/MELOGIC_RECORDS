@@ -34,6 +34,7 @@
 #include "SourceEntity.h"
 #include "ModulationUiTelemetry.h"
 #include "NativeChoiceMenu.h"
+#include "UserPreferences.h"
 #include <algorithm>
 #include <cmath>
 
@@ -1172,6 +1173,9 @@ juce::Point<float> ModulationPanel::tracerPoint(const EnvelopeRuntimeInfo& r,
 void ModulationPanel::timerCallback() {
     if(!isShowing()) return;
     constexpr float dt=1.0f/30.0f;
+    // mct-origami-nested-modulation-manual-qa: a modulated LFO RATE shows its
+    // moving effective rate on the RATE knob.
+    if(selected_>=3 && selected_<=6 && lfoStrip_.isShowing() && lfoStrip_.rateModulated()) lfoStrip_.repaint();
     updateSourceHistory(dt);
     for(auto& s:traceTail_) s.age+=dt;
     while(!traceTail_.empty() && traceTail_.front().age>0.34f) traceTail_.pop_front();
@@ -2565,6 +2569,10 @@ void ModulationPanel::paintPerformanceCurve(juce::Graphics& g) {
 
 class MacroPanel::Card final : public juce::Component {
 public:
+    // mct-origami-nested-modulation-manual-qa: the compact ASSIGN strip (title
+    // + one row of route rings); the reclaimed height goes to the knob and
+    // its value readout.
+    static constexpr int assignHeight=38;
     Card(MacroPanel& owner,std::size_t id)
         // The SYNTH modulator row (same "MOD SOURCE TAB" look: title on top, rings below).
         :owner_(owner),id_(id),row_(macroSource(id),"ASSIGN","MOD SOURCE TAB MACRO "+juce::String(int(id))) {
@@ -2576,7 +2584,35 @@ public:
         knob_.setMouseDragSensitivity(220);
         knob_.setScrollWheelEnabled(false);
         knob_.setRange(0.0,1.0,0.0);
-        knob_.onValueChange=[this]{ if(!syncing_ && owner_.bindings_.macro) owner_.bindings_.macro(unsigned(id_-1),float(knob_.getValue())); };
+        knob_.onValueChange=[this]{ if(!syncing_ && owner_.bindings_.macro) owner_.bindings_.macro(unsigned(id_-1),float(knob_.getValue())); repaint(); };
+        // One DAW gesture per drag: Logic records it as one automation pass.
+        knob_.onDragStart=[this]{ if(owner_.bindings_.macroGesture) owner_.bindings_.macroGesture(unsigned(id_-1),true); };
+        knob_.onDragEnd=[this]{ if(owner_.bindings_.macroGesture) owner_.bindings_.macroGesture(unsigned(id_-1),false); };
+        // A macro is a modulation DESTINATION too (MACRO -> MACRO, LFO ->
+        // MACRO): drop a source here, or use the knob menu.
+        knob_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::MacroValue));
+        knob_.getProperties().set("mct.mod.itemId",static_cast<int>(id));
+        // Double-click the title to rename: Enter / click away commits,
+        // Escape cancels. The name follows the stable id everywhere.
+        title_.setName("MACRO TITLE "+juce::String(int(id)));
+        title_.setEditable(false,true,false);
+        title_.setFont(juce::FontOptions(Type::label));
+        title_.setColour(juce::Label::textColourId,Palette::text());
+        title_.setColour(juce::Label::textWhenEditingColourId,Palette::text());
+        title_.setColour(juce::Label::backgroundWhenEditingColourId,Palette::inset());
+        title_.setColour(juce::Label::outlineWhenEditingColourId,Palette::borderStrong());
+        title_.setJustificationType(juce::Justification::centredLeft);
+        title_.setBorderSize(juce::BorderSize<int>(0)); // the full header width, like the painted title it replaces
+        title_.setMinimumHorizontalScale(1.0f);
+        title_.setTooltip("Double-click to rename");
+        title_.onEditorShow=[this]{
+            if(auto* editor=title_.getCurrentTextEditor()) {
+                editor->setInputRestrictions(int(ModulationState::macroNameCapacity-1));
+                editor->setFont(juce::FontOptions(Type::label));
+                editor->selectAll();
+            }
+        };
+        title_.onTextChange=[this]{ if(!syncing_) owner_.renameMacro(id_,title_.getText()); };
         remove_.setName("Remove macro "+juce::String(int(id)));
         remove_.setTooltip("Remove MACRO "+juce::String(int(id))+" (and its assignments)");
         remove_.onClick=[this]{ Action a(owner_); owner_.requestRemoveMacro(id_); };
@@ -2586,15 +2622,26 @@ public:
         row_.onRouteAmount=[this](std::uint32_t route,float amount){ owner_.setRouteAmount(route,amount); };
         row_.onRouteRemove=[this](std::uint32_t route){ owner_.removeRoute(route); };
         row_.onHoverChanged=[this]{ repaint(); };
-        for(auto* c:std::initializer_list<juce::Component*>{&knob_,&remove_,&row_}) addAndMakeVisible(c);
+        for(auto* c:std::initializer_list<juce::Component*>{&title_,&knob_,&remove_,&row_}) addAndMakeVisible(c);
         addChildComponent(confirm_); addChildComponent(cancel_);
     }
     std::size_t id() const noexcept { return id_; }
     juce::Slider& knob() noexcept { return knob_; }
+    juce::Label& title() noexcept { return title_; }
     ModulationSourceRow& row() noexcept { return row_; }
     void setValue(float v) {
         if(knob_.isMouseButtonDown()) return;
         syncing_=true; knob_.setValue(v,juce::dontSendNotification); syncing_=false;
+    }
+    void setTitle(const juce::String& text) {
+        if(title_.isBeingEdited() || title_.getText()==text) return;
+        syncing_=true; title_.setText(text,juce::dontSendNotification); syncing_=false;
+    }
+    // The engine's EFFECTIVE value (base + incoming modulation); repaint only
+    // when it moves.
+    void setEffective(float value,bool modulated) {
+        if(modulated==modulated_ && std::abs(value-effective_)<1.0e-4f) return;
+        effective_=value; modulated_=modulated; repaint();
     }
     void setConfirming(bool on,std::size_t links) {
         confirming_=on; links_=links;
@@ -2608,6 +2655,7 @@ public:
         auto b=getLocalBounds().reduced(cellPadding,cellPadding-2);
         auto header=b.removeFromTop(20);
         remove_.setBounds(header.removeFromRight(18).withSizeKeepingCentre(18,18));
+        title_.setBounds(header.withTrimmedRight(2));
         if(confirming_) {
             // Narrow card: full-width buttons, stacked (never truncated labels).
             confirm_.setBounds(b.removeFromBottom(24).reduced(1,1));
@@ -2615,15 +2663,13 @@ public:
             return;
         }
         // ASSIGN spans the cell's full width (a hairline separates it).
-        row_.setBounds(getLocalBounds().removeFromBottom(ModulationSourceRow::routedHeight).reduced(1,0).withTrimmedBottom(1));
+        row_.setBounds(getLocalBounds().removeFromBottom(assignHeight).reduced(1,0).withTrimmedBottom(1));
         b.setBottom(row_.getY()-2);
-        knob_.setBounds(b.withSizeKeepingCentre(std::min(52,b.getWidth()-8),std::min(50,b.getHeight())));
+        valueArea_=b.removeFromBottom(14);
+        knob_.setBounds(b.withSizeKeepingCentre(std::min(62,b.getWidth()-8),std::min(60,b.getHeight())));
     }
     void paint(juce::Graphics& g) override {
         // No background or border: the grid owns the only frame and dividers.
-        auto header=getLocalBounds().reduced(cellPadding,cellPadding-2).removeFromTop(20).withTrimmedRight(20);
-        g.setColour(Palette::text()); g.setFont(juce::FontOptions(Type::label));
-        g.drawText("MACRO "+juce::String(int(id_)),header,juce::Justification::centredLeft,true);
         if(confirming_) {
             auto area=getLocalBounds().reduced(cellPadding).withTrimmedTop(24).withTrimmedBottom(54);
             g.setColour(Palette::text()); g.setFont(juce::FontOptions(Type::control));
@@ -2631,7 +2677,24 @@ public:
             g.setColour(Palette::muted()); g.setFont(juce::FontOptions(Type::secondary));
             g.drawFittedText(juce::String(int(links_))+(links_==1 ? " assignment goes" : " assignments go")+" with it.",
                              area,juce::Justification::topLeft,3,1.0f);
+            return;
         }
+        // Value readout: the base, and the effective value while modulated.
+        g.setFont(juce::FontOptions(Type::secondary));
+        juce::String text=juce::String(juce::roundToInt(knob_.getValue()*100.0))+"%";
+        if(modulated_) text+=juce::String(juce::CharPointer_UTF8("  \xe2\x86\x92 "))+juce::String(juce::roundToInt(effective_*100.0f))+"%";
+        g.setColour(Palette::muted());
+        g.drawText(text,valueArea_,juce::Justification::centred,false);
+    }
+    void paintOverChildren(juce::Graphics& g) override {
+        if(confirming_) return;
+        // The existing modulation language: incoming routes' range around the
+        // base, and the effective position (exact, from the engine) as a dot.
+        const float base=static_cast<float>(knob_.getValue());
+        const auto range=knobModulationRange(base,ModDestination::MacroValue,0,static_cast<std::uint32_t>(id_));
+        if(!range.anyRoute && !modulated_) return;
+        paintKnobModulationOverlay(g,knob_.getBounds().toFloat(),range.lo,range.hi,range.hasDepth,range.anyRoute || modulated_,
+                                   modulated_,effective_,range.selected);
     }
 private:
     struct Action { // marks "a card button is running" for safe retirement
@@ -2640,10 +2703,13 @@ private:
     };
     MacroPanel& owner_;
     std::size_t id_;
+    juce::Label title_;
     juce::Slider knob_;
     juce::TextButton remove_{"X"},confirm_{"REMOVE"},cancel_{"CANCEL"};
     ModulationSourceRow row_;
-    bool syncing_=false,confirming_=false;
+    juce::Rectangle<int> valueArea_;
+    bool syncing_=false,confirming_=false,modulated_=false;
+    float effective_=0.0f;
     std::size_t links_=0;
 };
 
@@ -2670,6 +2736,10 @@ juce::Slider* MacroPanel::knob(std::size_t id) const noexcept {
     for(const auto& c:cards_) if(c->id()==id) return &c->knob();
     return nullptr;
 }
+juce::Label* MacroPanel::titleLabel(std::size_t id) const noexcept {
+    for(const auto& c:cards_) if(c->id()==id) return &c->title();
+    return nullptr;
+}
 const ModulationSourceRow* MacroPanel::assignment(std::size_t id) const noexcept {
     for(const auto& c:cards_) if(c->id()==id) return &c->row();
     return nullptr;
@@ -2679,6 +2749,14 @@ const ModulationSourceRow* MacroPanel::assignment(std::size_t id) const noexcept
 // refreshed in place, and only when the model revision moved.
 void MacroPanel::syncFromModel() {
     if(!bindings_.snapshot) return;
+    // Effective (modulated) macro values follow the engine every frame.
+    if(bindings_.visualization) {
+        const auto runtime=bindings_.visualization();
+        for(auto& c:cards_) {
+            const auto i=c->id()-1;
+            c->setEffective(runtime.effectiveMacros[i],((runtime.modulatedMacros>>i)&1u)!=0);
+        }
+    }
     const auto revision=bindings_.modelRevision ? bindings_.modelRevision() : 0;
     if(revision!=0 && revision==lastRevision_ && !cards_.empty()) return;
     lastRevision_=revision;
@@ -2686,6 +2764,7 @@ void MacroPanel::syncFromModel() {
     if(state.macroMask!=shownMask_ || cards_.empty()) rebuild(state);
     for(auto& c:cards_) {
         c->setValue(state.macros[c->id()-1]);
+        c->setTitle(macroLabel(state,c->id()));
         c->row().setRoutes(modulationSourceRoutes(state,macroSource(c->id())));
     }
     std::size_t count=0; for(std::size_t id=1;id<=maxMacros;++id) count+=macroActive(state,id);
@@ -2821,7 +2900,17 @@ bool MacroPanel::applyRemove(std::size_t id,Step& step) {
     auto next=bindings_.snapshot().modulation;
     if(!macroActive(next,id)) return false;
     step.id=id; step.value=next.macros[id-1]; step.routes.clear(); step.inputs.clear();
-    for(auto& r:next.routes) if(r.id && r.source==macroSource(id)) { step.routes.push_back(r); r={}; }
+    step.name=next.macroNames[id-1];
+    // The macro's own routes, the routes INTO it (MACRO destination) and,
+    // transitively, the routes on their depths: all go, all come back on undo.
+    std::vector<std::uint32_t> doomed;
+    for(const auto& r:next.routes) if(r.id && (r.source==macroSource(id) || (r.destination.parameter==ModDestination::MacroValue && r.destination.itemId==id))) doomed.push_back(r.id);
+    for(std::size_t k=0;k<doomed.size();++k)
+        for(const auto& r:next.routes)
+            if(r.id && r.destination.parameter==ModDestination::RouteDepth && r.destination.itemId==doomed[k] &&
+               std::find(doomed.begin(),doomed.end(),r.id)==doomed.end()) doomed.push_back(r.id);
+    for(auto& r:next.routes) if(r.id && std::find(doomed.begin(),doomed.end(),r.id)!=doomed.end()) { step.routes.push_back(r); r={}; }
+    next.macroNames[id-1]={};
     for(auto& op:next.operators)
         for(std::uint8_t k=0;k<op.inputs.size();++k)
             if(op.id && op.inputs[k].kind==ControlInput::Kind::Source && op.inputs[k].source==macroSource(id)) {
@@ -2839,6 +2928,7 @@ bool MacroPanel::applyAdd(const Step& step) {
     if(macroActive(next,step.id)) return false;
     next.macroMask=std::uint16_t(next.macroMask|(1u<<(step.id-1)));
     next.macros[step.id-1]=step.value;
+    next.macroNames[step.id-1]=step.name;
     for(const auto& r:step.routes) {
         bool clash=false; std::size_t used=0;
         for(const auto& o:next.routes) { used+=o.id!=0; clash|=o.id==r.id || (o.id && o.source==r.source && o.destination==r.destination); }
@@ -2855,9 +2945,30 @@ bool MacroPanel::applyAdd(const Step& step) {
     return bindings_.modulation(next);
 }
 
+bool MacroPanel::renameMacro(std::size_t id,const juce::String& name) {
+    if(!bindings_.snapshot || !bindings_.macroName) return false;
+    const auto state=bindings_.snapshot().modulation;
+    if(!macroActive(state,id)) return false;
+    Step step; step.renamed=true; step.id=id; step.oldName=state.macroNames[id-1];
+    if(!bindings_.macroName(unsigned(id-1),name)) { syncFromModel(); return false; }
+    step.name=bindings_.snapshot().modulation.macroNames[id-1];
+    if(step.name!=step.oldName) { undo_.push_back(step); if(undo_.size()>64) undo_.erase(undo_.begin()); redo_.clear(); }
+    lastRevision_=0; syncFromModel();
+    return true;
+}
+bool MacroPanel::applyName(std::size_t id,const std::array<char,ModulationState::macroNameCapacity>& name) {
+    if(!bindings_.macroName) return false;
+    return bindings_.macroName(unsigned(id-1),juce::String(name.data()));
+}
 bool MacroPanel::undo() {
     if(undo_.empty()) return false;
     auto step=undo_.back(); undo_.pop_back();
+    if(step.renamed) {
+        const bool ok=applyName(step.id,step.oldName);
+        if(ok) redo_.push_back(step);
+        lastRevision_=0; syncFromModel();
+        return ok;
+    }
     const bool ok=step.added ? applyRemove(step.id,step) : applyAdd(step);
     if(ok) redo_.push_back(step);
     syncFromModel();
@@ -2867,6 +2978,12 @@ bool MacroPanel::undo() {
 bool MacroPanel::redo() {
     if(redo_.empty()) return false;
     auto step=redo_.back(); redo_.pop_back();
+    if(step.renamed) {
+        const bool ok=applyName(step.id,step.name);
+        if(ok) undo_.push_back(step);
+        lastRevision_=0; syncFromModel();
+        return ok;
+    }
     const bool ok=step.added ? applyAdd(step) : applyRemove(step.id,step);
     if(ok) undo_.push_back(step);
     syncFromModel();
@@ -2888,6 +3005,7 @@ void MacroPanel::removeRoute(std::uint32_t routeId) {
 void MacroPanel::mouseDown(const juce::MouseEvent&) { grabKeyboardFocus(); }
 
 bool MacroPanel::keyPressed(const juce::KeyPress& key) {
+    if(!captureKeyboardInput()) return false; // CAPTURE KEYBOARD INPUT OFF: the host's Cmd+Z
     const auto mods=key.getModifiers();
     if((mods.isCommandDown() || mods.isCtrlDown()) && (key.getKeyCode()=='Z' || key.getKeyCode()=='z')) {
         return mods.isShiftDown() ? redo() : undo();

@@ -135,9 +135,9 @@ inline Render render(int scenario,std::size_t block) {
         // then restart with the same tables: every read is then a cache hit.
         notes();
         for(int pass=0;pass<200;++pass) {
-            const auto before=dsp::spectralCompilerStats().fallbackReads;
+            const auto before=dsp::spectralMisses(dsp::spectralCompilerStats());
             play(0,total,nullptr);
-            if(dsp::spectralCompilerStats().fallbackReads==before) break;
+            if(dsp::spectralMisses(dsp::spectralCompilerStats())==before) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         e.reset();

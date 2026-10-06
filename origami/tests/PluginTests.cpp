@@ -20,6 +20,7 @@
 #include "plugin/ui/WavetableFrameOps.h"
 #include "plugin/ui/ModulationUiTelemetry.h"
 #include "plugin/ui/FxPage.h"
+#include "plugin/ui/ModulationDestinations.h"
 #include "core/preset/StateCodec.h"
 #include "tests/NodesScenarios.h"
 #include <BinaryData.h>
@@ -3823,6 +3824,291 @@ void nodesMenuHierarchyAudit() {
     check(disabled && reason.contains("one sequencer"),"a second SEQUENCER stays disabled in the tree, with its reason");
 }
 
+// mct-origami-nested-modulation-manual-qa: CAPTURE KEYBOARD INPUT (default
+// OFF). OFF: no Origami shortcut consumes a key (it returns through the
+// window to the host); text fields the user opened still type; Escape is
+// used only to close / cancel an Origami popup. ON: shortcuts as before.
+void captureKeyboardInputAudit() {
+    using namespace mct::origami;
+    juce::SharedResourcePointer<ui::UserPreferences> preferences;
+    const bool previous=preferences->captureKeyboardInput();
+    { ui::UserPreferences fresh; check(!fresh.captureKeyboardInput(),"CAPTURE KEYBOARD INPUT defaults to OFF"); }
+    {
+        // Persistence: a settings file outlives the instance (a later session,
+        // another plugin instance or format reads the same value).
+        const juce::TemporaryFile temp(".settings");
+        { ui::UserPreferences a(temp.getFile()); check(!a.captureKeyboardInput(),"a new settings file starts OFF"); a.setCaptureKeyboardInput(true); }
+        { ui::UserPreferences b(temp.getFile()); check(b.captureKeyboardInput(),"ON persists across sessions / instances"); b.setCaptureKeyboardInput(false); }
+        { ui::UserPreferences c(temp.getFile()); check(!c.captureKeyboardInput(),"OFF persists too"); }
+    }
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::OrigamiHeader* header=nullptr; ui::FxPage* page=nullptr; ui::MacroPanel* macros=nullptr;
+    walk(*editor,[&](juce::Component& c){
+        if(auto* x=dynamic_cast<ui::OrigamiHeader*>(&c)) header=x;
+        if(auto* x=dynamic_cast<ui::FxPage*>(&c)) page=x;
+        if(auto* x=dynamic_cast<ui::MacroPanel*>(&c)) macros=x; });
+    check(header && page && macros,"keyboard audit: header, NODES, macros");
+    if(!header || !page || !macros) return;
+    // The utility menu item: top level, checkable, the shared preference.
+    preferences->setCaptureKeyboardInput(false);
+    const auto item=[&]{ for(const auto& i:header->utilityMenuItems()) if(i.id==ui::OrigamiHeader::captureKeyboardItem) return i; return ui::NativeChoiceItem{}; };
+    check(item().text=="CAPTURE KEYBOARD INPUT" && item().group.isEmpty() && !item().checked,"\"...\" menu: CAPTURE KEYBOARD INPUT, unchecked");
+    header->chooseUtility(ui::OrigamiHeader::captureKeyboardItem);
+    check(preferences->captureKeyboardInput() && item().checked,"choosing it turns capture on (checked)");
+    juce::MemoryBlock on,off; p.getStateInformation(on);
+    header->chooseUtility(ui::OrigamiHeader::captureKeyboardItem);
+    p.getStateInformation(off);
+    check(!preferences->captureKeyboardInput() && on==off,"choosing again turns it off; never part of the patch state");
+
+    // A key arrives at the focused component and climbs its parents until one
+    // uses it (juce::ComponentPeer::handleKeyPress); unused, the window hands
+    // it to the host.
+    const auto deliver=[](juce::Component& focused,const juce::KeyPress& key) {
+        for(auto* c=&focused;c!=nullptr;c=c->getParentComponent()) if(c->keyPressed(key)) return true;
+        return false;
+    };
+    const auto cmd=[](char c){ return juce::KeyPress(c,juce::ModifierKeys::commandModifier,0); };
+    auto& canvas=page->canvas();
+    auto& palette=page->nodePalette();
+    bool consumed=false;
+    for(const auto& key:{juce::KeyPress('a',{},'a'),juce::KeyPress('s',{},'s'),juce::KeyPress('d',{},'d'),juce::KeyPress('f',{},'f'),
+                         juce::KeyPress('1',{},'1'),juce::KeyPress(juce::KeyPress::tabKey),juce::KeyPress(juce::KeyPress::backspaceKey),
+                         juce::KeyPress(juce::KeyPress::deleteKey),cmd('z'),cmd('c'),cmd('v'),cmd('a'),cmd('d'),cmd('0')})
+        consumed|=deliver(canvas,key) || deliver(*page,key) || deliver(*macros,key) || deliver(*editor,key);
+    check(!consumed && !palette.isOpen(),"OFF: letters, numbers, NODES hotkeys and Cmd shortcuts all go to the host");
+    check(!deliver(canvas,juce::KeyPress(juce::KeyPress::escapeKey)),"OFF: Escape with nothing to close goes to the host");
+    page->showNodePalette(fx::FxPoint{700.0f,900.0f});
+    check(palette.isOpen() && deliver(canvas,juce::KeyPress(juce::KeyPress::escapeKey)) && !palette.isOpen(),"Escape still closes an open Origami popup");
+    // Text the user chose to type into always takes the keys.
+    auto* title=macros->titleLabel(1);
+    title->showEditor();
+    auto* field=title->getCurrentTextEditor();
+    check(field!=nullptr && field->keyPressed(juce::KeyPress('a',{},'a')) && field->getText().containsChar('a'),"OFF: a macro name being edited still types");
+    if(field!=nullptr) { field->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)); static_cast<juce::Component*>(field)->handleCommandMessage(0x10003003); }
+
+    // ON: the shortcuts work as before.
+    preferences->setCaptureKeyboardInput(true);
+    check(deliver(canvas,juce::KeyPress('a',{},'a')) && palette.isOpen(),"ON: A opens the NODES quick-add palette");
+    check(deliver(canvas,juce::KeyPress(juce::KeyPress::escapeKey)) && !palette.isOpen(),"ON: Escape closes it");
+    check(!deliver(canvas,juce::KeyPress(juce::KeyPress::escapeKey)),"ON: Escape with nothing to close still goes to the host");
+    preferences->setCaptureKeyboardInput(previous);
+}
+
+// mct-origami-nested-modulation-manual-qa: DAW macros (F), macro names (G),
+// Matrix labels / availability (K) and SYNTH X / Y drops (L).
+void nestedModulationUiAudit() {
+    using namespace mct::origami;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi;
+    const auto block=[&]{ audio.clear(); p.processBlock(audio,midi); midi.clear(); };
+    const auto model=[&]{ return p.getUiInstrumentState().modulation; };
+
+    // ---- F: host automation drives the BASE; modulation never writes the host.
+    struct Listener final : juce::AudioProcessorListener {
+        int values=0,begins=0,ends=0,infos=0,lastIndex=-1; float last=-1.0f;
+        void audioProcessorParameterChanged(juce::AudioProcessor*,int i,float v) override { ++values; last=v; lastIndex=i; }
+        void audioProcessorChanged(juce::AudioProcessor*,const ChangeDetails& d) override { if(d.parameterInfoChanged) ++infos; }
+        void audioProcessorParameterChangeGestureBegin(juce::AudioProcessor*,int) override { ++begins; }
+        void audioProcessorParameterChangeGestureEnd(juce::AudioProcessor*,int) override { ++ends; }
+    } listener;
+    p.addListener(&listener);
+    auto* m1=p.macroParameter(0);
+    check(m1!=nullptr && m1->getParameterID()=="macro.1" && m1->getName(64)=="Macro 1" && p.macroParameter(15)->getParameterID()=="macro.16",
+          "host macro parameters: immutable ids, default names");
+    check(p.macroParameter(4)->getName(64)=="Macro 5 (inactive)" && p.macroParameter(15)->getName(64)=="Macro 16 (inactive)",
+          "a slot without a macro is named (inactive) in the DAW");
+    static_cast<juce::AudioProcessorParameter*>(m1)->setValue(0.7f); // DAW automation (no notification back to the DAW)
+    block();
+    p.getUiRuntimeVisualizationSnapshot(); // the editor's poll follows automation into the model
+    check(std::abs(model().macros[0]-0.7f)<1.0e-6f,"host automation -> MACRO 1 base value");
+    listener.values=0;
+    p.beginUiMacroGesture(0); p.setUiMacro(0,0.25f); p.setUiMacro(0,0.3f); p.endUiMacroGesture(0);
+    check(listener.begins==1 && listener.ends==1 && listener.values==2 && listener.lastIndex==0 && std::abs(listener.last-0.3f)<1.0e-6f,
+          "a UI macro drag is one host gesture carrying its values");
+    const auto addRoute=[&](ModSource source,ModAddress destination,float amount,bool bipolar) {
+        const auto id=p.addUiRoute();
+        ModRoute r{}; for(const auto& c:model().routes) if(c.id==id) r=c;
+        r.source=source; r.destination=destination; r.amount=amount; r.bipolar=bipolar; r.enabled=true;
+        return p.setUiRoute(r) ? id : 0u;
+    };
+    auto lfo2=model().lfo2; lfo2.mode=LfoMode::Free; lfo2.rateHz=9.0f;
+    { auto m=model(); m.lfo2=lfo2; check(p.setUiModulationState(m),"LFO 2 free running"); }
+    const auto toMacro=addRoute(ModSource::Lfo2,macroValueAddress(1),0.5f,true);
+    check(toMacro!=0,"LFO 2 -> MACRO 1 created");
+    listener.values=0;
+    for(int i=0;i<40;++i) block();
+    p.getUiRuntimeVisualizationSnapshot();
+    check(listener.values==0 && std::abs(m1->get()-0.3f)<1.0e-6f && std::abs(model().macros[0]-0.3f)<1.0e-6f,
+          "LFO 2 -> MACRO 1 moves only the effective value: no host write, base unchanged");
+    listener.infos=0;
+    check(p.setUiMacroName(0,"Wobble") && m1->getName(64)=="Wobble" && listener.infos>=1 && m1->getParameterID()=="macro.1",
+          "rename reaches the DAW name (parameter info changed), id unchanged");
+    juce::MemoryBlock saved; p.getStateInformation(saved);
+    {
+        auto qOwner=std::make_unique<OrigamiAudioProcessor>(); auto& q=*qOwner; q.prepareToPlay(48000.0,256);
+        q.setStateInformation(saved.getData(),int(saved.getSize()));
+        bool route=false; for(const auto& r:q.getUiInstrumentState().modulation.routes) route|=r.id==toMacro && r.destination==macroValueAddress(1);
+        check(q.getUiMacroName(0)=="Wobble" && q.macroParameter(0)->getName(64)=="Wobble" && std::abs(q.macroParameter(0)->get()-0.3f)<1.0e-6f && route,
+              "save / load: macro name, DAW parameter base and the nested route");
+    }
+    p.removeListener(&listener);
+
+    // ---- K: catalog and Matrix labels, availability.
+    OscillatorModuleId osc1=0; for(const auto& m:p.getUiInstrumentState().oscillators) if(m.id) { osc1=m.id; break; }
+    const auto level=addRoute(ModSource::Lfo2,{ModDestination::Level,osc1,0},0.4f,true);
+    const auto depth=addRoute(macroSource(1),routeDepthAddress(level),0.3f,false);
+    check(level && depth,"LFO 2 -> OSC 1 LEVEL and WOBBLE -> its depth");
+    const auto arrow=juce::String(juce::CharPointer_UTF8(" \xe2\x86\x92 "));
+    {
+        const auto state=p.getUiInstrumentState();
+        const auto catalog=ui::modulationDestinationCatalog(state,{});
+        const auto labelOf=[&](const ModAddress& a){ for(const auto& e:catalog) if(e.address==a) return e.label; return juce::String(); };
+        check(labelOf(lfoRateAddress(1))=="LFO 2 RATE" && labelOf(macroValueAddress(1))=="WOBBLE",
+              "catalog: LFO 2 RATE, a macro by its name");
+        check(labelOf(routeDepthAddress(level))=="LFO 2"+arrow+"OSC 1 LEVEL / DEPTH","catalog: LFO 2 -> OSC 1 LEVEL / DEPTH");
+        check(ui::modulationRouteTargetLabel(state,depth)=="[LFO 2"+arrow+"OSC 1 LEVEL] DEPTH","SYNTH tooltip names the nested target");
+        ModRoute nested{}; for(const auto& r:state.modulation.routes) if(r.id==depth) nested=r;
+        check(ui::modulationRouteLabel(catalog,state.modulation,nested)=="WOBBLE"+arrow+"[LFO 2"+arrow+"OSC 1 LEVEL] DEPTH",
+              "nested route label: WOBBLE -> [LFO 2 -> OSC 1 LEVEL] DEPTH");
+        check(ui::modulationRouteTargetLabel(state,toMacro)=="WOBBLE","LFO 2 -> MACRO 1 shows the macro's name");
+    }
+    {
+        ui::ModulationBindings bindings{};
+        bindings.snapshot=[&]{return p.getUiInstrumentState();};
+        bindings.route=[&](const ModRoute& edited){return p.setUiRoute(edited);};
+        ui::ModulationMatrix matrix(bindings);
+        matrix.setBounds(0,0,1300,400); matrix.syncFromModel();
+        std::size_t rowOf[3]{}; std::size_t index=0;
+        for(const auto& r:model().routes) if(r.id) { if(r.id==toMacro) rowOf[0]=index; if(r.id==level) rowOf[1]=index; if(r.id==depth) rowOf[2]=index; ++index; }
+        check(!matrix.destinationAvailable(rowOf[1],routeDepthAddress(level)) && matrix.destinationReason(rowOf[1],routeDepthAddress(level)).contains("own depth"),
+              "Matrix: a route cannot target its own depth");
+        check(!matrix.destinationAvailable(rowOf[1],lfoRateAddress(1)) && matrix.destinationReason(rowOf[1],lfoRateAddress(1)).contains("feedback"),
+              "Matrix: LFO 2 -> LFO 2 RATE is offered as a feedback loop (unavailable)");
+        check(!matrix.destinationAvailable(rowOf[2],macroValueAddress(1)),"Matrix: WOBBLE -> WOBBLE unavailable");
+        check(matrix.destinationAvailable(rowOf[2],lfoRateAddress(0)),"Matrix: WOBBLE -> LFO 1 RATE available");
+        juce::String sourceText;
+        walk(*matrix.routeRow(rowOf[2]),[&](juce::Component& c){ if(c.getName()=="Route source") sourceText=dynamic_cast<ui::NativeComboBox&>(c).getText(); });
+        check(sourceText=="WOBBLE","Matrix source shows the macro's name");
+    }
+    const auto tune=addRoute(ModSource::ModWheel,{ModDestination::MainTuning,0,0},0.125f,false);
+    {
+        ui::ModulationBindings bindings{};
+        bindings.snapshot=[&]{return p.getUiInstrumentState();};
+        bindings.route=[&](const ModRoute& edited){return p.setUiRoute(edited);};
+        ui::ModulationMatrix matrix(bindings);
+        matrix.setBounds(0,0,1300,400); matrix.syncFromModel();
+        std::size_t index=0,row=0; for(const auto& r:model().routes) if(r.id) { if(r.id==tune) row=index; ++index; }
+        juce::Slider* amount=nullptr;
+        walk(*matrix.routeRow(row),[&](juce::Component& c){ if(c.getName()=="MATRIX ROUTE AMOUNT") amount=dynamic_cast<juce::Slider*>(&c); });
+        check(amount && amount->getTextFromValue(amount->getValue())=="+12.00 st" && std::abs(amount->getValueFromText("+24 st")-25.0)<1.0e-9,
+              "Matrix: MAIN TUNING depth reads and types in semitones (12.5 % = +12 st)");
+    }
+
+    // ---- L: SYNTH X / Y drops.
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    editor->refreshModulationViews();
+    ui::ModulationPanel* modulationPanel=nullptr;
+    walk(*editor,[&](juce::Component& c){ if(auto* x=dynamic_cast<ui::ModulationPanel*>(&c)) modulationPanel=x; });
+    check(modulationPanel && modulationPanel->selectSource(ModSource::Lfo2),"SYNTH: LFO 2 selected (its RATE knob shows)");
+    juce::Slider* levelKnob=nullptr; juce::Slider* rateKnob=nullptr;
+    walk(*editor,[&](juce::Component& c){
+        auto* s=dynamic_cast<juce::Slider*>(&c);
+        if(s==nullptr || !s->isRotary() || !s->getProperties().contains("mct.mod.destination")) return;
+        const auto d=static_cast<ModDestination>(int(s->getProperties()["mct.mod.destination"]));
+        const auto o=s->getProperties().contains("mct.mod.oscillator") ? unsigned(int(s->getProperties()["mct.mod.oscillator"])) : 0u;
+        auto* hit=editor->getComponentAt(editor->getLocalArea(s,s->getLocalBounds()).getCentre());
+        while(hit!=nullptr && hit!=s) hit=hit->getParentComponent();
+        if(hit!=s) return;
+        if(d==ModDestination::Level && o==osc1 && !levelKnob) levelKnob=s;
+        if(d==ModDestination::LfoRate && !rateKnob) rateKnob=s;});
+    check(levelKnob && rateKnob,"SYNTH OSC 1 LEVEL and LFO RATE knobs");
+    if(!levelKnob || !rateKnob) return;
+    const auto area=editor->getLocalArea(levelKnob,levelKnob->getLocalBounds());
+    const int radius=juce::jmin(area.getWidth(),area.getHeight())/2;
+    const auto centre=area.getCentre(),ring=centre.translated(0,-int(float(radius)*0.85f));
+    check(editor->modulationDepthTargetAt(centre)==0,"knob body: X (the parameter)");
+    check(editor->modulationDepthTargetAt(ring)==level,"knob ring: Y (the depth of its route)");
+    const auto drop=[&](ModSource source,juce::Point<int> at) {
+        juce::DragAndDropTarget::SourceDetails details("MCT_MOD_SOURCE:"+juce::String(int(source)),editor,at);
+        editor->itemDropped(details);
+    };
+    const auto countTo=[&](ModSource s,const ModAddress& a){ int n=0; for(const auto& r:model().routes) n+=r.id && r.source==s && r.destination==a; return n; };
+    const auto routeCount=[&]{ int n=0; for(const auto& r:model().routes) n+=r.id!=0; return n; };
+    drop(ModSource::Env2,ring);
+    check(countTo(ModSource::Env2,routeDepthAddress(level))==1,"drop on the ring: ENV 2 -> [LFO 2 -> OSC 1 LEVEL] DEPTH (canonical route)");
+    drop(ModSource::Env3,centre);
+    check(countTo(ModSource::Env3,{ModDestination::Level,osc1,0})==1,"drop on the body: ENV 3 -> OSC 1 LEVEL (unchanged)");
+    editor->refreshModulationViews();
+    if(modulationPanel!=nullptr) {
+        const auto* lfoCard=modulationPanel->sourceRow(ModSource::Lfo2);
+        std::size_t ringIndex=0; bool found=false;
+        if(lfoCard!=nullptr) for(std::size_t k=0;k<lfoCard->routes().size() && k<lfoCard->visibleRings();++k) if(lfoCard->routes()[k].id==level) { ringIndex=k; found=true; }
+        if(found) {
+            const auto at=editor->getLocalArea(lfoCard,lfoCard->ringBounds(ringIndex).toNearestInt()).getCentre();
+            check(editor->modulationDepthTargetAt(at)==level,"source-card route ring: Y (that route's depth)");
+        }
+    }
+    const int before=routeCount();
+    drop(ModSource::Lfo2,editor->getLocalArea(rateKnob,rateKnob->getLocalBounds()).getCentre());
+    const auto rateItem=std::uint32_t(int(rateKnob->getProperties()["mct.mod.itemId"]));
+    if(rateItem==2) check(routeCount()==before,"LFO 2 onto its own RATE: rejected, no empty Matrix row");
+    else check(countTo(ModSource::Lfo2,lfoRateAddress(rateItem-1))==1,"LFO 2 onto another LFO's RATE: canonical route");
+    juce::Slider* macroKnob=nullptr;
+    walk(*editor,[&](juce::Component& c){ if(auto* x=dynamic_cast<ui::MacroPanel*>(&c)) macroKnob=x->knob(1); });
+    if(macroKnob!=nullptr) {
+        const int n=routeCount();
+        drop(macroSource(1),editor->getLocalArea(macroKnob,macroKnob->getLocalBounds()).getCentre());
+        check(routeCount()==n,"MACRO 1 onto itself: rejected, no empty Matrix row");
+        drop(ModSource::Env1,editor->getLocalArea(macroKnob,macroKnob->getLocalBounds()).getCentre());
+        check(countTo(ModSource::Env1,macroValueAddress(1))==1,"ENV 1 onto MACRO 1: canonical MACRO destination");
+    }
+    check(!modulationGraphHasCycle(model()),"no cycle reached the model");
+
+    // ---- G: rename on the card (double-click title): Escape cancels, Enter
+    // and click-away commit; undo / redo; delete + undo keeps name and routes.
+    ui::MacroPanel* macros=nullptr;
+    walk(*editor,[&](juce::Component& c){ if(auto* x=dynamic_cast<ui::MacroPanel*>(&c)) macros=x; });
+    auto* title=macros ? macros->titleLabel(1) : nullptr;
+    check(title && title->getText().equalsIgnoreCase("Wobble"),"the card title shows the macro's name");
+    if(!title) return;
+    const auto edit=[&](const juce::String& text,int how) {
+        title=macros->titleLabel(1); // a card rebuilt by delete / undo is a new component
+        if(title==nullptr) return false;
+        title->showEditor();
+        auto* ed=title->getCurrentTextEditor();
+        if(ed==nullptr) return false;
+        ed->setText(text,true);
+        // The key posts a command message (juce_TextEditor.cpp TextEditorDefs
+        // return 0x10003002 / escape 0x10003003); deliver it as the message loop would.
+        if(how<2) {
+            ed->keyPressed(juce::KeyPress(how==0 ? juce::KeyPress::escapeKey : juce::KeyPress::returnKey));
+            static_cast<juce::Component*>(ed)->handleCommandMessage(how==0 ? 0x10003003 : 0x10003002);
+        }
+        else if(!title->doesLossOfFocusDiscardChanges()) title->hideEditor(false); // click-away: focus loss keeps the text
+        return title->getCurrentTextEditor()==nullptr;
+    };
+    check(edit("Bass Drive",0) && p.getUiMacroName(0)=="Wobble","Escape cancels the rename");
+    check(edit("Bass Drive",1) && p.getUiMacroName(0)=="Bass Drive" && p.macroParameter(0)->getName(64)=="Bass Drive","Enter commits (DAW name follows)");
+    check(edit("Lead",2) && p.getUiMacroName(0)=="Lead","click-away commits");
+    check(macros->undo() && p.getUiMacroName(0)=="Bass Drive" && macros->undo() && p.getUiMacroName(0)=="Wobble"
+          && macros->redo() && p.getUiMacroName(0)=="Bass Drive","rename undo / redo");
+    const auto macroRoutes=[&]{ int n=0; for(const auto& r:model().routes) n+=r.id && (r.source==macroSource(1) || r.destination==macroValueAddress(1)); return n; };
+    const int routedBefore=macroRoutes();
+    check(routedBefore>=2 && macros->removeMacro(1) && !macroActive(model(),1) && macroRoutes()==0,"delete MACRO 1 removes its routes and MACRO destinations");
+    check(macros->undo() && macroActive(model(),1) && p.getUiMacroName(0)=="Bass Drive" && macroRoutes()==routedBefore && !modulationGraphHasCycle(model()),
+          "undo delete: same id, name and routes (both directions) restored");
+    check(edit("",1) && p.getUiMacroName(0)=="MACRO 1" && p.macroParameter(0)->getName(64)=="Macro 1","an empty name restores MACRO 1");
+}
+
 // mct-origami-synth-dynamic-macros
 void synthDynamicMacrosAudit() {
     using namespace mct::origami;
@@ -3846,9 +4132,19 @@ void synthDynamicMacrosAudit() {
     check(macroSource(1)==ModSource::Macro1 && macroSource(4)==ModSource::Macro4 && macroIdOf(ModSource::Macro3)==3,
           "MACRO 1..4 keep their original ModSource identity (201..204)");
     check(encodeInstrumentState(p.getUiInstrumentState())[7]<31,"Init still saves in the pre-macro format (no new version)");
-    check(p.getParameters().isEmpty(),"no host parameters are registered (unchanged: macros were never host-automatable)");
+    // mct-origami-nested-modulation-manual-qa: the DAW sees one stable,
+    // immutable parameter per macro slot (macro.1 .. macro.16).
+    {
+        bool ids=p.getParameters().size()==int(maxMacros);
+        for(int i=0;ids && i<p.getParameters().size();++i)
+            if(auto* withId=dynamic_cast<juce::AudioProcessorParameterWithID*>(p.getParameters()[i])) ids=withId->getParameterID()=="macro."+juce::String(i+1);
+            else ids=false;
+        check(ids,"16 host macro parameters with immutable IDs macro.1 .. macro.16");
+    }
     const auto a5=panel->addMacro();
     check(a5==5 && macroActive(mod(),5) && panel->cardCount()==5,"add MACRO 5");
+    check(p.macroParameter(4)->getName(64)=="Macro 5" && p.macroParameter(5)->getName(64)=="Macro 6 (inactive)",
+          "adding MACRO 5 activates its DAW slot name (same id macro.5)");
     std::vector<std::size_t> added; for(int i=0;i<3;++i) added.push_back(panel->addMacro());
     check(added==std::vector<std::size_t>{6,7,8} && panel->cardCount()==8,"add several (6, 7, 8)");
     // Assign MACRO 5 (two routes + a NODES input) and MACRO 7 (one route).
@@ -4806,6 +5102,8 @@ void run() {
     nodesN07Audit();
     nodesMenuHierarchyAudit();
     synthDynamicMacrosAudit();
+    nestedModulationUiAudit();
+    captureKeyboardInputAudit();
     lfoEditorControlsAudit();
     typographyAudit();
     macroGridAndOscHeaderAudit();
@@ -5059,5 +5357,10 @@ void run() {
     check(observedWaveform,"oscillator viewport telemetry contains audio-rendered samples");
 }
 }
-int main(){juce::ScopedJuceInitialiser_GUI gui;try{run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+int main(){juce::ScopedJuceInitialiser_GUI gui;
+// Preferences stay in memory (the user's file is never touched). The
+// shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
+ui::UserPreferences::useVolatileStorageForTesting();
+juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
+try{run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

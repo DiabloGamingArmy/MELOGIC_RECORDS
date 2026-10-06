@@ -63,8 +63,18 @@ enum class ModDestination : std::uint32_t {
     // FX graph parameter. ModAddress.oscillator carries the FxNodeId and
     // ModAddress.itemId packs (BusId << 16) | FxParameterId. Bus 0 (P03
     // routes) means MAIN. Never a display label.
-    FxParameter=201
+    FxParameter=201,
+    // mct-origami-nested-modulation-manual-qa: modulation of modulation.
+    // ModAddress.oscillator is 0; ModAddress.itemId is the LFO number (1..4),
+    // the macro's stable id (1..16) or the target route's stable id. A route
+    // depth is identified by that id, never by its array index.
+    LfoRate=301,      // the canonical LFO rate (Hz; BEATS / SECONDS / HZ are views)
+    MacroValue=302,   // the macro's EFFECTIVE value (its stored base never moves)
+    RouteDepth=303    // the depth (amount) of another route
 };
+constexpr bool isNestedDestination(ModDestination d) noexcept {
+    return d==ModDestination::LfoRate || d==ModDestination::MacroValue || d==ModDestination::RouteDepth;
+}
 enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
 // Preserve serialized values: legacy NoteRetrigger (2) is now named Loop.
 enum class LfoMode : std::uint32_t { Free=1, Loop=2, Envelope=3 };
@@ -155,6 +165,15 @@ struct ModAddress {
     }
 };
 inline bool isFxDestination(ModDestination d) noexcept { return d==ModDestination::FxParameter; }
+// mct-origami-nested-modulation-manual-qa: nested destination addresses.
+inline ModAddress lfoRateAddress(std::size_t lfoIndex) noexcept { return {ModDestination::LfoRate,0,static_cast<std::uint32_t>(lfoIndex+1)}; } // index 0..3
+inline ModAddress macroValueAddress(std::size_t macroId) noexcept { return {ModDestination::MacroValue,0,static_cast<std::uint32_t>(macroId)}; }
+inline ModAddress routeDepthAddress(std::uint32_t routeId) noexcept { return {ModDestination::RouteDepth,0,routeId}; }
+// The canonical LFO rate range and its knob / modulation mapping: equal ratios
+// per equal travel (0.01 Hz .. 40 Hz, ~12 octaves; 1 Hz sits at 55.5 %).
+inline constexpr float lfoRateMinimumHz=0.01f,lfoRateMaximumHz=40.0f;
+float lfoRateToNormalized(float hz) noexcept;
+float lfoRateFromNormalized(float normalized) noexcept;
 // mct-origami-unified-routing-core-fx-p04: FX node IDs are unique per bus
 // graph, so the bus is part of the destination identity.
 inline ModAddress fxParameterAddress(std::uint32_t bus,std::uint32_t node,std::uint32_t parameter) noexcept {
@@ -374,6 +393,10 @@ struct ModulationState {
     // Values by macro id - 1 (stable identity; holes when removed).
     std::array<float,maxMacros> macros{};
     std::uint16_t macroMask=defaultMacroMask; // bit id-1: macro exists
+    // mct-origami-nested-modulation-manual-qa: custom macro names by stable
+    // id (NUL-terminated; empty = the default "MACRO n"). Printable ASCII.
+    static constexpr std::size_t macroNameCapacity=24;
+    std::array<std::array<char,macroNameCapacity>,maxMacros> macroNames{};
     std::array<ModRoute,capacity> routes{};
     std::uint32_t nextRouteId=1;
     // N04 CONTROL operators (holes allowed: a slot keeps its index while used).
@@ -413,6 +436,23 @@ inline bool routeComplete(const ModRoute& r) noexcept {
 }
 // True when `candidate` (complete) would repeat the pair of another live route.
 bool routeDuplicates(const ModulationState&,const ModRoute& candidate) noexcept;
+// mct-origami-nested-modulation-manual-qa: the modulation dependency graph
+// (LFOs, macros, NODES operators and routes; an edge for every source a route
+// or operator reads and every nested target a route writes) has a cycle.
+// validModulation() rejects such a state: no feedback, no undefined order.
+bool modulationGraphHasCycle(const ModulationState&) noexcept;
+// Whether adding `candidate` (complete) to the state would close a cycle.
+bool routeClosesCycle(const ModulationState&,const ModRoute& candidate) noexcept;
+// Removes route `routeId` and, transitively, every route that modulates its
+// depth (a depth route never outlives its target). Returns the number removed.
+std::size_t removeRouteCascade(ModulationState&,std::uint32_t routeId) noexcept;
+// Removes every route whose source or nested destination is a macro that no
+// longer exists (macro deletion), then cascades depth routes.
+std::size_t pruneRoutesOfRemovedMacros(ModulationState&) noexcept;
+// Every nested reference that no longer resolves (a depth route whose target
+// route is gone, a macro that was removed): pruned, cascading. Any view's
+// deletion stays valid through this one canonical repair.
+std::size_t pruneDanglingNestedRoutes(ModulationState&) noexcept;
 // Deterministic repair of legacy/corrupt duplicate pairs (load path only):
 // duplicates merge into the earliest route of the pair. Its amount becomes the
 // clamped sum of the enabled duplicates (the compiler always summed them), it
@@ -454,8 +494,13 @@ using ModulationSourceSlots=std::array<float,modulationSourceSlotCount>;
 // mapping and polarity transform. 0 for a disabled or incomplete route.
 float routeContribution(const ModRoute&,const ModulationState&,const ModulationSourceSlots&) noexcept;
 
-const LfoSettings& lfoSettings(const ModulationState&,std::size_t index) noexcept;
-LfoSettings& lfoSettings(ModulationState&,std::size_t index) noexcept;
+// Inline: the renderers ask for every LFO's settings per voice per sample.
+inline const LfoSettings& lfoSettings(const ModulationState& s,std::size_t i) noexcept {
+    switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
+}
+inline LfoSettings& lfoSettings(ModulationState& s,std::size_t i) noexcept {
+    switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
+}
 
 bool isGlobalDestination(ModDestination) noexcept;
 bool validModulation(const ModulationState&,const std::array<OscillatorModuleState,16>&) noexcept;
@@ -485,6 +530,10 @@ public:
     void setStreams(std::uint32_t entropy,std::uint32_t structure) noexcept;
     std::uint32_t stream() const noexcept { return stream_; }
     float next(const LfoSettings&,double sampleRate) noexcept;
+    // mct-origami-nested-modulation-manual-qa: with an effective rate (LFO
+    // RATE modulated). next(s, sr) == next(s, sr, s.rateHz), bit for bit.
+    float next(const LfoSettings&,double sampleRate,float rateHz) noexcept;
+    float nextStereo(const LfoSettings&,double sampleRate,float rateHz,float& right) noexcept;
     // LEFT (returned, bit-identical to next()) and RIGHT (out). RIGHT shares
     // the lifecycle (DELAY / ATTACK), the ENTROPY trajectory and the FRACTURE
     // structure; it only reads at +stereo * 0.5 cycle. stereo == 0: right = left.
@@ -510,8 +559,8 @@ public:
     static std::uint32_t voiceStream(std::uint32_t voiceSeed,std::size_t lfoIndex) noexcept;
 private:
     // WithRight=false is the pre-stereo code (no right-channel work at all).
-    template<bool WithRight> float legacyNext(const LfoSettings&,double sampleRate,float* right) noexcept;
-    template<bool WithRight> float processedNext(const LfoSettings&,double sampleRate,float* right) noexcept;
+    template<bool WithRight> float legacyNext(const LfoSettings&,double sampleRate,float rateHz,float* right) noexcept;
+    template<bool WithRight> float processedNext(const LfoSettings&,double sampleRate,float rateHz,float* right) noexcept;
     double phase_=0;          // accumulator, [0,1) (ENVELOPE clamps at 1)
     double cycles_=0;         // unwrapped accumulator: the ENTROPY clock
     std::uint64_t samples_=0; // samples since the lifecycle start (DELAY / ATTACK)
@@ -649,8 +698,12 @@ private:
 //                      route amount. The oscillator's only state is its phase,
 //                      so RIGHT is a second read at the same phase (frame,
 //                      phase warp, spectral table, PM / PSK offset, post-route
-//                      shaping). FM route amounts are read from LEFT (they
-//                      change the phase increment: oscillator state).
+//                      shaping). mct-origami-nested-modulation-manual-qa: FM
+//                      route amounts too (a different RIGHT frequency runs
+//                      RIGHT on its own phase), and a module whose RIGHT
+//                      differs feeds every cross-oscillator route channel by
+//                      channel (RIGHT taps): PD, FM, PSK, RM, AM, XF, WF,
+//                      XOR and RECT consume the source's RIGHT on RIGHT.
 //  B RequiresStereoDsp OCTAVE / SEMITONE / FINE (one oscillator phase per
 //                      module), FX parameters (one value per effect node),
 //                      MASTER GAIN (per voice, or after FX at block rate
@@ -678,6 +731,10 @@ constexpr StereoCapability stereoCapability(ModDestination d) noexcept {
         case ModDestination::Octave: case ModDestination::Semitone: case ModDestination::Fine:
         case ModDestination::FxParameter: case ModDestination::MasterGain: return StereoCapability::RequiresStereoDsp;
         case ModDestination::EnvelopeScaling: case ModDestination::LfoScaling: return StereoCapability::Ambiguous;
+        // mct-origami-nested-modulation-manual-qa: an LFO's rate is its phase
+        // state, a macro is one value, a route depth one weight: LEFT only.
+        case ModDestination::LfoRate: case ModDestination::MacroValue: case ModDestination::RouteDepth:
+            return StereoCapability::RequiresStereoDsp;
         default: return StereoCapability::Scalar;
     }
 }
@@ -722,6 +779,10 @@ struct ModulationFrame {
     // False when FX ORDER = PRE MASTER: the renderer applies master gain after the FX graph.
     bool applyMaster=true;
     std::array<float,ModulationState::capacity> normalized{};
+    // mct-origami-nested-modulation-manual-qa: effective depth of each route
+    // (by route index) whose depth is modulated, and its normalized global
+    // part (a voice adds its own terms to that).
+    std::array<float,ModulationState::capacity> routeDepth{},routeDepthNormalized{};
     StereoModulationFrame stereo{};
     // N07: copy everything a voice reads or writes, but only the ACTIVE
     // oscillator modules: the 16 module slots are 8 KB of this 8.9 KB frame,
@@ -730,7 +791,7 @@ struct ModulationFrame {
     // fields above (the static_assert below trips when the frame changes).
     // Operator outputs are NOT copied: per-voice operators read GLOBAL operator
     // outputs from the global frame and write their own here.
-    void copyForVoice(const ModulationFrame& g,const std::array<std::uint8_t,16>& active,std::size_t activeCount,std::uint16_t moduleMask=0xffffu,bool withStereo=false) noexcept {
+    void copyForVoice(const ModulationFrame& g,const std::array<std::uint8_t,16>& active,std::size_t activeCount,std::uint16_t moduleMask=0xffffu,bool withStereo=false,bool withDepths=false) noexcept {
         if(withStereo) { // only when the plan carries stereo terms
             if(g.stereo.active) stereo=g.stereo;
             else { stereo.active=false; stereo.globalLfo.mask=0; stereo.operatorMask=0; stereo.levelMask=0; stereo.rightMask=0; stereo.cutoffSplit=stereo.resonanceSplit=false; }
@@ -741,12 +802,14 @@ struct ModulationFrame {
         cutoff=g.cutoff; resonance=g.resonance; master=g.master; mainTuning=g.mainTuning; transpose=g.transpose;
         portaTime=g.portaTime; envelopeScaling=g.envelopeScaling; lfoScaling=g.lfoScaling; swing=g.swing;
         filter=g.filter; filterEnabled=g.filterEnabled; applyMaster=g.applyMaster; normalized=g.normalized;
+        if(withDepths) copyDepths(g); // only with nested modulation (out of line: keeps the voice loop small)
     }
+    __attribute__((noinline)) void copyDepths(const ModulationFrame& g) noexcept { routeDepth=g.routeDepth; routeDepthNormalized=g.routeDepthNormalized; }
 };
 
 // Fields copied by ModulationFrame::copyForVoice: the size is pinned so any
 // field change trips here and forces copyForVoice to be updated with it.
-static_assert(sizeof(ModulationFrame)==8928+sizeof(StereoModulationFrame),"ModulationFrame changed: update copyForVoice");
+static_assert(sizeof(ModulationFrame)==8928+2*sizeof(float)*ModulationState::capacity+sizeof(StereoModulationFrame),"ModulationFrame changed: update copyForVoice");
 
 class CompiledModulation {
 public:
@@ -808,8 +871,8 @@ public:
     void advance(float smoothing) noexcept;
     void globalFrame(ModulationFrame&,const std::array<float,globalSourceCount>&,double sampleRate) const noexcept;
     void voiceFrame(ModulationFrame&,const std::array<float,voiceSourceCount>&,double sampleRate,
-                    const StereoSourceValues* voiceStereo=nullptr) const noexcept;
-    bool hasVoiceRoutes() const noexcept {return voiceCount_!=0;}
+                    const StereoSourceValues* voiceStereo=nullptr,const ModulationFrame* global=nullptr) const noexcept;
+    bool hasVoiceRoutes() const noexcept {return voiceCount_!=0 || voiceDepthCount_!=0;}
     bool hasFxRoutes() const noexcept {return fxCount_!=0;}
     bool hasFxVoiceRoutes() const noexcept {return fxVoice_;}
     std::uint64_t generation() const noexcept {return generation_;}
@@ -833,6 +896,52 @@ public:
     std::uint64_t stateRevision() const noexcept { return stateRevision_; }
     void markStateRevision() noexcept { ++stateRevision_; }
     std::size_t groupCount() const noexcept {return count_;}
+
+    // ---- mct-origami-nested-modulation-manual-qa: nested modulation ---------
+    // LFO RATE, MACRO and ROUTE DEPTH destinations are evaluated in dependency
+    // order, prepared at compile time: a GLOBAL program (FREE LFOs, macros with
+    // incoming modulation, global NODES operators, route depths) and a VOICE
+    // program (RETRIGGER / ENVELOPE LFOs, per-voice operators, per-voice route
+    // depths). Without nested routes neither exists and the engine and voices
+    // take their unchanged paths.
+    // Voice-scoped sources (ENV, velocity, a RETRIGGER LFO ...) reaching a
+    // GLOBAL nested target (a macro, a FREE LFO's rate) follow the most
+    // recently played voice, one sample late (the FX-destination policy).
+    struct ProgramStep {
+        enum class Kind : std::uint8_t { Lfo=0, Macro=1, Operator=2, Depth=3 };
+        Kind kind=Kind::Lfo;
+        std::uint8_t index=0; // LFO 0..3 / macro id 1..16 / index into the compiled operators / route index
+    };
+    bool hasNestedPlan() const noexcept { return nestedPlan_; }
+    bool hasVoiceNestedPlan() const noexcept { return voiceNestedPlan_; }
+    bool needsNewestVoiceSources() const noexcept { return needsNewestVoice_; }
+    std::size_t globalProgramSize() const noexcept { return globalProgramCount_; }
+    const ProgramStep& globalProgramStep(std::size_t i) const noexcept { return globalProgram_[i]; }
+    std::size_t voiceProgramSize() const noexcept { return voiceProgramCount_; }
+    const ProgramStep& voiceProgramStep(std::size_t i) const noexcept { return voiceProgram_[i]; }
+    // Effective rate of a FREE (global) LFO this sample (baseHz when no route
+    // reaches its rate).
+    float globalLfoRate(std::size_t lfo,float baseHz,const std::array<float,globalSourceCount>& sources,
+                        const ModulationFrame& f,const std::array<float,voiceSourceCount>* newestVoice) const noexcept;
+    // Effective value of macro `id` (its base when nothing modulates it).
+    float macroValue(std::size_t id,float base,const std::array<float,globalSourceCount>& sources,
+                     const ModulationFrame& f,const std::array<float,voiceSourceCount>* newestVoice) const noexcept;
+    // Global part of route `route`'s depth into f.routeDepth / routeDepthNormalized.
+    void globalRouteDepth(std::size_t route,ModulationFrame& f,const std::array<float,globalSourceCount>& sources,
+                          const std::array<float,voiceSourceCount>* newestVoice) const noexcept;
+    // Effective rate of a RETRIGGER / ENVELOPE (per-voice) LFO for one voice.
+    float voiceLfoRate(std::size_t lfo,float baseHz,const ModulationFrame& global,
+                       const std::array<float,voiceSourceCount>& voice,const ModulationFrame& local) const noexcept;
+    // This voice's depth of route `route` (global part + this voice's terms).
+    void voiceRouteDepth(std::size_t route,ModulationFrame& local,const std::array<float,voiceSourceCount>& voice) const noexcept;
+    // One compiled operator (index into the compiled order) - the programs
+    // interleave operators with LFOs, macros and depths.
+    void evaluateGlobalOperator(std::size_t op,ModulationFrame&,const std::array<float,globalSourceCount>&) noexcept;
+    void evaluateVoiceOperator(std::size_t op,ModulationFrame&,const std::array<float,voiceSourceCount>&,OperatorState&,
+                               std::array<std::uint32_t,operatorSlotCount>* eventCounts=nullptr,
+                               const ModulationFrame* global=nullptr,const StereoSourceValues* voiceStereo=nullptr) const noexcept;
+    bool lfoRateModulated(std::size_t lfo) const noexcept { return lfo<4 && lfoRateGroup_[lfo]>=0; }
+    bool macroModulated(std::size_t id) const noexcept { return id>=1 && id<=maxMacros && macroGroup_[id-1]>=0; }
 private:
     struct Group {
         ModAddress address{};std::size_t slot=0;
@@ -853,6 +962,14 @@ private:
         // N04: operator storage slots feeding this group.
         std::array<std::uint8_t,operatorSlotCount> globalOpSlots{},voiceOpSlots{};
         std::uint8_t globalOpSlotCount=0,voiceOpSlotCount=0;
+        // mct-origami-nested-modulation-manual-qa: a nested target (LFO RATE,
+        // MACRO, ROUTE DEPTH) is evaluated by the programs, never by
+        // globalFrame / voiceFrame. depthSlot / depthRoute: slots whose route
+        // has a modulated depth (its weight is replaced by that depth).
+        bool nested=false;
+        bool voiceDepth=false;  // a depth here has per-voice terms
+        std::uint8_t depthCount=0;
+        std::array<std::uint8_t,8> depthSlot{},depthRoute{};
         // Stereo terms (stereo-capable destinations only): which of this
         // group's sources may carry a different RIGHT value.
         bool stereo=false;
@@ -932,8 +1049,32 @@ private:
     bool eventOps_=false;
     static float read(const ModulationFrame&,const Group&) noexcept;
     static void write(ModulationFrame&,const Group&,float normalized) noexcept;
+    // mct-origami-nested-modulation-manual-qa
+    float effectiveWeight(const Group&,std::size_t slot,const ModulationFrame&) const noexcept;
+    float nestedGlobalTerms(const Group&,const std::array<float,globalSourceCount>&,const ModulationFrame&) const noexcept;
+    float nestedNewestVoiceTerms(const Group&,const std::array<float,voiceSourceCount>*,const ModulationFrame&) const noexcept;
+    float nestedVoiceTerms(const Group&,const std::array<float,voiceSourceCount>&,const ModulationFrame&) const noexcept;
+    // Depth corrections of an audio group: (depth - weight) * source for each
+    // depth slot, global sources / voice sources.
+    float depthCorrectionGlobal(const Group&,const std::array<float,globalSourceCount>&,const ModulationFrame&) const noexcept;
+    float depthCorrectionVoice(const Group&,const std::array<float,voiceSourceCount>&,const ModulationFrame& local,const ModulationFrame& global) const noexcept;
+    void buildNestedPlan(const ModulationState&) noexcept;
+    bool nestedPlan_=false,voiceNestedPlan_=false,needsNewestVoice_=false;
+    template<std::size_t N> static constexpr std::array<std::int8_t,N> noGroups() noexcept { std::array<std::int8_t,N> a{}; for(auto& v:a) v=-1; return a; }
+    std::array<std::int8_t,4> lfoRateGroup_=noGroups<4>();
+    std::array<std::int8_t,maxMacros> macroGroup_=noGroups<maxMacros>();
+    std::array<std::int8_t,ModulationState::capacity> depthGroup_=noGroups<ModulationState::capacity>(),routeGroup_=noGroups<ModulationState::capacity>();
+    std::array<std::uint8_t,ModulationState::capacity> routeSlot_{};
+    std::array<ProgramStep,4+maxMacros+operatorSlotCount+ModulationState::capacity> globalProgram_{},voiceProgram_{};
+    std::size_t globalProgramCount_=0,voiceProgramCount_=0;
     std::array<Group,ModulationState::capacity> groups_{};
     std::array<std::size_t,ModulationState::capacity> voiceGroups_{};
+    // mct-origami-nested-modulation-manual-qa: prepared group lists, so the hot
+    // loops never test a group's kind: plain global groups (not FX, not
+    // nested, no modulated depth) and those with modulated depths; voice
+    // groups likewise.
+    std::array<std::uint8_t,ModulationState::capacity> globalPlain_{},globalDepth_{},voiceDepthGroups_{};
+    std::size_t globalPlainCount_=0,globalDepthCount_=0,voiceDepthCount_=0;
     std::array<bool,globalSourceCount> globalSourceUsed_{};
     std::array<bool,voiceSourceCount> voiceSourceUsed_{};
     std::uint64_t stateRevision_=0;
@@ -960,6 +1101,10 @@ private:
         std::array<ModRoute,ModulationState::capacity> routes{};
         std::array<ControlOperator,ModulationState::maxControlOperators> operators{};
         std::array<LfoMode,4> lfoModes{};
+        // mct-origami-nested-modulation-manual-qa: whether each LFO is a stereo
+        // source (STEREO > 0) shapes the stereo plan, so crossing zero is a
+        // topology change (a value change above zero is not).
+        std::array<bool,4> lfoStereo{};
         bool filterEnabled=true;
         std::array<ModulePlanKey,16> modules{};
     };

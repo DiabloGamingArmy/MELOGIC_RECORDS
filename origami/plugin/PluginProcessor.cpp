@@ -37,8 +37,16 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
     // Preserve the established four-module initial layout in the model, once.
     for(int i=0;i<3;++i) engine_.addOscillatorModule();
+    // mct-origami-nested-modulation-manual-qa: 16 DAW macro parameters with
+    // immutable IDs, created once (hosts expect a stable parameter list).
+    for(unsigned id=1;id<=mct::origami::maxMacros;++id) {
+        auto* parameter=new OrigamiMacroParameter(id,[this](unsigned macroId){ return macroDisplayName(macroId); });
+        macroParameters_[id-1]=parameter;
+        addParameter(parameter);
+    }
     // Pre-audio-thread: establish the canonical host/UI model exactly once.
     uiInstrumentState_=engine_.instrumentState();
+    setMacroParametersFromModel(uiInstrumentState_.modulation);
     bumpUiModelRevision();
     uiPerformanceState_=uiInstrumentState_.performance;
     uiArpState_=arpState_;
@@ -625,6 +633,13 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // One stable engine snapshot per DAW callback; exact MIDI offsets still split rendering.
     const auto visualPolicy=renderBudget_.snapshot();
     engine_.setVisualizationPolicy(visualPolicy.suppressVisualTelemetry,visualPolicy.reduceControlRate);
+    // DAW macro parameters are the macro BASE values (host automation):
+    // applied at the block boundary, after the modulation-state hand-over.
+    {
+        std::array<float,mct::origami::maxMacros> bases{};
+        for(std::size_t i=0;i<bases.size();++i) bases[i]=macroParameters_[i]!=nullptr ? macroParameters_[i]->get() : 0.0f;
+        engine_.setHostMacroBases(bases);
+    }
     if(!prepared_ || !engine_.beginHostBlock(2u)) {
         continuityBeginFailures_.fetch_add(1,std::memory_order_relaxed);
         buffer.clear();
@@ -735,6 +750,7 @@ void OrigamiAudioProcessor::resetAudioContinuityDiagnostics() noexcept {
 void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
     // Deep Audit P03: autosave serializes the canonical non-RT model. It never
     // suspends the processor and never interrogates mutable renderer internals.
+    syncUiMacrosFromHost(); // automated macro bases belong to the saved state
     mct::origami::InstrumentState snapshot;
     {
         const juce::ScopedLock lock(stateLock_);
@@ -847,6 +863,9 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     // complete restore. Any subsequent UI performance edit overwrites this.
     performanceMailbox_.publish(uiPerformanceState_);
     }
+    // DAW macro parameters take the restored macro bases and names (outside
+    // the model lock: this notifies the host).
+    setMacroParametersFromModel(state.modulation);
     // FX: the saved bus graphs, else the P02/P03 MAIN graph (its globals become
     // Global FX), else neutral. Then exactly one graph per canonical bus.
     auto notify=std::move(fxWorkspace_.onChanged);
@@ -873,19 +892,107 @@ mct::origami::RuntimeVisualizationSnapshot
 OrigamiAudioProcessor::getUiRuntimeVisualizationSnapshot() noexcept {
     visualizationMailbox_.consume(uiVisualizationSnapshot_);
     // The editor polls this every frame: free wavetables the audio thread
-    // replaced (never freed on the audio thread).
+    // replaced (never freed on the audio thread), and follow DAW automation
+    // of the macro bases in the model.
     engine_.collectRetiredWavetables();
+    syncUiMacrosFromHost();
     return uiVisualizationSnapshot_;
 }
 bool OrigamiAudioProcessor::setUiMacro(unsigned index,float value) noexcept {
+    {
+        const juce::ScopedLock lock(stateLock_);
+        // `index` is the stable macro id - 1 (MACRO 1..4 keep indices 0..3).
+        if(index>=mct::origami::maxMacros || !mct::origami::macroActive(uiInstrumentState_.modulation,index+1)) return false;
+        auto mod=uiInstrumentState_.modulation;mod.macros[index]=value;
+        if(!engine_.setModulationState(mod)) return false;
+        uiInstrumentState_.modulation=mod;
+        bumpUiModelRevision();
+    }
+    // The DAW parameter carries the new base (inside the UI's gesture); the
+    // host is notified outside the model lock.
+    if(auto* parameter=macroParameters_[index]; parameter!=nullptr && parameter->get()!=value)
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+    return true;
+}
+void OrigamiAudioProcessor::beginUiMacroGesture(unsigned index) noexcept {
+    if(auto* parameter=macroParameter(index)) parameter->beginChangeGesture();
+}
+void OrigamiAudioProcessor::endUiMacroGesture(unsigned index) noexcept {
+    if(auto* parameter=macroParameter(index)) parameter->endChangeGesture();
+}
+void OrigamiAudioProcessor::setMacroParametersFromModel(const mct::origami::ModulationState& modulation) noexcept {
+    for(std::size_t i=0;i<macroParameters_.size();++i)
+        if(auto* parameter=macroParameters_[i]; parameter!=nullptr && parameter->get()!=modulation.macros[i])
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(modulation.macros[i]));
+    publishMacroNamesToHost(modulation);
+}
+bool OrigamiAudioProcessor::syncUiMacrosFromHost() noexcept {
     const juce::ScopedLock lock(stateLock_);
-    // `index` is the stable macro id - 1 (MACRO 1..4 keep indices 0..3).
-    if(index>=mct::origami::maxMacros || !mct::origami::macroActive(uiInstrumentState_.modulation,index+1)) return false;
-    auto mod=uiInstrumentState_.modulation;mod.macros[index]=value;
-    if(!engine_.setModulationState(mod)) return false;
+    auto mod=uiInstrumentState_.modulation;
+    bool changed=false;
+    for(std::size_t i=0;i<macroParameters_.size();++i) {
+        if(macroParameters_[i]==nullptr) continue;
+        const float v=macroParameters_[i]->get();
+        if(std::isfinite(v) && v!=mod.macros[i]) { mod.macros[i]=std::clamp(v,0.0f,1.0f); changed=true; }
+    }
+    if(!changed || !engine_.setModulationState(mod)) return false;
     uiInstrumentState_.modulation=mod;
     bumpUiModelRevision();
     return true;
+}
+juce::String OrigamiAudioProcessor::macroDisplayName(unsigned macroId) const {
+    std::array<char,mct::origami::ModulationState::macroNameCapacity> name{};
+    bool active=false;
+    if(macroId>=1 && macroId<=hostMacroNames_.size()) {
+        const juce::SpinLock::ScopedLockType lock(macroNameLock_);
+        name=hostMacroNames_[macroId-1];
+        active=((hostMacroMask_>>(macroId-1))&1u)!=0;
+    }
+    // Every slot is always a host parameter (its ID never moves); a slot with
+    // no macro says so, so the DAW's parameter list shows which are in use.
+    if(!active) return "Macro "+juce::String(macroId)+" (inactive)";
+    return name[0]!='\0' ? juce::String(name.data()) : "Macro "+juce::String(macroId);
+}
+void OrigamiAudioProcessor::publishMacroNamesToHost(const mct::origami::ModulationState& modulation) noexcept {
+    bool changed=false;
+    {
+        const juce::SpinLock::ScopedLockType lock(macroNameLock_);
+        changed=hostMacroNames_!=modulation.macroNames || hostMacroMask_!=modulation.macroMask;
+        hostMacroNames_=modulation.macroNames;
+        hostMacroMask_=modulation.macroMask;
+    }
+    // Same immutable IDs; only the display names change (hosts that cache
+    // names may refresh them on this notification).
+    if(changed) updateHostDisplay(juce::AudioProcessorListener::ChangeDetails{}.withParameterInfoChanged(true));
+}
+bool OrigamiAudioProcessor::setUiMacroName(unsigned index,const juce::String& name) noexcept {
+    mct::origami::ModulationState mod;
+    {
+    const juce::ScopedLock lock(stateLock_);
+    if(index>=mct::origami::maxMacros || !mct::origami::macroActive(uiInstrumentState_.modulation,index+1)) return false;
+    mod=uiInstrumentState_.modulation;
+    auto& target=mod.macroNames[index];
+    target.fill('\0');
+    const auto trimmed=name.trim();
+    std::size_t length=0;
+    for(int i=0;i<trimmed.length() && length+1<target.size();++i) {
+        const auto c=trimmed[i];
+        if(c>=32 && c<=126) target[length++]=static_cast<char>(c);
+    }
+    // The default label is not stored as a custom name.
+    if(juce::String(target.data()).equalsIgnoreCase("MACRO "+juce::String(index+1))) target.fill('\0');
+    if(!engine_.setModulationState(mod)) return false;
+    uiInstrumentState_.modulation=mod;
+    bumpUiModelRevision();
+    }
+    publishMacroNamesToHost(mod); // outside the model lock
+    return true;
+}
+juce::String OrigamiAudioProcessor::getUiMacroName(unsigned index) const noexcept {
+    const juce::ScopedLock lock(stateLock_);
+    if(index>=mct::origami::maxMacros) return {};
+    const auto& name=uiInstrumentState_.modulation.macroNames[index];
+    return name[0]!='\0' ? juce::String(name.data()) : "MACRO "+juce::String(index+1);
 }
 bool OrigamiAudioProcessor::setUiLfo(const mct::origami::LfoSettings& settings) noexcept {
     const juce::ScopedLock lock(stateLock_);
@@ -896,10 +1003,18 @@ bool OrigamiAudioProcessor::setUiLfo(const mct::origami::LfoSettings& settings) 
     return true;
 }
 bool OrigamiAudioProcessor::setUiModulationState(const mct::origami::ModulationState& state) noexcept {
-    const juce::ScopedLock lock(stateLock_);
-    if(!engine_.setModulationState(state)) return false;
-    uiInstrumentState_.modulation=state;
-    bumpUiModelRevision();
+    auto repaired=state;
+    {
+        const juce::ScopedLock lock(stateLock_);
+        // mct-origami-nested-modulation-manual-qa: a view that removed a route
+        // or a macro also removes what modulated it (depth routes, MACRO
+        // destinations): one canonical repair, never a rejected deletion.
+        mct::origami::pruneDanglingNestedRoutes(repaired);
+        if(!engine_.setModulationState(repaired)) return false;
+        uiInstrumentState_.modulation=repaired;
+        bumpUiModelRevision();
+    }
+    setMacroParametersFromModel(repaired); // DAW parameters follow the macro bases / names
     return true;
 }
 unsigned OrigamiAudioProcessor::addUiRoute() noexcept {
@@ -933,12 +1048,9 @@ bool OrigamiAudioProcessor::setUiRoute(const mct::origami::ModRoute& edited) noe
 }
 bool OrigamiAudioProcessor::removeUiRoute(unsigned id) noexcept {
     const juce::ScopedLock lock(stateLock_);
-    auto mod=uiInstrumentState_.modulation;std::size_t out=0;bool found=false;
-    for(const auto& route:mod.routes) if(route.id) {
-        if(route.id==id) found=true;else mod.routes[out++]=route;
-    }
-    if(!found) return false;
-    while(out<mod.routes.size()) mod.routes[out++]={};
+    auto mod=uiInstrumentState_.modulation;
+    // Removes the route and every route on its depth (transitively).
+    if(mct::origami::removeRouteCascade(mod,id)==0) return false;
     if(!engine_.setModulationState(mod)) return false;
     uiInstrumentState_.modulation=mod;
     bumpUiModelRevision();
@@ -1111,7 +1223,8 @@ void OrigamiAudioProcessor::setUiModWheel(float normalized) noexcept {
     pendingUiMod_.store(juce::jlimit(0,127,juce::roundToInt(juce::jlimit(0.0f,1.0f,normalized)*127.0f)),std::memory_order_release);
 }
 bool OrigamiAudioProcessor::setUiPitchBendRange(float semitones) noexcept {
-    return setUiPitchBendRanges(semitones,semitones);
+    // Symmetric wheel: signed endpoints +N / -N.
+    return setUiPitchBendRanges(semitones,-semitones);
 }
 bool OrigamiAudioProcessor::setUiPitchBendRanges(float upSemitones,float downSemitones) noexcept {
     const juce::ScopedLock lock(stateLock_);

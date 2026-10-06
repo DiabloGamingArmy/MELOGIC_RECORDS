@@ -24,7 +24,7 @@ void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelop
 void Voice::seedLfos() noexcept {
     for(std::size_t i=0;i<noteLfos_.size();++i) noteLfos_[i].setStreams(Lfo::voiceStream(voiceSeed(),i),Lfo::fractureSeed(i));
 }
-void Voice::reset() noexcept { topologyGeneration_=0; for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();for(auto& filter:moduleFiltersRight_)filter.reset();rightFilterLive_=0;operatorState_={};active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
+void Voice::reset() noexcept { topologyGeneration_=0; for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& hints:rightSpectralHints_)hints={};for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);previousOscillatorSamplesRight_.fill(0.0f);rightTapMask_=rightPhaseModules_=0;envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();for(auto& filter:moduleFiltersRight_)filter.reset();rightFilterLive_=0;operatorState_={};active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     reset();address_=address;velocity_=velocity;order_=order;++lifecycle_;seedLfos();
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
@@ -60,6 +60,105 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         : render<false>(tables,global,sustain,compiled,modulation,pitchBendSemitones,pitchBendNormalized,modWheel,aftertouch,topology,sharedProcesses,observe);
 }
 
+namespace {
+// Post-generation cross-oscillator shaping of one channel by one source
+// sample (already clamped to [-1, 1]). LEFT and RIGHT share it exactly.
+inline float shapePostRoute(float signal,float source,OscRouteType type,float rawAmount) noexcept {
+    const float amount=std::clamp(rawAmount,-1.0f,1.0f);
+    const float depth=std::abs(amount);
+
+    switch(type) {
+        case OscRouteType::RingMod:
+            // RM: continuously morph dry -> signed multiplication.
+            return signal*(1.0f-depth)+signal*source*amount;
+
+        case OscRouteType::AmpMod: {
+            // AM: source controls gain while retaining target polarity.
+            const float modulated=signal*std::max(0.0f,1.0f+source*amount);
+            return signal*(1.0f-depth)+modulated*depth;
+        }
+
+        case OscRouteType::Crossfade: {
+            // XF: replace target progressively with the source oscillator.
+            // Negative amount crossfades toward an inverted source.
+            const float sourceSignal=amount>=0.0f ? source : -source;
+            return signal*(1.0f-depth)+sourceSignal*depth;
+        }
+
+        case OscRouteType::WaveFold: {
+            // WF: source amplitude drives an audio-rate sine wavefolder.
+            // This is deliberately aggressive while remaining bounded.
+            const float drive=1.0f+std::abs(source)*depth*7.0f;
+            const float folded=dsp::triangleFold(signal*drive);
+            const float signedFold=amount>=0.0f ? folded : -folded;
+            return signal*(1.0f-depth)+signedFold*depth;
+        }
+
+        case OscRouteType::LogicXor: {
+            // XOR: square-polarity interaction. Unlike RM it responds
+            // only to the source sign, producing hard digital sidebands.
+            const float sourcePolarity=source>=0.0f ? 1.0f : -1.0f;
+            const float polarity=amount>=0.0f ? sourcePolarity : -sourcePolarity;
+            const float logical=signal*polarity;
+            return signal*(1.0f-depth)+logical*depth;
+        }
+
+        case OscRouteType::RectifyMod: {
+            // RECT: source magnitude controls how strongly the target is
+            // driven toward positive or negative full-wave rectification.
+            const float sourceDepth=depth*std::abs(source);
+            const float rectified=amount>=0.0f ? std::abs(signal) : -std::abs(signal);
+            return signal*(1.0f-sourceDepth)+rectified*sourceDepth;
+        }
+
+        case OscRouteType::PhaseMod:
+        case OscRouteType::FrequencyMod:
+        case OscRouteType::PhaseSkew:
+        case OscRouteType::Off:
+        case OscRouteType::Count:
+            return signal;
+    }
+    return signal;
+}
+}
+// mct-origami-nested-modulation-manual-qa: the prepared voice program
+// (per-voice LFOs at this voice's effective rate, per-voice operators and
+// route depths, in dependency order). Out of line: the renderers' hot loops
+// keep their code when no nested modulation exists.
+template<bool Stereo>
+__attribute__((noinline)) void Voice::runVoiceProgram(const CompiledModulation& compiled,const ModulationState& modulation,
+    const ModulationFrame& global,ModulationFrame& local,std::array<float,CompiledModulation::voiceSourceCount>& voiceSources,
+    StereoSourceValues& voiceStereo,float sourceLfoScale,bool observe) noexcept {
+    using Step=CompiledModulation::ProgramStep::Kind;
+    for(std::size_t p=0;p<compiled.voiceProgramSize();++p) {
+        const auto& step=compiled.voiceProgramStep(p);
+        switch(step.kind) {
+            case Step::Lfo: {
+                const std::size_t i=step.index;
+                const auto& l=lfoSettings(modulation,i);
+                if(l.mode==LfoMode::Free) { voiceSources[3+i]=0.0f; break; }
+                const float rate=compiled.voiceLfoRate(i,l.rateHz,global,voiceSources,local);
+                bool done=false;
+                if constexpr(Stereo) if(l.stereo>0.0f) {
+                    float right=0.0f;
+                    voiceSources[3+i]=noteLfos_[i].nextStereo(l,sampleRate_,rate,right)*sourceLfoScale;
+                    voiceStereo.lfo[i]=right*sourceLfoScale; voiceStereo.mask|=std::uint8_t(1u<<i);
+                    done=true;
+                }
+                if(!done) voiceSources[3+i]=noteLfos_[i].next(l,sampleRate_,rate)*sourceLfoScale;
+                if(observe) visualization_.lfoPhases[i]=static_cast<float>(noteLfos_[i].readPosition());
+                break;
+            }
+            case Step::Operator:
+                compiled.evaluateVoiceOperator(step.index,local,voiceSources,operatorState_,&operatorEventCounts_,&global,Stereo ? &voiceStereo : nullptr);
+                break;
+            case Step::Depth:
+                compiled.voiceRouteDepth(step.index,local,voiceSources);
+                break;
+            case Step::Macro: break; // macros are global
+        }
+    }
+}
 template<bool Stereo>
 Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,const ModulationFrame& global,
     float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
@@ -81,7 +180,10 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
     // plan is stereo and that LFO's STEREO is non-zero; LEFT is unchanged).
     StereoSourceValues voiceStereo{};
     constexpr bool stereoPlan=Stereo;
-    for(std::size_t i=0;i<4;++i){
+    // mct-origami-nested-modulation-manual-qa: with a voice nested plan the
+    // per-voice LFOs run in the prepared order (after what feeds their rate).
+    const bool nestedVoice=compiled.hasVoiceNestedPlan();
+    if(!nestedVoice) for(std::size_t i=0;i<4;++i){
         const auto& l=lfoSettings(modulation,i);
         if(l.mode==LfoMode::Free) voiceSources[3+i]=0.0f;
         else if constexpr(!Stereo) voiceSources[3+i]=noteLfos_[i].next(l,sampleRate_)*sourceLfoScale;
@@ -105,24 +207,32 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
     voiceSources[10]=aftertouch;
     voiceSources[11]=std::clamp(pitchBendNormalized,-1.0f,1.0f);
     voiceSources[12]=releasing_ ? 0.0f : 1.0f;
-    if(observe) visualization_.sources=voiceSources;
-    if(compiled.hasFxVoiceRoutes()) lastSources_=voiceSources;
+    if(!nestedVoice) {
+        if(observe) visualization_.sources=voiceSources;
+        if(compiled.hasFxVoiceRoutes() || compiled.needsNewestVoiceSources()) lastSources_=voiceSources;
+    }
     auto& local=localFrame_;const ModulationFrame* effective=&global;
     const bool voiceOperators=compiled.hasVoiceOperators();
     const bool noteOn=pendingNoteOn_,noteOff=pendingNoteOff_,retrigger=pendingRetrigger_;
     pendingNoteOn_=pendingNoteOff_=pendingRetrigger_=false;
-    if(compiled.hasVoiceRoutes() || voiceOperators) {
+    if(compiled.hasVoiceRoutes() || voiceOperators || nestedVoice) {
         // N07: only the active modules are copied per sample (full copy on the
         // decimated observation ticks, which publish every module slot).
-        if(observe) local=global; else local.copyForVoice(global,topology.active,topology.activeCount,compiled.voiceModuleMask(),stereoPlan);
-        // N04 per-voice CONTROL operators: this voice's sources, this voice's state.
+        if(observe) local=global; else local.copyForVoice(global,topology.active,topology.activeCount,compiled.voiceModuleMask(),stereoPlan,compiled.hasNestedPlan());
         if(voiceOperators) {
             local.events.noteOn=noteOn;local.events.noteOff=noteOff;
             local.events.retrigger=retrigger;local.events.gate=!releasing_;
             local.events.voiceSeed=voiceSeed();
+        }
+        if(nestedVoice) {
+            runVoiceProgram<Stereo>(compiled,modulation,global,local,voiceSources,voiceStereo,sourceLfoScale,observe);
+            if(observe) visualization_.sources=voiceSources;
+            if(compiled.hasFxVoiceRoutes() || compiled.needsNewestVoiceSources()) lastSources_=voiceSources;
+        } else if(voiceOperators) {
+            // N04 per-voice CONTROL operators: this voice's sources, this voice's state.
             compiled.evaluateVoiceOperators(local,voiceSources,operatorState_,&operatorEventCounts_,&global,stereoPlan ? &voiceStereo : nullptr);
         }
-        if(compiled.hasVoiceRoutes()) compiled.voiceFrame(local,voiceSources,sampleRate_,stereoPlan ? &voiceStereo : nullptr);
+        if(compiled.hasVoiceRoutes()) compiled.voiceFrame(local,voiceSources,sampleRate_,stereoPlan ? &voiceStereo : nullptr,&global);
         effective=&local;
     }
     // N05 targets act after this sample's evaluation (effective next sample).
@@ -139,9 +249,10 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
     bool stereoActive=false;
     if constexpr(Stereo) {
         stereoActive=effective->stereo.levelMask!=0 || effective->stereo.filterSplit() ||
-                     (effective->stereo.rightMask&compiled.readStereoGroups())!=0;
+                     (effective->stereo.rightMask&compiled.readStereoGroups())!=0 ||
+                     rightTapMask_!=0 || rightPhaseModules_!=0;
         if(!stereoActive) rightFilterLive_=0;
-    } else rightFilterLive_=0; // a later stereo plan restarts RIGHT filters from LEFT
+    } else { rightFilterLive_=0; rightTapMask_=rightPhaseModules_=0; } // a later stereo plan restarts RIGHT from LEFT
     // Modules no voice route writes are read from the global frame (N07).
     const std::uint16_t localModules=effective==&local && !observe ? compiled.voiceModuleMask() : (effective==&local ? 0xffffu : 0u);
     const float envelopeValue=envelope*velocity_*std::clamp(effective->envelopeScaling,0.0f,2.0f);
@@ -155,6 +266,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         for(std::size_t m=0;m<modules.size();++m) if(moduleIds_[m]!=topology.ids[m]) {
             for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
             moduleBlendCenters_[m].reset();moduleFilters_[m].reset();moduleFiltersRight_[m].reset();rightFilterLive_&=std::uint16_t(~(1u<<m));
+            rightSpectralHints_[m]={};
             moduleIds_[m]=topology.ids[m];oscillatorRuntime_[m].invalidate();
         }
         topologyGeneration_=topology.generation;
@@ -255,48 +367,83 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         // stereo group addresses this module's oscillator read (WT POSITION,
         // OSC CHAIN process / route amounts). The group -> target map is
         // prepared by the compiled plan; nothing is searched here.
+        // mct-origami-dsp-performance-stereo-chain / -nested-modulation-manual-qa:
+        // RIGHT read parameters when a stereo group addresses this module's
+        // read (WT POSITION, OSC CHAIN amounts) or a cross-oscillator source's
+        // RIGHT tap differs (PD / FM / PSK / post routes). Everything below is
+        // compiled out of the mono renderer.
         std::uint32_t readMask=0;
-        if constexpr(Stereo) if(stereoActive) readMask=effective->stereo.rightMask&compiled.moduleReadStereoGroups(m);
+        bool rightSplit=false,rightPhase=false,secondRead=false;
         float positionRight=position;
         dsp::OscProcessPlan processPlanRight;
         std::array<float,maxOscRoutes> routeAmountRight{};
         double phaseOffsetRight=routedPhaseOffset,phaseSkewRight=routedPhaseSkew;
-        if(readMask!=0) {
-            processPlanRight=processPlan;
-            const std::size_t routeSlots=modulePlan.dynamicRoutes ? std::min<std::size_t>(module.routeCount,maxOscRoutes) : 2u;
-            for(std::size_t r=0;r<routeSlots;++r)
-                routeAmountRight[r]=modulePlan.dynamicRoutes ? module.routes[r].amount : (r==0 ? module.route1Amount : module.route2Amount);
-            for(std::uint32_t bits=readMask;bits!=0;bits&=bits-1u) {
-                const auto i=static_cast<std::size_t>(__builtin_ctz(bits));
-                const auto& target=compiled.readTarget(i);
-                const float value=effective->stereo.right[i];
-                switch(target.parameter) {
-                    case ModDestination::WtPosition: positionRight=value; break;
-                    case ModDestination::ProcessAmount: case ModDestination::Process1Amount: case ModDestination::Process2Amount:
-                        if(modulePlan.dynamicProcesses!=(target.parameter==ModDestination::ProcessAmount)) break;
-                        for(std::size_t p=0;p<modulePlan.processCount;++p)
-                            if(modulePlan.processes[p]==target.item) processPlanRight.stages[p].amount=value;
-                        break;
-                    case ModDestination::RouteAmount: case ModDestination::Route1Amount: case ModDestination::Route2Amount:
-                        if(modulePlan.dynamicRoutes!=(target.parameter==ModDestination::RouteAmount)) break;
-                        if(target.item<maxOscRoutes) routeAmountRight[target.item]=value;
-                        break;
-                    default: break;
-                }
+        double baseFrequencyRight=baseFrequency;
+        if constexpr(Stereo) if(stereoActive) {
+            readMask=effective->stereo.rightMask&compiled.moduleReadStereoGroups(m);
+            const auto moduleBit=std::uint16_t(1u<<m);
+            bool sourceSplit=false;
+            if(rightTapMask_!=0) {
+                const auto splitSource=[&](int source) noexcept { return source>=0 && source<16 && ((rightTapMask_>>source)&1u)!=0; };
+                for(std::size_t r=0;r<modulePlan.preCount;++r) sourceSplit|=splitSource(modulePlan.preRoutes[r].source);
+                for(std::size_t r=0;r<modulePlan.postCount;++r) sourceSplit|=splitSource(modulePlan.postRoutes[r].source);
             }
-            // PM / PSK read with RIGHT's amounts; FM stays LEFT (it changes the
-            // phase increment, which is the oscillator's state).
-            phaseOffsetRight=0.0; phaseSkewRight=0.0;
-            for(std::size_t r=0;r<modulePlan.preCount;++r) {
-                const auto& route=modulePlan.preRoutes[r];
-                if(route.source<0 || route.source>=static_cast<int>(previousOscillatorSamples_.size())) continue;
-                const float source=std::clamp(previousOscillatorSamples_[static_cast<std::size_t>(route.source)],-1.0f,1.0f);
-                const float amount=std::clamp(routeAmountRight[route.amountSlot],-1.0f,1.0f);
-                if(route.type==OscRouteType::PhaseMod) phaseOffsetRight+=static_cast<double>(source*amount)*0.5;
-                else if(route.type==OscRouteType::PhaseSkew) {
-                    phaseSkewRight+=static_cast<double>(source*amount)*0.42;
-                    phaseSkewRight=std::clamp(phaseSkewRight,-0.44,0.44);
+            rightSplit=readMask!=0 || sourceSplit || (rightPhaseModules_&moduleBit)!=0;
+            if(rightSplit) {
+                processPlanRight=processPlan;
+                const std::size_t routeSlots=modulePlan.dynamicRoutes ? std::min<std::size_t>(module.routeCount,maxOscRoutes) : 2u;
+                for(std::size_t r=0;r<routeSlots;++r)
+                    routeAmountRight[r]=modulePlan.dynamicRoutes ? module.routes[r].amount : (r==0 ? module.route1Amount : module.route2Amount);
+                for(std::uint32_t bits=readMask;bits!=0;bits&=bits-1u) {
+                    const auto i=static_cast<std::size_t>(__builtin_ctz(bits));
+                    const auto& target=compiled.readTarget(i);
+                    const float value=effective->stereo.right[i];
+                    switch(target.parameter) {
+                        case ModDestination::WtPosition: positionRight=value; break;
+                        case ModDestination::ProcessAmount: case ModDestination::Process1Amount: case ModDestination::Process2Amount:
+                            if(modulePlan.dynamicProcesses!=(target.parameter==ModDestination::ProcessAmount)) break;
+                            for(std::size_t p=0;p<modulePlan.processCount;++p)
+                                if(modulePlan.processes[p]==target.item) processPlanRight.stages[p].amount=value;
+                            break;
+                        case ModDestination::RouteAmount: case ModDestination::Route1Amount: case ModDestination::Route2Amount:
+                            if(modulePlan.dynamicRoutes!=(target.parameter==ModDestination::RouteAmount)) break;
+                            if(target.item<maxOscRoutes) routeAmountRight[target.item]=value;
+                            break;
+                        default: break;
+                    }
                 }
+                // RIGHT pre routes: RIGHT source taps and RIGHT amounts, in the
+                // same order and arithmetic as LEFT (equal inputs give equal
+                // results). FM too: a different RIGHT frequency runs RIGHT on
+                // its own phase (stereo FM).
+                phaseOffsetRight=0.0; phaseSkewRight=0.0;
+                double frequencyScaleRight=1.0;
+                for(std::size_t r=0;r<modulePlan.preCount;++r) {
+                    const auto& route=modulePlan.preRoutes[r];
+                    if(route.type==OscRouteType::Off || route.source<0 || route.source>=static_cast<int>(previousOscillatorSamples_.size())) continue;
+                    const float source=std::clamp(rightTap(static_cast<std::size_t>(route.source)),-1.0f,1.0f);
+                    const float amount=std::clamp(routeAmountRight[route.amountSlot],-1.0f,1.0f);
+                    if(route.type==OscRouteType::PhaseMod) phaseOffsetRight+=static_cast<double>(source*amount)*0.5;
+                    else if(route.type==OscRouteType::FrequencyMod) frequencyScaleRight*=dsp::fastExp2Audio(static_cast<double>(source*amount)*2.0);
+                    else if(route.type==OscRouteType::PhaseSkew) {
+                        phaseSkewRight+=static_cast<double>(source*amount)*0.42;
+                        phaseSkewRight=std::clamp(phaseSkewRight,-0.44,0.44);
+                    }
+                }
+                baseFrequencyRight=frequency_*frequencyScale*frequencyScaleRight;
+                if(!std::isfinite(baseFrequencyRight) || baseFrequencyRight<=0.0) baseFrequencyRight=20.0;
+                baseFrequencyRight=std::clamp(baseFrequencyRight,1.0,std::max(20.0,sampleRate_*0.49));
+                if(baseFrequencyRight!=baseFrequency && (rightPhaseModules_&moduleBit)==0) {
+                    // RIGHT's frequency departs from LEFT's: its oscillators
+                    // start their own phase from LEFT's (no jump) and keep it.
+                    for(auto& oscillator:moduleOscillators_[m]) oscillator.restartRightPhase();
+                    moduleBlendCenters_[m].restartRightPhase();
+                    rightPhaseModules_|=moduleBit;
+                }
+                rightPhase=(rightPhaseModules_&moduleBit)!=0;
+                // A second oscillator read only when RIGHT's read inputs differ.
+                secondRead=readMask!=0 || rightPhase ||
+                    phaseOffsetRight!=routedPhaseOffset || phaseSkewRight!=routedPhaseSkew;
             }
         }
 
@@ -305,7 +452,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
                 : oscillator.next(table,frequency,sampleRate_,position,processPlan,routedPhaseOffset,routedPhaseSkew);
         };
         float oscillatorMix=0.0f,oscillatorMixRight=0.0f;
-        if(readMask==0) {
+        if(!secondRead) {
             if(count==1) {
                 oscillatorMix=renderOscillator(moduleOscillators_[m][0],baseFrequency);
             } else {
@@ -318,27 +465,32 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
                 const float centre=renderOscillator(moduleBlendCenters_[m],baseFrequency);
                 oscillatorMix=centre+(unisonStack-centre)*blend;
             }
+            // RIGHT differs only after a route reads a different RIGHT source.
+            if(rightSplit) oscillatorMixRight=oscillatorMix;
         } else {
-            // One phase advance per oscillator, LEFT and RIGHT reads.
+            // One phase advance per oscillator (two with stereo FM), LEFT and
+            // RIGHT reads.
             auto& hints=rightSpectralHints_[m];
-            const auto renderStereo=[&](dsp::WavetableOscillator& oscillator,double frequency,float& right) noexcept {
+            const auto renderStereo=[&](dsp::WavetableOscillator& oscillator,double frequency,double frequencyRight,float& right) noexcept {
                 return modulePlan.simple ? oscillator.nextStereoSimple(table,frequency,sampleRate_,position,positionRight,hints,right)
                     : oscillator.nextStereo(table,frequency,sampleRate_,position,processPlan,routedPhaseOffset,routedPhaseSkew,
-                                            positionRight,processPlanRight,phaseOffsetRight,phaseSkewRight,hints,right);
+                                            positionRight,processPlanRight,phaseOffsetRight,phaseSkewRight,hints,right,
+                                            rightPhase ? frequencyRight : 0.0);
             };
             if(count==1) {
-                oscillatorMix=renderStereo(moduleOscillators_[m][0],baseFrequency,oscillatorMixRight);
+                oscillatorMix=renderStereo(moduleOscillators_[m][0],baseFrequency,baseFrequencyRight,oscillatorMixRight);
             } else {
                 float unisonStack=0.0f,unisonStackRight=0.0f;
                 for(unsigned u=0;u<count;++u) {
                     float right=0.0f;
-                    unisonStack+=renderStereo(moduleOscillators_[m][u],baseFrequency*runtime.detuneRatios[u],right);
+                    unisonStack+=renderStereo(moduleOscillators_[m][u],baseFrequency*runtime.detuneRatios[u],
+                                              baseFrequencyRight*runtime.detuneRatios[u],right);
                     unisonStackRight+=right;
                 }
                 unisonStack/=static_cast<float>(count);
                 unisonStackRight/=static_cast<float>(count);
                 float centreRight=0.0f;
-                const float centre=renderStereo(moduleBlendCenters_[m],baseFrequency,centreRight);
+                const float centre=renderStereo(moduleBlendCenters_[m],baseFrequency,baseFrequencyRight,centreRight);
                 oscillatorMix=centre+(unisonStack-centre)*blend;
                 oscillatorMixRight=centreRight+(unisonStackRight-centreRight)*blend;
             }
@@ -355,79 +507,30 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
                                 OscRouteType type,float rawAmount) noexcept {
             if(type==OscRouteType::Off || sourceIndex<0 ||
                sourceIndex>=static_cast<int>(previousOscillatorSamples_.size())) return signal;
-
-            const float source=std::clamp(previousOscillatorSamples_[static_cast<std::size_t>(sourceIndex)],-1.0f,1.0f);
-            const float amount=std::clamp(rawAmount,-1.0f,1.0f);
-            const float depth=std::abs(amount);
-
-            switch(type) {
-                case OscRouteType::RingMod:
-                    // RM: continuously morph dry -> signed multiplication.
-                    return signal*(1.0f-depth)+signal*source*amount;
-
-                case OscRouteType::AmpMod: {
-                    // AM: source controls gain while retaining target polarity.
-                    const float modulated=signal*std::max(0.0f,1.0f+source*amount);
-                    return signal*(1.0f-depth)+modulated*depth;
-                }
-
-                case OscRouteType::Crossfade: {
-                    // XF: replace target progressively with the source oscillator.
-                    // Negative amount crossfades toward an inverted source.
-                    const float sourceSignal=amount>=0.0f ? source : -source;
-                    return signal*(1.0f-depth)+sourceSignal*depth;
-                }
-
-                case OscRouteType::WaveFold: {
-                    // WF: source amplitude drives an audio-rate sine wavefolder.
-                    // This is deliberately aggressive while remaining bounded.
-                    const float drive=1.0f+std::abs(source)*depth*7.0f;
-                    const float folded=dsp::triangleFold(signal*drive);
-                    const float signedFold=amount>=0.0f ? folded : -folded;
-                    return signal*(1.0f-depth)+signedFold*depth;
-                }
-
-                case OscRouteType::LogicXor: {
-                    // XOR: square-polarity interaction. Unlike RM it responds
-                    // only to the source sign, producing hard digital sidebands.
-                    const float sourcePolarity=source>=0.0f ? 1.0f : -1.0f;
-                    const float polarity=amount>=0.0f ? sourcePolarity : -sourcePolarity;
-                    const float logical=signal*polarity;
-                    return signal*(1.0f-depth)+logical*depth;
-                }
-
-                case OscRouteType::RectifyMod: {
-                    // RECT: source magnitude controls how strongly the target is
-                    // driven toward positive or negative full-wave rectification.
-                    const float sourceDepth=depth*std::abs(source);
-                    const float rectified=amount>=0.0f ? std::abs(signal) : -std::abs(signal);
-                    return signal*(1.0f-sourceDepth)+rectified*sourceDepth;
-                }
-
-                case OscRouteType::PhaseMod:
-                case OscRouteType::FrequencyMod:
-                case OscRouteType::PhaseSkew:
-                case OscRouteType::Off:
-                case OscRouteType::Count:
-                    return signal;
-            }
-            return signal;
+            return shapePostRoute(signal,std::clamp(previousOscillatorSamples_[static_cast<std::size_t>(sourceIndex)],-1.0f,1.0f),type,rawAmount);
         };
 
         for(std::size_t r=0;r<modulePlan.postCount;++r) {
             const auto& route=modulePlan.postRoutes[r];
             oscillatorMix=applyPostRoute(oscillatorMix,route.source,route.type,routeAmount(route));
-            // RIGHT: the same post route with RIGHT's amount (the source tap is
-            // the source oscillator's LEFT / reference sample).
-            if(readMask!=0) oscillatorMixRight=applyPostRoute(oscillatorMixRight,route.source,route.type,routeAmountRight[route.amountSlot]);
+            // RIGHT: the same post route with RIGHT's amount and the source
+            // oscillator's RIGHT tap.
+            if constexpr(Stereo) if(rightSplit && route.type!=OscRouteType::Off && route.source>=0 &&
+                                    route.source<static_cast<int>(previousOscillatorSamples_.size()))
+                oscillatorMixRight=shapePostRoute(oscillatorMixRight,std::clamp(rightTap(static_cast<std::size_t>(route.source)),-1.0f,1.0f),
+                                                  route.type,routeAmountRight[route.amountSlot]);
         }
-        if(readMask!=0 && !std::isfinite(oscillatorMixRight)) oscillatorMixRight=0.0f;
+        if(rightSplit && !std::isfinite(oscillatorMixRight)) oscillatorMixRight=0.0f;
 
         if(!std::isfinite(oscillatorMix)) {
             for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
             moduleBlendCenters_[m].reset();oscillatorMix=0.0f;
         }
         previousOscillatorSamples_[m]=std::clamp(oscillatorMix,-1.0f,1.0f);
+        if constexpr(Stereo) {
+            if(rightSplit) { previousOscillatorSamplesRight_[m]=std::clamp(oscillatorMixRight,-1.0f,1.0f); rightTapMask_|=std::uint16_t(1u<<m); }
+            else rightTapMask_&=std::uint16_t(~(1u<<m));
+        }
 
         // mct-origami-stereo-modulation: a module whose LEVEL or filter differs
         // between channels renders LEFT and RIGHT from the same oscillator
@@ -463,16 +566,15 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         const auto& stereo=effective->stereo;
         const bool stereoLevel=((stereo.levelMask>>m)&1u)!=0;
         const bool stereoFilter=effective->filterEnabled && stereo.filterSplit();
-        const bool readSplit=readMask!=0;
         const auto rightBit=std::uint16_t(1u<<m);
 
         float sampleValue=oscillatorMix*envelopeValue;
         // A stereo READ already made RIGHT a different signal: it needs its own
         // filter state even when the coefficients are shared.
-        const float inputRight=readSplit ? oscillatorMixRight*envelopeValue : sampleValue;
+        const float inputRight=rightSplit ? oscillatorMixRight*envelopeValue : sampleValue;
         float sampleRight=inputRight;
         if(effective->filterEnabled) {
-            const bool rightFilter=stereoFilter || readSplit;
+            const bool rightFilter=stereoFilter || rightSplit;
             if(rightFilter && (rightFilterLive_&rightBit)==0) { moduleFiltersRight_[m]=moduleFilters_[m]; rightFilterLive_|=rightBit; } // continue from LEFT's state: no click
             const float input=sampleValue;
             sampleValue=moduleFilters_[m].next(input,effective->filter);
@@ -488,7 +590,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         const float leveled=sampleValue*level;
         sampleValue=leveled*modulePlan.mainBusSend;
         if(!std::isfinite(sampleValue)) {moduleFilters_[m].reset();sampleValue=0.0f;}
-        if(!stereoLevel && !stereoFilter && !readSplit) {
+        if(!stereoLevel && !stereoFilter && !rightSplit) {
             // Same post-filter signal, scaled per user bus. Each destination
             // receives exactly its own send; MAIN is unaffected by user sends.
             if(modulePlan.auxSends && std::isfinite(leveled)) {

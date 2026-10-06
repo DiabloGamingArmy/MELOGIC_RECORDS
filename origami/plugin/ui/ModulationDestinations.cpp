@@ -57,12 +57,55 @@ std::vector<ModulationDestinationEntry> modulationDestinationCatalog(const Instr
     }
     if(bindings.fxDestinations)
         for(const auto& fx:bindings.fxDestinations()) add(juce::String(fx.group),fx.address,juce::String(fx.label));
+
+    // mct-origami-nested-modulation-manual-qa: modulation of modulation. An
+    // LFO's canonical rate, a macro's effective value and the depth of every
+    // complete route, all by stable identity ("LFO 2 -> OSC 2 LEVEL / DEPTH").
+    const auto& mod=state.modulation;
+    const std::size_t plain=out.size();
+    for(std::size_t i=0;i<4;++i)
+        if(mod.lfoActiveMask&(1u<<i)) add(nestedDestinationGroup,lfoRateAddress(i),"LFO "+juce::String(int(i+1))+" RATE",i==0);
+    for(const auto macro:activeMacroSources(mod)) add(nestedDestinationGroup,macroValueAddress(macroIdOf(macro)),macroLabel(mod,macroIdOf(macro)));
+    bool first=true;
+    const std::vector<ModulationDestinationEntry> known(out.begin(),out.begin()+std::ptrdiff_t(plain));
+    for(const auto& route:mod.routes) if(route.id && routeComplete(route)) {
+        add(nestedDestinationGroup,routeDepthAddress(route.id),modulationRouteLabel(known,mod,route)+" / DEPTH",first);
+        first=false;
+    }
     return out;
 }
 
 juce::String modulationDestinationLabel(const std::vector<ModulationDestinationEntry>& catalog,const ModAddress& address) {
     for(const auto& e:catalog) if(e.address==address) return e.group.toUpperCase()+juce::String(juce::CharPointer_UTF8(" \xc2\xb7 "))+e.label;
     return {};
+}
+
+juce::String modulationAddressLabel(const std::vector<ModulationDestinationEntry>& catalog,const ModulationState& mod,const ModAddress& address,int depth) {
+    switch(address.parameter) {
+        case ModDestination::LfoRate: return "LFO "+juce::String(int(address.itemId))+" RATE";
+        case ModDestination::MacroValue: return macroLabel(mod,address.itemId);
+        case ModDestination::RouteDepth: {
+            for(const auto& r:mod.routes)
+                if(r.id && r.id==address.itemId)
+                    return depth>=4 ? juce::String("ROUTE ")+juce::String(int(r.id))+" / DEPTH"
+                                    : "["+modulationRouteLabel(catalog,mod,r,depth+1)+"] DEPTH";
+            return "MISSING ROUTE / DEPTH";
+        }
+        default: break;
+    }
+    for(const auto& e:catalog)
+        if(e.address==address) return e.group=="Global" || e.group==nestedDestinationGroup ? e.label : e.group.toUpperCase()+" "+e.label;
+    return "UNAVAILABLE DESTINATION";
+}
+
+juce::String modulationRouteLabel(const std::vector<ModulationDestinationEntry>& catalog,const ModulationState& mod,const ModRoute& route,int depth) {
+    juce::String source=modulationSourceLabel(mod,route.source);
+    if(isOperatorSource(route.source)) {
+        source="NODES";
+        if(const auto* op=findControlOperator(mod,operatorIdOf(route.source)))
+            if(const auto* info=controlOpInfo(op->type)) source+=": "+juce::String(info->label);
+    }
+    return source+juce::String(juce::CharPointer_UTF8(" \xe2\x86\x92 "))+modulationAddressLabel(catalog,mod,route.destination,depth);
 }
 
 }

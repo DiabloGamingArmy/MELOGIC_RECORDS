@@ -11,6 +11,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <limits>
+#include <algorithm>
+#include <iterator>
 using namespace mct::origami;
 namespace {
 unsigned checks=0;
@@ -116,6 +118,90 @@ void states() {
     std::array<float,256> al{},ar{},bl{},br{};float* ap[]{al.data(),ar.data()};float* bp[]{bl.data(),br.data()};
     a.process(ap,2,256);b.process(bp,2,256);check(al==bl && ar==br,"restored instrument renders identically");
 }
+// mct-origami-nested-modulation-manual-qa: v34 (nested routes by stable id,
+// macro names, signed bend endpoints, +/-48 st MAIN TUNING): exact round
+// trip, and malformed v34 input is rejected without touching the state.
+void nestedStateV34() {
+    auto eOwner=std::make_unique<OrigamiEngine>();auto& e=*eOwner;
+    auto s=e.instrumentState();
+    check(encodeInstrumentState(s)[7]<34,"Init keeps its older format (no v34 feature used)");
+    auto& m=s.modulation;
+    const auto osc=s.oscillators[0].id;
+    m.routes[0]={1,true,ModSource::Lfo2,{ModDestination::Level,osc,0},0.4f,true};
+    m.routes[1]={2,true,ModSource::Macro1,routeDepthAddress(1),0.3f,false};
+    m.routes[2]={3,true,ModSource::Lfo3,lfoRateAddress(1),0.2f,true};
+    m.routes[3]={4,true,ModSource::Macro1,macroValueAddress(2),0.5f,false};
+    m.routes[4]={5,true,ModSource::ModWheel,{ModDestination::MainTuning,0,0},0.125f,false};
+    m.nextRouteId=6;
+    const char wobble[]="Wobble";
+    std::copy(std::begin(wobble),std::end(wobble),m.macroNames[1].begin());
+    s.performance.pitchBendRangeSemitones=-3.0f; s.performance.pitchBendDownSemitones=5.0f;
+    check(validInstrumentState(s),"v34 rig is valid");
+    const auto bytes=encodeInstrumentState(s);
+    check(bytes[7]==34,"nested routes, a macro name and signed bend endpoints save as v34");
+    const auto sameRoutes=[](const ModulationState& a,const ModulationState& b) {
+        for(std::size_t i=0;i<a.routes.size();++i) {
+            const auto& x=a.routes[i]; const auto& y=b.routes[i];
+            if(x.id!=y.id || x.enabled!=y.enabled || x.source!=y.source || !(x.destination==y.destination) || x.amount!=y.amount || x.bipolar!=y.bipolar) return false;
+        }
+        return true;
+    };
+    InstrumentState out;
+    check(decodeInstrumentState(bytes.data(),bytes.size(),out) && sameRoutes(out.modulation,s.modulation)
+          && out.modulation.macroNames==s.modulation.macroNames && out.performance.pitchBendRangeSemitones==-3.0f
+          && out.performance.pitchBendDownSemitones==5.0f && encodeInstrumentState(out)==bytes,"v34 exact round trip");
+    bool truncated=true;
+    for(std::size_t n=0;n<bytes.size();++n) { InstrumentState t; truncated&=!decodeInstrumentState(bytes.data(),n,t); }
+    check(truncated,"every truncation of a v34 state is rejected");
+    { auto future=bytes; word(future,4,35); check(!decodeInstrumentState(future.data(),future.size(),out),"an unknown future version (35) is rejected"); }
+    // The state ends with the names: per macro a length word and one word per
+    // character. MACRO 2 is "Wobble" (6), MACRO 3..16 are empty (14 words).
+    const std::size_t tail=14*4,name2=bytes.size()-tail-6*4;
+    { auto bad=bytes; word(bad,bad.size()-4,30); check(!decodeInstrumentState(bad.data(),bad.size(),out),"a macro name longer than its capacity is rejected"); }
+    { auto bad=bytes; word(bad,name2,7); check(!decodeInstrumentState(bad.data(),bad.size(),out),"a control character in a macro name is rejected"); }
+    { auto bad=bytes; word(bad,name2,0); check(!decodeInstrumentState(bad.data(),bad.size(),out),"an embedded NUL in a macro name is rejected"); }
+    { auto bad=bytes; word(bad,name2,0x141); check(!decodeInstrumentState(bad.data(),bad.size(),out),"a non-byte macro name character is rejected"); }
+    {
+        auto good=bytes; word(good,name2,'B');
+        check(decodeInstrumentState(good.data(),good.size(),out) && out.modulation.macroNames[1][0]=='B',"a printable edit decodes (the offsets above are the name)");
+    }
+    // Graph-level corruption. The encoder refuses invalid states, so a valid
+    // state is stored and its route destination ids are patched: the itemIds
+    // are one word per route, in route order (here 0, 1, 2, 2, 0, 4).
+    {
+        auto g=s;
+        g.modulation.routes[5]={6,true,ModSource::Lfo2,lfoRateAddress(3),0.2f,true}; // LFO 2 -> LFO 4 RATE
+        g.modulation.nextRouteId=7;
+        check(validInstrumentState(g),"graph rig valid");
+        const auto b=encodeInstrumentState(g);
+        const std::uint32_t ids[]{0,1,2,2,0,4};
+        std::size_t at=0;
+        for(std::size_t o=0;o+24<=b.size() && !at;o+=4) {
+            bool match=true;
+            for(std::size_t k=0;k<6 && match;++k)
+                match=b[o+4*k]==0 && b[o+4*k+1]==0 && b[o+4*k+2]==0 && b[o+4*k+3]==ids[k];
+            if(match) at=o;
+        }
+        check(at!=0 && decodeInstrumentState(b.data(),b.size(),out),"the route destination ids are located");
+        auto cyc=b; word(cyc,at+5*4,3); // LFO 2 -> LFO 3 RATE while LFO 3 -> LFO 2 RATE
+        check(!decodeInstrumentState(cyc.data(),cyc.size(),out),"a stored feedback loop is rejected on load");
+        auto self=b; word(self,at+1*4,2); // route 2 modulating its own depth
+        check(!decodeInstrumentState(self.data(),self.size(),out),"a route modulating its own depth is rejected on load");
+        auto dangling=b; word(dangling,at+1*4,99);
+        check(!decodeInstrumentState(dangling.data(),dangling.size(),out),"a depth route to a missing route is rejected on load");
+        auto lfo=b; word(lfo,at+2*4,9);
+        check(!decodeInstrumentState(lfo.data(),lfo.size(),out),"LFO RATE of a nonexistent LFO is rejected on load");
+        auto macro=b; word(macro,at+3*4,12);
+        check(!decodeInstrumentState(macro.data(),macro.size(),out),"a MACRO destination that does not exist is rejected on load");
+    }
+    // Byte flips anywhere: never a crash; whatever loads is a valid state.
+    bool safe=true;
+    for(std::size_t i=12;i<bytes.size();++i) for(std::uint8_t mask:{std::uint8_t(0x01),std::uint8_t(0x80),std::uint8_t(0xff)}) {
+        auto f=bytes; f[i]^=mask; InstrumentState t;
+        if(decodeInstrumentState(f.data(),f.size(),t)) safe&=validInstrumentState(t);
+    }
+    check(safe,"bit-flipped v34 states load only when valid");
+}
 void patches() {
     Patch p,out;std::string error;
     p.parameters[0]=.625f;
@@ -130,4 +216,4 @@ void patches() {
     check(!parsePatch(partial,out,error),"partial historical set rejected");
 }
 }
-int main() {try {states();patches();std::cout<<"PASS: "<<checks<<" state checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
+int main() {try {states();nestedStateV34();patches();std::cout<<"PASS: "<<checks<<" state checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
