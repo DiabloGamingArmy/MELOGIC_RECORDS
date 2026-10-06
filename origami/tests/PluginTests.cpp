@@ -3846,7 +3846,15 @@ void synthDynamicMacrosAudit() {
     check(macroSource(1)==ModSource::Macro1 && macroSource(4)==ModSource::Macro4 && macroIdOf(ModSource::Macro3)==3,
           "MACRO 1..4 keep their original ModSource identity (201..204)");
     check(encodeInstrumentState(p.getUiInstrumentState())[7]<31,"Init still saves in the pre-macro format (no new version)");
-    check(p.getParameters().isEmpty(),"no host parameters are registered (unchanged: macros were never host-automatable)");
+    // mct-origami-nested-modulation-manual-qa: the DAW sees one stable,
+    // immutable parameter per macro slot (macro.1 .. macro.16).
+    {
+        bool ids=p.getParameters().size()==int(maxMacros);
+        for(int i=0;ids && i<p.getParameters().size();++i)
+            if(auto* withId=dynamic_cast<juce::AudioProcessorParameterWithID*>(p.getParameters()[i])) ids=withId->getParameterID()=="macro."+juce::String(i+1);
+            else ids=false;
+        check(ids,"16 host macro parameters with immutable IDs macro.1 .. macro.16");
+    }
     const auto a5=panel->addMacro();
     check(a5==5 && macroActive(mod(),5) && panel->cardCount()==5,"add MACRO 5");
     std::vector<std::size_t> added; for(int i=0;i<3;++i) added.push_back(panel->addMacro());

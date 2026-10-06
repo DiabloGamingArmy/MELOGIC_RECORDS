@@ -276,6 +276,18 @@ std::size_t pruneRoutesOfRemovedMacros(ModulationState& state) noexcept {
     }
     return removed;
 }
+std::size_t pruneDanglingNestedRoutes(ModulationState& state) noexcept {
+    std::size_t removed=pruneRoutesOfRemovedMacros(state);
+    for(bool again=true;again;) {
+        again=false;
+        for(const auto& r:state.routes) {
+            if(!r.id || r.destination.parameter!=ModDestination::RouteDepth) continue;
+            const auto target=routeIndexOf(state,r.destination.itemId);
+            if(target>=state.routes.size() || target==routeIndexOf(state,r.id)) { removed+=removeRouteCascade(state,r.id); again=true; break; }
+        }
+    }
+    return removed;
+}
 bool isGlobalDestination(ModDestination d) noexcept {
     return d==ModDestination::Cutoff || d==ModDestination::Resonance || d==ModDestination::MasterGain ||
            d==ModDestination::MainTuning || d==ModDestination::Transpose ||

@@ -512,6 +512,11 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
         oscillatorModules_.consumeSnapshot(hostModules_,hostModuleGeneration_);
     if(oscillatorGenerationChanged) startDezip();
     const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
+    if(hostMacrosValid_)
+        for(std::size_t i=0;i<maxMacros;++i) {
+            const float v=hostMacros_[i];
+            if(std::isfinite(v)) audioModulation_.macros[i]=std::clamp(v,0.0f,1.0f);
+        }
     bool moduleTopologyChanged=false;
     for(std::size_t i=0;i<hostModules_.size();++i) {
         if(compiledModuleIds_[i]!=hostModules_[i].id) {
@@ -757,6 +762,12 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             runtimeVisualization_.sourceValues[9]=sources[10];
             runtimeVisualization_.sourceValues[10]=sources[11];
             runtimeVisualization_.sourceValues[11]=sources[12];
+            runtimeVisualization_.modulatedMacros=0;
+            for(std::size_t id=1;id<=maxMacros;++id) {
+                const bool modulated=compiledModulation_.macroModulated(id);
+                runtimeVisualization_.effectiveMacros[id-1]=modulated ? effectiveMacros_[id-1] : smoothedMacros_[id-1];
+                if(modulated) runtimeVisualization_.modulatedMacros|=1u<<(id-1);
+            }
             runtimeVisualization_.sourcePhases[7]=static_cast<float>(globalFunction_.phase());
             runtimeVisualization_.sourcePhases[8]=static_cast<float>(globalRandom_.phase());
             runtimeVisualization_.sourcePhases[9]=std::clamp(globalChaos_.xNormalized()*0.5f+0.5f,0.0f,1.0f);

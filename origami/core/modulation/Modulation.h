@@ -449,6 +449,10 @@ std::size_t removeRouteCascade(ModulationState&,std::uint32_t routeId) noexcept;
 // Removes every route whose source or nested destination is a macro that no
 // longer exists (macro deletion), then cascades depth routes.
 std::size_t pruneRoutesOfRemovedMacros(ModulationState&) noexcept;
+// Every nested reference that no longer resolves (a depth route whose target
+// route is gone, a macro that was removed): pruned, cascading. Any view's
+// deletion stays valid through this one canonical repair.
+std::size_t pruneDanglingNestedRoutes(ModulationState&) noexcept;
 // Deterministic repair of legacy/corrupt duplicate pairs (load path only):
 // duplicates merge into the earliest route of the pair. Its amount becomes the
 // clamped sum of the enabled duplicates (the compiler always summed them), it
@@ -932,6 +936,7 @@ public:
                                std::array<std::uint32_t,operatorSlotCount>* eventCounts=nullptr,
                                const ModulationFrame* global=nullptr,const StereoSourceValues* voiceStereo=nullptr) const noexcept;
     bool lfoRateModulated(std::size_t lfo) const noexcept { return lfo<4 && lfoRateGroup_[lfo]>=0; }
+    bool macroModulated(std::size_t id) const noexcept { return id>=1 && id<=maxMacros && macroGroup_[id-1]>=0; }
 private:
     struct Group {
         ModAddress address{};std::size_t slot=0;
@@ -1050,9 +1055,10 @@ private:
     float depthCorrectionVoice(const Group&,const std::array<float,voiceSourceCount>&,const ModulationFrame& local,const ModulationFrame& global) const noexcept;
     void buildNestedPlan(const ModulationState&) noexcept;
     bool nestedPlan_=false,voiceNestedPlan_=false,needsNewestVoice_=false;
-    std::array<std::int8_t,4> lfoRateGroup_{{-1,-1,-1,-1}};
-    std::array<std::int8_t,maxMacros> macroGroup_{};
-    std::array<std::int8_t,ModulationState::capacity> depthGroup_{},routeGroup_{};
+    template<std::size_t N> static constexpr std::array<std::int8_t,N> noGroups() noexcept { std::array<std::int8_t,N> a{}; for(auto& v:a) v=-1; return a; }
+    std::array<std::int8_t,4> lfoRateGroup_=noGroups<4>();
+    std::array<std::int8_t,maxMacros> macroGroup_=noGroups<maxMacros>();
+    std::array<std::int8_t,ModulationState::capacity> depthGroup_=noGroups<ModulationState::capacity>(),routeGroup_=noGroups<ModulationState::capacity>();
     std::array<std::uint8_t,ModulationState::capacity> routeSlot_{};
     std::array<ProgramStep,4+maxMacros+operatorSlotCount+ModulationState::capacity> globalProgram_{},voiceProgram_{};
     std::size_t globalProgramCount_=0,voiceProgramCount_=0;

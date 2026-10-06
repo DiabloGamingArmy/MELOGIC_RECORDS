@@ -34,6 +34,10 @@ struct RuntimeVisualizationSnapshot {
     std::array<float,16> oscillatorPhases{};
     std::array<std::array<float,waveformBins>,16> oscillatorWaveforms{};
     std::array<std::array<std::uint8_t,waveformBins>,16> oscillatorWaveformValid{};
+    // mct-origami-nested-modulation-manual-qa: each macro's EFFECTIVE value
+    // (base + incoming modulation) and which macros are modulated (bit id-1).
+    std::array<float,maxMacros> effectiveMacros{};
+    std::uint32_t modulatedMacros=0;
     bool active=false;
 };
 class OrigamiEngine {
@@ -244,7 +248,14 @@ public:
     // Effective macro value (base + incoming modulation), audio-thread value
     // published for the UI via the visualization snapshot.
     const std::array<float,maxMacros>& effectiveMacros() const noexcept { return effectiveMacros_; }
+    // Audio thread, before beginHostBlock(): the host-automatable macro BASE
+    // values (the DAW parameters). They replace the model's macro values
+    // after every modulation-state hand-over, so a UI publication can never
+    // momentarily restore an older automated value.
+    void setHostMacroBases(const std::array<float,maxMacros>& values) noexcept { hostMacros_=values; hostMacrosValid_=true; }
 private:
+    std::array<float,maxMacros> hostMacros_{};
+    bool hostMacrosValid_=false;
     struct DezipRamp { std::uint32_t remaining=0; std::array<float,dezipFieldCount> step{}; };
     std::array<DezipRamp,OscillatorModuleBank::capacity> dezipRamps_{};
     std::uint32_t dezipActive_=0;

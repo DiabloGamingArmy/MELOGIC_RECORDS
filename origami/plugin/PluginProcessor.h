@@ -19,6 +19,7 @@
 // mct-origami-playable-keyboard-audio-v23.1
 #pragma once
 #include <JuceHeader.h>
+#include <functional>
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
 #include "core/fx/FxGraph.h"
@@ -31,6 +32,27 @@
 // mct-origami-audio-reengineer-p04-ui-telemetry-decimation
 
 // mct-origami-audio-reengineer-p03-midi-preallocation
+
+// mct-origami-nested-modulation-manual-qa: one DAW-automatable parameter per
+// stable macro slot. The ID is immutable ("macro.<id>", MACRO 1..4 keep ids
+// 1..4); the parameter holds the macro's BASE value (knob / automation /
+// preset). Incoming modulation changes only the engine's EFFECTIVE value and
+// is never written here. The display name follows the macro's custom name.
+class OrigamiMacroParameter final : public juce::AudioParameterFloat {
+public:
+    OrigamiMacroParameter(unsigned macroId,std::function<juce::String(unsigned)> nameOf)
+        : juce::AudioParameterFloat(juce::ParameterID{"macro."+juce::String(macroId),1},"Macro "+juce::String(macroId),
+                                    juce::NormalisableRange<float>(0.0f,1.0f),0.0f),
+          macroId_(macroId),nameOf_(std::move(nameOf)) {}
+    juce::String getName(int maximumStringLength) const override {
+        const auto name=nameOf_ ? nameOf_(macroId_) : juce::String("Macro "+juce::String(macroId_));
+        return maximumStringLength>0 ? name.substring(0,maximumStringLength) : name;
+    }
+    unsigned macroId() const noexcept { return macroId_; }
+private:
+    unsigned macroId_;
+    std::function<juce::String(unsigned)> nameOf_;
+};
 
 class OrigamiAudioProcessor final : public juce::AudioProcessor {
 public:
@@ -67,6 +89,20 @@ public:
     bool setUiOscillatorEnabled(mct::origami::OscillatorModuleId,bool) noexcept;
     bool getUiOscillatorEnabled(mct::origami::OscillatorModuleId) const noexcept;
     bool setUiMacro(unsigned,float) noexcept;
+    // mct-origami-nested-modulation-manual-qa: DAW macro parameters.
+    // A UI drag is one host gesture (begin / values / end), so the DAW can
+    // record it; the index is the stable macro id - 1.
+    void beginUiMacroGesture(unsigned index) noexcept;
+    void endUiMacroGesture(unsigned index) noexcept;
+    OrigamiMacroParameter* macroParameter(unsigned index) const noexcept { return index<macroParameters_.size() ? macroParameters_[index] : nullptr; }
+    // Message thread: bring the model's macro BASE values up to date with
+    // the parameters (host automation moved them). Returns true when changed.
+    bool syncUiMacrosFromHost() noexcept;
+    // Macro names (stable id - 1). Empty restores "MACRO n". Printable ASCII,
+    // up to 23 characters; the DAW parameter name follows.
+    bool setUiMacroName(unsigned index,const juce::String& name) noexcept;
+    juce::String getUiMacroName(unsigned index) const noexcept;
+    juce::String macroDisplayName(unsigned macroId) const;
     bool setUiLfo(const mct::origami::LfoSettings&) noexcept;
     bool setUiModulationState(const mct::origami::ModulationState&) noexcept;
     unsigned addUiRoute() noexcept;
@@ -153,6 +189,13 @@ public:
     void resetAudioContinuityDiagnostics() noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
+    // DAW macro parameters (owned by juce::AudioProcessor) by macro id - 1.
+    std::array<OrigamiMacroParameter*,mct::origami::maxMacros> macroParameters_{};
+    // Names for the host (read from any host thread under this lock).
+    juce::SpinLock macroNameLock_;
+    std::array<std::array<char,mct::origami::ModulationState::macroNameCapacity>,mct::origami::maxMacros> hostMacroNames_{};
+    void setMacroParametersFromModel(const mct::origami::ModulationState&) noexcept;
+    void publishMacroNamesToHost(const mct::origami::ModulationState&) noexcept;
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
     void dispatchMidi(const juce::MidiMessage&) noexcept;
     double currentArpBpm() const noexcept;
