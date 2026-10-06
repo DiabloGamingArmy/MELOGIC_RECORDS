@@ -607,7 +607,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
     const double normalization=hostNormalization_;
     const float bendUpRange=hostBendRange_;
     const float bendDownRange=hostBendDownRange_;
-    ModulationFrame frame;
+    alignas(64) ModulationFrame frame;
     OscillatorProcessPlans sharedProcesses;
     const auto visualizationPeriod=std::max<std::size_t>(1,
         static_cast<std::size_t>(std::lround(sampleRate_/1000.0))) * (reduceVisualizationRate_ ? 4u : 1u);

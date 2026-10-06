@@ -135,12 +135,6 @@ float performanceSourceCurveValue(const PerformanceSourceCurve& curve,float inpu
     return std::clamp(a.y+(b.y-a.y)*t,0.0f,1.0f);
 }
 
-const LfoSettings& lfoSettings(const ModulationState& s,std::size_t i) noexcept {
-    switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
-}
-LfoSettings& lfoSettings(ModulationState& s,std::size_t i) noexcept {
-    switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
-}
 
 // ---- mct-origami-nested-modulation-manual-qa: rate mapping, dependency graph
 float lfoRateToNormalized(float hz) noexcept {

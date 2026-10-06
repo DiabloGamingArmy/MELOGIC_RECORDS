@@ -494,8 +494,13 @@ using ModulationSourceSlots=std::array<float,modulationSourceSlotCount>;
 // mapping and polarity transform. 0 for a disabled or incomplete route.
 float routeContribution(const ModRoute&,const ModulationState&,const ModulationSourceSlots&) noexcept;
 
-const LfoSettings& lfoSettings(const ModulationState&,std::size_t index) noexcept;
-LfoSettings& lfoSettings(ModulationState&,std::size_t index) noexcept;
+// Inline: the renderers ask for every LFO's settings per voice per sample.
+inline const LfoSettings& lfoSettings(const ModulationState& s,std::size_t i) noexcept {
+    switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
+}
+inline LfoSettings& lfoSettings(ModulationState& s,std::size_t i) noexcept {
+    switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
+}
 
 bool isGlobalDestination(ModDestination) noexcept;
 bool validModulation(const ModulationState&,const std::array<OscillatorModuleState,16>&) noexcept;

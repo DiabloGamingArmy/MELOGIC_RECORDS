@@ -163,7 +163,7 @@ private:
     bool active_ = false, releasing_ = false;
     // Reuse storage; default construction of this large editable-state snapshot
     // must not run for every voice/sample when no voice modulation is present.
-    ModulationFrame localFrame_{};
+    alignas(64) ModulationFrame localFrame_{}; // aligned: its module copies run every sample
     dsp::OscProcessPlan processScratch_{};
     VoiceVisualizationSnapshot visualization_{};
     // mct-origami-stereo-modulation: RIGHT's filter state, cold data kept at the end of the voice (the mono hot
