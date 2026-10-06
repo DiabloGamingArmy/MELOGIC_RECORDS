@@ -3833,6 +3833,14 @@ void captureKeyboardInputAudit() {
     juce::SharedResourcePointer<ui::UserPreferences> preferences;
     const bool previous=preferences->captureKeyboardInput();
     { ui::UserPreferences fresh; check(!fresh.captureKeyboardInput(),"CAPTURE KEYBOARD INPUT defaults to OFF"); }
+    {
+        // Persistence: a settings file outlives the instance (a later session,
+        // another plugin instance or format reads the same value).
+        const juce::TemporaryFile temp(".settings");
+        { ui::UserPreferences a(temp.getFile()); check(!a.captureKeyboardInput(),"a new settings file starts OFF"); a.setCaptureKeyboardInput(true); }
+        { ui::UserPreferences b(temp.getFile()); check(b.captureKeyboardInput(),"ON persists across sessions / instances"); b.setCaptureKeyboardInput(false); }
+        { ui::UserPreferences c(temp.getFile()); check(!c.captureKeyboardInput(),"OFF persists too"); }
+    }
     auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
@@ -3914,6 +3922,8 @@ void nestedModulationUiAudit() {
     auto* m1=p.macroParameter(0);
     check(m1!=nullptr && m1->getParameterID()=="macro.1" && m1->getName(64)=="Macro 1" && p.macroParameter(15)->getParameterID()=="macro.16",
           "host macro parameters: immutable ids, default names");
+    check(p.macroParameter(4)->getName(64)=="Macro 5 (inactive)" && p.macroParameter(15)->getName(64)=="Macro 16 (inactive)",
+          "a slot without a macro is named (inactive) in the DAW");
     static_cast<juce::AudioProcessorParameter*>(m1)->setValue(0.7f); // DAW automation (no notification back to the DAW)
     block();
     p.getUiRuntimeVisualizationSnapshot(); // the editor's poll follows automation into the model
@@ -4133,6 +4143,8 @@ void synthDynamicMacrosAudit() {
     }
     const auto a5=panel->addMacro();
     check(a5==5 && macroActive(mod(),5) && panel->cardCount()==5,"add MACRO 5");
+    check(p.macroParameter(4)->getName(64)=="Macro 5" && p.macroParameter(5)->getName(64)=="Macro 6 (inactive)",
+          "adding MACRO 5 activates its DAW slot name (same id macro.5)");
     std::vector<std::size_t> added; for(int i=0;i<3;++i) added.push_back(panel->addMacro());
     check(added==std::vector<std::size_t>{6,7,8} && panel->cardCount()==8,"add several (6, 7, 8)");
     // Assign MACRO 5 (two routes + a NODES input) and MACRO 7 (one route).

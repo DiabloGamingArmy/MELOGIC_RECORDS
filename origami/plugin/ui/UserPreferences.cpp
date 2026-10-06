@@ -6,17 +6,25 @@ namespace mct::origami::ui {
 namespace {
 std::atomic<bool> volatileStorage{false};
 constexpr const char* captureKeyboardKey="captureKeyboardInput";
-}
-
-UserPreferences::UserPreferences() {
-    if(volatileStorage.load()) return;
+juce::PropertiesFile::Options storageOptions() {
     juce::PropertiesFile::Options options;
     options.applicationName="Preferences";
     options.folderName="MCT Origami";
     options.filenameSuffix=".settings";
     options.osxLibrarySubFolder="Application Support";
     options.storageFormat=juce::PropertiesFile::storeAsXML;
-    file_=std::make_unique<juce::PropertiesFile>(options);
+    return options;
+}
+}
+
+UserPreferences::UserPreferences() {
+    if(volatileStorage.load()) return;
+    file_=std::make_unique<juce::PropertiesFile>(storageOptions());
+    captureKeyboardInput_=file_->getBoolValue(captureKeyboardKey,false);
+}
+
+UserPreferences::UserPreferences(const juce::File& storage) {
+    file_=std::make_unique<juce::PropertiesFile>(storage,storageOptions());
     captureKeyboardInput_=file_->getBoolValue(captureKeyboardKey,false);
 }
 

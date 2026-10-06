@@ -11,6 +11,8 @@ namespace mct::origami::ui {
 class UserPreferences final : public juce::ChangeBroadcaster {
 public:
     UserPreferences();
+    // A specific settings file (tests: a temporary file, never the user's).
+    explicit UserPreferences(const juce::File& storage);
     ~UserPreferences() override;
 
     // CAPTURE KEYBOARD INPUT (default OFF). OFF: Origami handles no keyboard
