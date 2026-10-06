@@ -257,7 +257,7 @@ std::vector<Scenario> matrix() {
         for(const auto& o:p.getUiInstrumentState().oscillators) if(o.id && o.id!=firstOscillator(p)) { id=o.id; break; }
         auto st=p.getUiOscillatorState(id);
         st.level=0.5f+0.25f*std::sin(0.05f*float(b)); p.setUiOscillatorState(id,st); }});
-    m.push_back({"knob drag: OSC 1 LEVEL parameter, typical",48000,256,8,typical,[](OrigamiAudioProcessor& p,std::size_t b){
+    m.push_back({"knob drag: OSC 1 LEVEL param, typical",48000,256,8,typical,[](OrigamiAudioProcessor& p,std::size_t b){
         p.setUiParameter(ParameterId::OscLevel,0.5f+0.25f*std::sin(0.05f*float(b))); }});
     m.push_back({"knob drag: route amount, typical",48000,256,8,typical,[](OrigamiAudioProcessor& p,std::size_t b){
         auto mod=p.getUiInstrumentState().modulation;
