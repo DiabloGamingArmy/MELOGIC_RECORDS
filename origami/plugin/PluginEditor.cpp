@@ -63,7 +63,9 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner,std::function
             return out;
         },
         [&owner]{return owner.getUiModelRevision();},
-        [&owner]{return owner.getUiNodesDiagnostics();}};
+        [&owner]{return owner.getUiNodesDiagnostics();},
+        [&owner](unsigned index,bool begin){ if(begin) owner.beginUiMacroGesture(index); else owner.endUiMacroGesture(index); },
+        [&owner,routesChanged](unsigned index,const juce::String& name){ const bool ok=owner.setUiMacroName(index,name); if(ok && routesChanged) routesChanged(); return ok; }};
 }
 }
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)

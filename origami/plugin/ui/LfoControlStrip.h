@@ -140,6 +140,9 @@ public:
 
     void resized() override;
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
+    // mct-origami-nested-modulation-manual-qa: LFO RATE is a destination.
+    bool rateModulated() const noexcept;
 
 private:
     struct Content final : juce::Component {
@@ -148,6 +151,7 @@ private:
         void paint(juce::Graphics&) override;
     };
     void configureRateKnob();
+    float rateKnobProportion(float hz);
     void refreshRateField();
     void rateKnobMoved();
     void commitRateText();

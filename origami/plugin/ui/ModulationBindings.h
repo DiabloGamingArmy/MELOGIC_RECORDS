@@ -6,6 +6,7 @@
 #include "core/InstrumentState.h"
 #include "core/Voice.h"
 #include "core/Engine.h"
+#include <JuceHeader.h>
 #include <functional>
 #include <string>
 #include <vector>
@@ -36,5 +37,16 @@ struct ModulationBindings {
     std::function<std::uint64_t()> modelRevision;
     // N07: the engine's NODES diagnostics counters (compiles, updates, skips...).
     std::function<OrigamiEngine::NodesDiagnostics()> nodesDiagnostics;
+    // mct-origami-nested-modulation-manual-qa: a macro knob drag is one DAW
+    // gesture (index = stable id - 1; true = begin, false = end), and macro
+    // renaming (empty = the default name).
+    std::function<void(unsigned,bool)> macroGesture;
+    std::function<bool(unsigned,const juce::String&)> macroName;
 };
+// The macro's label everywhere (SYNTH, Matrix, NODES): its custom name or
+// "MACRO n". Stable id, never a position.
+inline juce::String macroLabel(const ModulationState& state,std::size_t id) {
+    if(id>=1 && id<=maxMacros && state.macroNames[id-1][0]!='\0') return juce::String(state.macroNames[id-1].data()).toUpperCase();
+    return "MACRO "+juce::String(int(id));
+}
 }

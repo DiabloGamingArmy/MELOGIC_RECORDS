@@ -3239,6 +3239,9 @@ public:
             s.setName("FX Macro "+juce::String(int(i)+1));
             // The first four EXISTING canonical macros (by stable id): no second engine.
             s.onValueChange=[this,i]{if(bindings_.macro && ids_[i]!=0) bindings_.macro(unsigned(ids_[i]-1),float(sliders_[i].getValue()));};
+            // mct-origami-nested-modulation-manual-qa: one DAW gesture per drag.
+            s.onDragStart=[this,i]{ if(bindings_.macroGesture && ids_[i]!=0) bindings_.macroGesture(unsigned(ids_[i]-1),true); };
+            s.onDragEnd=[this,i]{ if(bindings_.macroGesture && ids_[i]!=0) bindings_.macroGesture(unsigned(ids_[i]-1),false); };
             addAndMakeVisible(s);
         }
     }
@@ -3248,6 +3251,8 @@ public:
         for(std::size_t i=0;i<sliders_.size();++i) {
             const auto id=i<macros.size() ? macroIdOf(macros[i]) : std::size_t(0);
             changed|=ids_[i]!=id; ids_[i]=id;
+            const auto label=id!=0 ? macroLabel(state.modulation,id) : juce::String();
+            changed|=labels_[i]!=label; labels_[i]=label;
             sliders_[i].setVisible(id!=0);
             if(id!=0 && !sliders_[i].isMouseButtonDown()) sliders_[i].setValue(state.modulation.macros[id-1],juce::dontSendNotification);
         }
@@ -3268,11 +3273,12 @@ private:
         for(int i=0;i<4;++i) {
             if(ids_[std::size_t(i)]==0) continue;
             auto r=juce::Rectangle<int>(area.getX()+i*cell,area.getY(),cell,area.getHeight()).withTrimmedBottom(16);
-            text(g,"MACRO "+juce::String(int(ids_[std::size_t(i)])),r.removeFromBottom(16),Type::label,Palette::muted(),juce::Justification::centred);
+            text(g,labels_[std::size_t(i)],r.removeFromBottom(16),Type::label,Palette::muted(),juce::Justification::centred);
         }
     }
     ModulationBindings bindings_;
     std::array<juce::Slider,4> sliders_;
+    std::array<juce::String,4> labels_; // custom macro names (stable id)
     std::array<std::size_t,4> ids_{{1,2,3,4}};
 };
 

@@ -296,6 +296,9 @@ public:
     void requestRemoveMacro(std::size_t id); // routed: in-card confirmation; else immediate
     bool undo();
     bool redo();
+    // Rename by stable id (one undo step; empty restores "MACRO n").
+    bool renameMacro(std::size_t id,const juce::String& name);
+    juce::Label* titleLabel(std::size_t id) const noexcept;
     bool canUndo() const noexcept { return !undo_.empty(); }
     bool canRedo() const noexcept { return !redo_.empty(); }
 
@@ -315,7 +318,11 @@ public:
     class Card;
 private:
     struct Step { bool added=false; std::size_t id=0; float value=0.0f; std::vector<ModRoute> routes;
-                  std::vector<std::pair<std::uint32_t,std::uint8_t>> inputs; }; // NODES inputs it fed
+                  std::vector<std::pair<std::uint32_t,std::uint8_t>> inputs; // NODES inputs it fed
+                  // mct-origami-nested-modulation-manual-qa: renames (and a removed macro's name).
+                  bool renamed=false;
+                  std::array<char,ModulationState::macroNameCapacity> name{},oldName{}; };
+    bool applyName(std::size_t id,const std::array<char,ModulationState::macroNameCapacity>&);
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     bool applyRemove(std::size_t id,Step&);
     bool applyAdd(const Step&);
