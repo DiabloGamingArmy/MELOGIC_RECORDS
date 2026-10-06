@@ -9,6 +9,7 @@
 #include "core/dsp/Filter.h"
 #include "core/RealtimeThreadPolicy.h"
 #include "core/preset/Patch.h"
+#include "tests/OptimizedPathGolden.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -898,6 +899,24 @@ void performanceSourceCurveAudit() {
 }
 
 
+// mct-origami-dsp-performance-stereo-chain: every optimised path renders the
+// pre-optimisation output bit for bit (hashes captured on 378ad97), at block
+// sizes 32 / 256 / 1000, deterministically.
+void optimizedPathGoldenAudit() {
+    const bool print=std::getenv("ORIGAMI_PRINT_GOLDEN")!=nullptr;
+    static constexpr std::uint64_t expected[golden::scenarioCount]{
+        0x8b54461996998697ull,0xf2cb0320aab297acull,0x69eb600ae29a68dbull,
+        0x0186663dd655c3d1ull,0x47585a3f316d4135ull,0xa740b1d6675595c3ull};
+    for(int s=0;s<golden::scenarioCount;++s) {
+        const auto a=golden::render(s,32),b=golden::render(s,256),c=golden::render(s,1000),again=golden::render(s,256);
+        if(print) std::cout<<"GOLDEN "<<golden::scenarioName(s)<<" 0x"<<std::hex<<b.hash<<std::dec<<"\n";
+        check(a.finite && b.finite && c.finite,"golden render stays finite");
+        check(a.hash==b.hash && b.hash==c.hash,"optimised paths are block-size independent (32 / 256 / 1000)");
+        check(again.hash==b.hash,"optimised paths render deterministically");
+        check(b.hash==expected[s],"optimised paths match the pre-optimisation golden render");
+    }
+}
+
 // mct-origami-dsp-performance-stereo-chain: editor wavetable commits while
 // voices play. The audio thread adopts by swap: it never allocates or frees
 // (the old mailbox copied the table and freed the previous one in the
@@ -1005,6 +1024,7 @@ int main() {
         std::cerr<<"spectral concurrent eviction\n";spectralCacheConcurrentEviction();
         std::cerr<<"realtime thread policy\n";realtimeThreadPolicyAudit();
         std::cerr<<"wavetable handoff\n";wavetableHandoffAudit();
+        std::cerr<<"optimised-path golden renders\n";optimizedPathGoldenAudit();
         std::cerr<<"registry and patches\n";registryAndPatches();
         std::cerr<<"envelope timing\n";envelopeTiming();
         std::cerr<<"pitch and blocks\n";pitchAndBlocks();

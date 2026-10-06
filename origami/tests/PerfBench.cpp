@@ -15,6 +15,7 @@
 //   origami_perf_bench <substring>...  only scenarios whose name contains one
 //   origami_perf_bench --profile <name> <seconds>   run one scenario in a loop
 //                                      (attach `sample` / Instruments to it)
+//   origami_perf_bench --memory        fixed footprints of the realtime objects
 #include "plugin/PluginProcessor.h"
 #include "core/preset/StateCodec.h"
 #include "tests/NodesScenarios.h"
@@ -268,7 +269,29 @@ std::vector<Scenario> matrix() {
 }
 }
 
+// B40 memory budget: the realtime objects' fixed footprints.
+void memoryReport() {
+    const auto kb=[](std::size_t b){ return double(b)/1024.0; };
+    std::printf("OrigamiAudioProcessor  %10.1f KB\n",kb(sizeof(OrigamiAudioProcessor)));
+    std::printf("  OrigamiEngine        %10.1f KB\n",kb(sizeof(OrigamiEngine)));
+    std::printf("    Voice              %10.1f KB  (x%zu = %.1f KB)\n",kb(sizeof(Voice)),OrigamiEngine::voiceCount,kb(OrigamiEngine::voiceCount*sizeof(Voice)));
+    std::printf("    CompiledModulation %10.1f KB\n",kb(sizeof(CompiledModulation)));
+    std::printf("    ModulationState    %10.1f KB\n",kb(sizeof(ModulationState)));
+    std::printf("    ModulationFrame    %10.1f KB  (stereo part %zu B)\n",kb(sizeof(ModulationFrame)),sizeof(StereoModulationFrame));
+    std::printf("    OscillatorRenderPlan %8.1f KB\n",kb(sizeof(OscillatorRenderPlan)));
+    std::printf("  fx::FxEnvironment    %10.1f KB\n",kb(sizeof(fx::FxEnvironment)));
+    std::printf("WavetableOscillator    %10zu B   SpectralReadHint %zu B\n",sizeof(dsp::WavetableOscillator),sizeof(dsp::SpectralReadHint));
+    std::printf("Lfo                    %10zu B   LowPassFilter %zu B   Envelope %zu B\n",sizeof(Lfo),sizeof(dsp::LowPassFilter),sizeof(dsp::Envelope));
+    std::printf("OscillatorModuleState  %10zu B   InstrumentState %.1f KB\n",sizeof(OscillatorModuleState),kb(sizeof(InstrumentState)));
+    const auto table=dsp::Wavetable::builtIns(); std::size_t samples=0;
+    for(const auto& f:table.frames) for(const auto& b:f.bands) samples+=b.samples.size();
+    std::printf("built-in table data    %10.1f KB  (%zu frames x %zu bands x %zu)\n",kb(samples*sizeof(float)),table.frames.size(),table.frames[0].bands.size(),table.tableLength);
+    std::printf("256-frame custom table %10.1f KB  (x10 bands x 2048, per oscillator)\n",kb(std::size_t{256}*10*2048*sizeof(float)));
+    std::printf("spectral cache (global)%10.1f KB  (512 slots x 2048 floats + keys)\n",kb(std::size_t{512}*(2048*sizeof(float)+sizeof(dsp::OscProcessPlan)+64)));
+}
+
 int main(int argc,char** argv) {
+    if(argc>=2 && std::strcmp(argv[1],"--memory")==0) { juce::ScopedJuceInitialiser_GUI gui; memoryReport(); return 0; }
 #if defined(__APPLE__)
     // Audio threads run on performance cores; so does the measurement (a
     // default-QoS thread may be scheduled on efficiency cores mid-run).
