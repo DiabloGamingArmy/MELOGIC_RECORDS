@@ -2330,7 +2330,10 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
         if(stereoNow && g.stereo) {
             const float d=stereoDelta(g,f,&sources,nullptr,nullptr,false);
             f.stereo.delta[i]=d;
-            if(d!=0.0f) writeRight(f,g,i,n+d);
+            // mct-origami-nested-modulation-manual-qa: a READ group keeps its
+            // RIGHT value even when equal to LEFT, so RIGHT's oscillator reads
+            // (and their spectral transition state) continue every sample.
+            if(d!=0.0f || ((readGroupsAll_>>i)&1u)!=0) writeRight(f,g,i,n+d);
         }
     }
     if(f.filterEnabled) f.filter=globalFilter(rate,f.cutoff,f.resonance);
@@ -2360,7 +2363,7 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
             // voice's own stereo terms; zero means RIGHT == LEFT here.
             const float base=f.stereo.active && std::isfinite(f.stereo.delta[i]) ? f.stereo.delta[i] : 0.0f;
             const float d=base+stereoDelta(g,f,nullptr,&sources,voiceStereo,true);
-            if(d!=0.0f) writeRight(f,g,i,n+d);
+            if(d!=0.0f || ((readGroupsAll_>>i)&1u)!=0) writeRight(f,g,i,n+d);
             else {
                 f.stereo.rightMask&=~(1u<<i);
                 if(g.address.parameter==ModDestination::Level) f.stereo.levelMask&=std::uint16_t(~(1u<<g.slot));

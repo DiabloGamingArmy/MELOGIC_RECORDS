@@ -837,9 +837,9 @@ ChainRender renderChain(OrigamiEngine& e,const InstrumentState& st,int block,std
 // served from the cache (no fallback reads), so measured renders are exact.
 bool settleSpectral(OrigamiEngine& e,const InstrumentState& st,std::size_t total) {
     for(int attempt=0;attempt<400;++attempt) {
-        const auto before=dsp::spectralCompilerStats().fallbackReads;
+        const auto before=dsp::spectralMisses(dsp::spectralCompilerStats());
         renderChain(e,st,256,total);
-        if(dsp::spectralCompilerStats().fallbackReads==before) return true;
+        if(dsp::spectralMisses(dsp::spectralCompilerStats())==before) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(4));
     }
     return false;
@@ -1021,6 +1021,79 @@ void crossOscillatorStereo() {
     }
 }
 
+// ---- mct-origami-nested-modulation-manual-qa: OSC CHAIN manual-edit stability
+// Manual QA: dragging RANDOM AMP / SPARSE crackled. Each new quantized amount
+// was a new spectral key, and until the worker built it every read played the
+// dry fallback; the switch itself stepped. Now the previous table is held and
+// switches crossfade: a drag must produce no dry read and no jump larger than
+// the patch produces when held still.
+void oscChainManualEditStability() {
+    check(dsp::prepareSpectralCompiler(),"spectral worker running");
+    for(const auto type:{dsp::OscProcessType::RandAmp,dsp::OscProcessType::RandSparse,dsp::OscProcessType::SpectralComb}) {
+        const std::string name=dsp::oscProcessName(type);
+        auto e=std::make_unique<OrigamiEngine>(); check(e->prepare(48000,1024,2),"drag engine");
+        auto st=e->instrumentState();
+        auto& osc=st.oscillators[0];
+        osc.processCount=1; osc.nextProcessId=2; osc.processes[0]={1,type,0.2f,0x4242u,true};
+        // Static references at the drag endpoints and between them: the
+        // largest sample-to-sample step a held amount produces.
+        double heldStep=0.0;
+        for(float amount:{0.2f,0.35f,0.5f,0.65f,0.8f}) {
+            auto h=st; h.oscillators[0].processes[0].amount=amount;
+            check(settleSpectral(*e,h,9600),("held "+name+" settles").c_str());
+            const auto r=renderChain(*e,h,256,9600);
+            for(std::size_t i=1;i<r.left.size();++i) heldStep=std::max(heldStep,double(std::abs(r.left[i]-r.left[i-1])));
+        }
+        // The drag: a UI edit before every other 256-sample block, 0.2 -> 0.8.
+        e->restoreInstrumentState(st); e->reset(); e->noteOn(57,.8f);
+        std::array<float,256> l{},r{}; float* io[]{l.data(),r.data()};
+        for(int b=0;b<40;++b) e->process(io,2,256); // settle at 0.2 (cached above)
+        const auto before=dsp::spectralCompilerStats();
+        double dragStep=0.0; float previous=l[255];
+        for(int b=0;b<80;++b) {
+            if(b%2==0) {
+                auto m=e->oscillatorModuleState(osc.id); m.processes[0].amount=0.2f+0.6f*float(b)/78.0f;
+                check(e->setOscillatorModuleState(osc.id,m),"drag edit");
+            }
+            e->process(io,2,256);
+            for(float x:l) { dragStep=std::max(dragStep,double(std::abs(x-previous))); previous=x; }
+        }
+        const auto after=dsp::spectralCompilerStats();
+        check(after.fallbackReads==before.fallbackReads,(name+" drag: no dry fallback read (the previous table is held)").c_str());
+        check(after.transitions>before.transitions,(name+" drag: table changes are crossfaded").c_str());
+        check(dragStep<=heldStep*1.25+1e-4,(name+" drag: no jump beyond a held patch's own steps (drag "+std::to_string(dragStep)+", held "+std::to_string(heldStep)+")").c_str());
+    }
+}
+// The known miss storm: an LFO on a PHASE stage (BEND+) in a chain with a
+// spectral stage made a new spectral key every sample, so every read missed
+// and the spectral stage vanished. The moving chain now reads its quantized
+// key (bounded keys): the cache settles and the spectral stage stays audible.
+void spectralChainPhaseModulation() {
+    check(dsp::prepareSpectralCompiler(),"spectral worker running");
+    auto e=std::make_unique<OrigamiEngine>(); check(e->prepare(48000,1024,2),"storm engine");
+    auto st=e->instrumentState();
+    auto& osc=st.oscillators[0];
+    osc.processCount=2; osc.nextProcessId=3;
+    osc.processes[0]={1,dsp::OscProcessType::BendPlus,0.35f,7u,true};
+    osc.processes[1]={2,dsp::OscProcessType::RandAmp,0.5f,0x1234u,true};
+    st.modulation.lfo1.mode=LfoMode::Loop; st.modulation.lfo1.rateHz=4.0f;
+    st.modulation.routes[0]={1,true,ModSource::Lfo1,{ModDestination::ProcessAmount,osc.id,1},0.5f,true};
+    st.modulation.nextRouteId=2;
+    check(settleSpectral(*e,st,9600),"LFO -> BEND+ before RAND AMP: the spectral cache settles (no miss storm)");
+    const auto a=renderChain(*e,st,256,9600),b=renderChain(*e,st,256,9600);
+    check(a.left==b.left,"LFO -> BEND+ before RAND AMP: deterministic once settled");
+    for(int block:{64,1024}) { const auto c=renderChain(*e,st,block,9600); check(c.left==a.left,"LFO -> BEND+ before RAND AMP: block-size independent"); }
+    auto dry=st; dry.oscillators[0].processCount=1; // the same moving BEND+ without RAND AMP
+    const auto d=renderChain(*e,dry,256,9600);
+    check(matchFraction(a.left,d.left,1e-3f)<0.5,"the RAND AMP stage stays audible under BEND+ modulation");
+    // A held plan still uses its exact key (static patches keep their sound).
+    auto held=st; held.modulation.routes[0]={};
+    check(settleSpectral(*e,held,9600),"held chain settles");
+    const auto before=dsp::spectralCompilerStats();
+    const auto h=renderChain(*e,held,256,9600);
+    check(dsp::spectralMisses(dsp::spectralCompilerStats())==dsp::spectralMisses(before) && !h.left.empty(),"held chain reads its exact cached key");
+}
+
 // Hot-path benchmark (printed; not a pass/fail gate).
 void lfoFunctionBenchmark() {
     using clock_t=std::chrono::steady_clock;
@@ -1071,6 +1144,8 @@ int main() {
         lfoStereoModulation();
         oscChainStereo();
         crossOscillatorStereo();
+        oscChainManualEditStability();
+        spectralChainPhaseModulation();
         if(std::getenv("ORIGAMI_LFO_BENCH")) lfoFunctionBenchmark();
         std::cout<<"PASS: "<<checks<<" modulation foundation checks\n";
         return 0;

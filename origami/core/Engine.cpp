@@ -39,6 +39,7 @@ bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, uns
     sampleRate_ = sampleRate; outputChannels_ = outputChannels;
     compiledModulation_.prepare(sampleRate_);
     hostModules_=oscillatorModules_.snapshot();
+    dezipModules_=hostModules_; dezipActive_=0;
     rebuildHostWavetables();
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
     for (auto& voice : voices_) voice.prepare(sampleRate);
@@ -147,6 +148,7 @@ void OrigamiEngine::reset() noexcept {
     publishNodesDiagnostics();
     compiledModulation_.resetOperatorState();
     oscillatorPlan_.compile(resetModules);
+    dezipModules_=resetModules; dezipActive_=0; // a reset never glides
     for(std::size_t i=0;i<resetModules.size();++i) compiledModuleIds_[i]=resetModules[i].id;
     for (auto& voice : voices_) { voice.reset(); voice.restartLifecycles(); }
     lastVoiceSamples_.fill({});
@@ -417,6 +419,85 @@ void OrigamiEngine::latchParameters() noexcept {
         else s.value = target;
     }
 }
+namespace {
+// mct-origami-nested-modulation-manual-qa: the continuous module values a
+// manual edit glides (everything else is structure and applies at once).
+template<class Module> auto* dezipField(Module& m,std::size_t i) noexcept {
+    switch(i) {
+        case 0: return &m.wtPosition; case 1: return &m.fineCents; case 2: return &m.detuneCents;
+        case 3: return &m.blend; case 4: return &m.pan; case 5: return &m.level;
+        case 6: return &m.process1Amount; case 7: return &m.process2Amount;
+        case 8: return &m.route1Amount; case 9: return &m.route2Amount;
+        default: break;
+    }
+    if(i<10+maxOscProcesses) return &m.processes[i-10].amount;
+    return &m.routes[i-10-maxOscProcesses].amount;
+}
+bool sameDezipStructure(const OscillatorModuleState& a,const OscillatorModuleState& b) noexcept {
+    if(a.id!=b.id || a.enabled!=b.enabled || a.tableId!=b.tableId || a.waveform!=b.waveform || a.octave!=b.octave ||
+       a.semitone!=b.semitone || a.unison!=b.unison || a.process1!=b.process1 || a.process1Seed!=b.process1Seed ||
+       a.process2!=b.process2 || a.process2Seed!=b.process2Seed || a.route1SourceId!=b.route1SourceId ||
+       a.route1Type!=b.route1Type || a.route2SourceId!=b.route2SourceId || a.route2Type!=b.route2Type ||
+       a.processCount!=b.processCount || a.routeCount!=b.routeCount || a.busRouteCount!=b.busRouteCount) return false;
+    for(std::size_t i=0;i<a.processes.size();++i) {
+        const auto& x=a.processes[i]; const auto& y=b.processes[i];
+        if(x.id!=y.id || x.type!=y.type || x.seed!=y.seed || x.enabled!=y.enabled) return false;
+    }
+    for(std::size_t i=0;i<a.routes.size();++i) {
+        const auto& x=a.routes[i]; const auto& y=b.routes[i];
+        if(x.id!=y.id || x.sourceId!=y.sourceId || x.type!=y.type || x.enabled!=y.enabled) return false;
+    }
+    for(std::size_t i=0;i<a.busRoutes.size();++i)
+        if(a.busRoutes[i].bus!=b.busRoutes[i].bus || a.busRoutes[i].level!=b.busRoutes[i].level) return false;
+    return true;
+}
+}
+// Audio thread, block boundary, after a new module snapshot.
+void OrigamiEngine::startDezip() noexcept {
+    const auto length=static_cast<std::uint32_t>(std::max(1.0,std::round(sampleRate_*dezipSeconds)));
+    for(std::size_t m=0;m<hostModules_.size();++m) {
+        const auto& target=hostModules_[m];
+        auto& current=dezipModules_[m];
+        auto& ramp=dezipRamps_[m];
+        const auto bit=std::uint32_t(1u<<m);
+        if(target.id==0 || !sameDezipStructure(current,target)) {
+            current=target; ramp.remaining=0; dezipActive_&=~bit;
+            continue;
+        }
+        // Same structure: glide every changed continuous value from where the
+        // render is now (a drag in progress continues smoothly).
+        bool changed=false;
+        std::array<float,dezipFieldCount> from{};
+        for(std::size_t i=0;i<dezipFieldCount;++i) from[i]=*dezipField(current,i);
+        current=target;
+        for(std::size_t i=0;i<dezipFieldCount;++i) {
+            float& value=*dezipField(current,i);
+            ramp.step[i]=0.0f;
+            if(from[i]!=value && std::isfinite(from[i]) && std::isfinite(value)) {
+                ramp.step[i]=(value-from[i])/static_cast<float>(length);
+                value=from[i];
+                changed=true;
+            }
+        }
+        if(changed) { ramp.remaining=length; dezipActive_|=bit; }
+        else { ramp.remaining=0; dezipActive_&=~bit; }
+    }
+}
+// Audio thread, once per sample while something glides.
+void OrigamiEngine::advanceDezip(std::array<OscillatorModuleState,OscillatorModuleBank::capacity>& modules) noexcept {
+    for(std::uint32_t bits=dezipActive_;bits!=0;bits&=bits-1u) {
+        const auto m=static_cast<std::size_t>(__builtin_ctz(bits));
+        auto& current=dezipModules_[m];
+        auto& ramp=dezipRamps_[m];
+        if(--ramp.remaining==0) {
+            current=hostModules_[m]; // exact target at the end
+            dezipActive_&=~std::uint32_t(1u<<m);
+        } else {
+            for(std::size_t i=0;i<dezipFieldCount;++i) if(ramp.step[i]!=0.0f) *dezipField(current,i)+=ramp.step[i];
+        }
+        for(std::size_t i=0;i<dezipFieldCount;++i) *dezipField(modules[m],i)=*dezipField(current,i);
+    }
+}
 bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     if(hostBlockActive_ || !prepared_ || channels<1 || channels>2 || channels!=outputChannels_) return false;
     latchParameters();
@@ -427,6 +508,7 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
         ? wavetableIncoming_.exchange(nullptr,std::memory_order_acquire) : nullptr;
     const bool oscillatorGenerationChanged=
         oscillatorModules_.consumeSnapshot(hostModules_,hostModuleGeneration_);
+    if(oscillatorGenerationChanged) startDezip();
     const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
     bool moduleTopologyChanged=false;
     for(std::size_t i=0;i<hostModules_.size();++i) {
@@ -514,7 +596,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
     if(!output || channels<1 || channels>2) return false;
     for(unsigned c=0;c<channels;++c) if(!output[c]) return false;
     for(unsigned c=0;c<channels;++c) std::fill_n(output[c],sampleCount,0.f);
-    auto modules=hostModules_;
+    auto modules=dezipModules_; // == hostModules_ unless a manual edit glides
     const double normalization=hostNormalization_;
     const float bendUpRange=hostBendRange_;
     const float bendDownRange=hostBendDownRange_;
@@ -524,6 +606,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         static_cast<std::size_t>(std::lround(sampleRate_/1000.0))) * (reduceVisualizationRate_ ? 4u : 1u);
 
     for(std::size_t sample=0;sample<sampleCount;++sample) {
+        if(dezipActive_) advanceDezip(modules);
         for(auto& s:smooth_) if(s.remaining) {
             s.value+=static_cast<float>(s.step);
             if(--s.remaining==0) s.value=s.target;

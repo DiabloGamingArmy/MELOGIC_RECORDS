@@ -221,6 +221,24 @@ private:
     bool adoptWavetableHandoffs(WavetableHandoff* list) noexcept;
     OscillatorWavetableSlot* wavetableSlotFor(OscillatorModuleId id) noexcept;
     std::array<OscillatorWavetableSlot,OscillatorModuleBank::capacity> oscillatorWavetables_{};
+    // mct-origami-nested-modulation-manual-qa: manual-edit dezipper. A
+    // published module state that changes only continuous values (a UI knob
+    // drag: same ids, types, sources, counts) glides from the rendered value
+    // to the new one over `dezipSeconds`, per sample. Structural changes
+    // jump. dezipModules_ is the module state the render reads (equal to
+    // hostModules_ when nothing glides). Modulation is applied on top of it,
+    // so LFO / ENV / macro / NODES modulation is never delayed.
+public:
+    static constexpr double dezipSeconds=0.010;
+    static constexpr std::size_t dezipFieldCount=10+maxOscProcesses+maxOscRoutes;
+    bool dezipping() const noexcept { return dezipActive_!=0; }
+private:
+    std::array<OscillatorModuleState,OscillatorModuleBank::capacity> dezipModules_{};
+    struct DezipRamp { std::uint32_t remaining=0; std::array<float,dezipFieldCount> step{}; };
+    std::array<DezipRamp,OscillatorModuleBank::capacity> dezipRamps_{};
+    std::uint32_t dezipActive_=0;
+    void startDezip() noexcept;
+    void advanceDezip(std::array<OscillatorModuleState,OscillatorModuleBank::capacity>& modules) noexcept;
     std::array<const dsp::Wavetable*,OscillatorModuleBank::capacity> hostWavetables_{};
     void rebuildHostWavetables() noexcept;
     double sampleRate_ = 48000;

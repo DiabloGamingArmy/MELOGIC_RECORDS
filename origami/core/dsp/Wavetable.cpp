@@ -183,6 +183,38 @@ bool planMatchesKey(const OscProcessPlan& source,const OscProcessPlan& key) noex
     }
     return true;
 }
+// mct-origami-nested-modulation-manual-qa: the quantized key of a spectral
+// chain whose phase-stage amounts move. Spectral amounts are quantized as
+// always; phase-stage amounts snap to the same 33-step grid over their own
+// range. Used only while the exact plan keeps changing (a modulated or
+// dragged phase stage would otherwise make a new key every sample, every
+// read would miss and play the dry fallback); a settled plan uses its exact
+// key again, so static patches keep their exact sound.
+float quantizedStageAmount(OscProcessType type,float amount) noexcept {
+    if(oscProcessIsSpectral(type)) return quantizedSpectralAmount(type,amount);
+    const float minimum=oscProcessAmountMinimum(type);
+    const float a=std::clamp(amount,minimum,1.0f);
+    return minimum+std::round((a-minimum)/(1.0f-minimum)*spectralAmountSteps)/spectralAmountSteps*(1.0f-minimum);
+}
+bool planMatchesQuantizedKey(const OscProcessPlan& source,const OscProcessPlan& key) noexcept {
+    const auto count=std::min<std::size_t>(source.count,maxOscProcessStages);
+    if(count!=key.count) return false;
+    for(std::size_t i=0;i<count;++i) {
+        const auto& x=source.stages[i];const auto& y=key.stages[i];
+        if(x.type!=y.type || x.seed!=y.seed || quantizedStageAmount(x.type,x.amount)!=y.amount) return false;
+    }
+    return true;
+}
+// Fingerprint of the exact plan (settle detection only).
+std::uint32_t planPrint(const OscProcessPlan& plan) noexcept {
+    std::uint32_t h=0x811c9dc5u;
+    const auto count=std::min<std::size_t>(plan.count,maxOscProcessStages);
+    for(std::size_t i=0;i<count;++i) {
+        std::uint32_t bits; std::memcpy(&bits,&plan.stages[i].amount,sizeof bits);
+        h=(h^bits)*16777619u; h=(h^static_cast<std::uint32_t>(plan.stages[i].type))*16777619u;
+    }
+    return h;
+}
 bool sameSpectralKey(const SpectralKey& a,const SpectralKey& b) noexcept {
     return a.table==b.table && a.generation==b.generation && a.frame==b.frame &&
            a.band==b.band && sameProcessPlan(a.plan,b.plan);
@@ -210,6 +242,7 @@ struct SpectralRequest {
     std::array<float,spectralSize> source{};
 };
 class SpectralCompiler {
+    struct CacheSlot;
 public:
     static constexpr std::size_t cacheWays=8,cacheBuckets=64,cacheSize=cacheWays*cacheBuckets;
     static constexpr std::size_t queueSize=64,pendingSize=256;
@@ -219,22 +252,90 @@ public:
         if(started_)return true;
         try{worker_=std::thread([this]{workerLoop();});started_=true;return true;}catch(...){return false;}
     }
+    static float slotValue(const CacheSlot& slot,std::size_t index,std::size_t nextIndex,float fraction) noexcept {
+        return slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
+    }
+    // The pinned target slot of a transition in progress, mixed with the slot
+    // being faded out. A faded-out slot that was evicted ends the fade.
+    float fadeRead(const CacheSlot& to,SpectralReadHint& hint,std::size_t index,std::size_t nextIndex,float fraction) noexcept {
+        const float target=slotValue(to,index,nextIndex,fraction);
+        auto& from=cache_[hint.fromSlot];
+        if(!pin(from)) { hint.fade=0; return target; }
+        float value=target;
+        if(from.revision==hint.fromRevision) {
+            const float w=static_cast<float>(hint.fade)/static_cast<float>(hint.fadeLength);
+            value=target+w*(slotValue(from,index,nextIndex,fraction)-target);
+            --hint.fade;
+        } else hint.fade=0;
+        unpin(from);
+        return value;
+    }
+    // Probe one key's bucket; on success the slot is returned PINNED.
+    CacheSlot* probe(const SpectralKey& key,std::uint64_t hash,std::uint32_t& slotIndex) noexcept {
+        const auto bucket=(hash%cacheBuckets)*cacheWays;
+        for(std::size_t w=0;w<cacheWays;++w){
+            auto& slot=cache_[bucket+w];
+            if(!pin(slot))continue;
+            if(sameSpectralKey(slot.key,key)) { slotIndex=static_cast<std::uint32_t>(bucket+w); return &slot; }
+            unpin(slot);
+        }
+        return nullptr;
+    }
+    // Point the hint at a found (pinned) slot; a different slot of the same
+    // frame / band starts a crossfade from the previous one.
+    float adopt(CacheSlot& slot,std::uint32_t slotIndex,const Wavetable& table,std::size_t frame,std::size_t band,
+                SpectralReadHint& hint,bool sameContext,bool quantized,std::uint16_t fadeLength,
+                std::size_t index,std::size_t nextIndex,float fraction) noexcept {
+        if(sameContext && hint.slot!=slotIndex && fadeLength>0) {
+            hint.fromSlot=hint.slot; hint.fromRevision=hint.revision; hint.fade=fadeLength; hint.fadeLength=fadeLength;
+            transitions_.fetch_add(1,std::memory_order_relaxed);
+        } else if(!sameContext) hint.fade=0;
+        hint.table=&table;hint.generation=table.generation;
+        hint.frame=static_cast<std::uint32_t>(frame);hint.band=static_cast<std::uint32_t>(band);
+        hint.slot=slotIndex;hint.revision=slot.revision;hint.hits=0;hint.quantized=quantized;
+        const float value=hint.fade ? fadeRead(slot,hint,index,nextIndex,fraction) : slotValue(slot,index,nextIndex,fraction);
+        touch(slot,hint);
+        unpin(slot);
+        return value;
+    }
     float readOrRequest(const Wavetable& table,std::size_t frame,std::size_t band,
                         const OscProcessPlan& sourcePlan,
                         std::size_t index,std::size_t nextIndex,float fraction,
-                        double fallbackPhase,SpectralReadHint& hint) noexcept {
+                        double fallbackPhase,SpectralReadHint& hint,std::uint16_t fadeLength) noexcept {
         // A stable chain needs neither re-quantization nor re-hashing per sample.
         // Revision validation under the pin handles eviction and table reuse.
-        if(hint.revision && hint.table==&table && hint.generation==table.generation &&
-           hint.frame==frame && hint.band==band) {
+        const bool sameContext=hint.revision && hint.table==&table && hint.generation==table.generation &&
+                               hint.frame==frame && hint.band==band;
+        bool settleProbe=false;
+        if(sameContext) {
             auto& slot=cache_[hint.slot];
             if(pin(slot)) {
                 // The slot cannot be rewritten while pinned: its key is stable.
-                if(slot.revision==hint.revision && planMatchesKey(sourcePlan,slot.key.plan)) {
-                    const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
-                    touch(slot,hint);
-                    unpin(slot);
-                    return value;
+                if(slot.revision==hint.revision) {
+                    // A transition in progress completes before the next one
+                    // starts (never a third table, never a jump).
+                    if(hint.fade) { const float value=fadeRead(slot,hint,index,nextIndex,fraction); unpin(slot); return value; }
+                    if(!hint.quantized) {
+                        if(planMatchesKey(sourcePlan,slot.key.plan)) {
+                            const float value=slotValue(slot,index,nextIndex,fraction);
+                            touch(slot,hint);
+                            unpin(slot);
+                            return value;
+                        }
+                    } else if(planMatchesQuantizedKey(sourcePlan,slot.key.plan)) {
+                        // Moving chain on its quantized key. Once the exact plan
+                        // holds still (spectralSettleReads reads), look for and
+                        // request its exact key.
+                        const auto print=planPrint(sourcePlan);
+                        if(print!=hint.print) { hint.print=print; hint.stable=0; }
+                        else if(++hint.stable>=spectralSettleReads) { hint.stable=0; settleProbe=true; }
+                        if(!settleProbe) {
+                            const float value=slotValue(slot,index,nextIndex,fraction);
+                            touch(slot,hint);
+                            unpin(slot);
+                            return value;
+                        }
+                    }
                 }
                 unpin(slot);
             }
@@ -246,21 +347,44 @@ public:
                 keyPlan.stages[i].amount=quantizedSpectralAmount(keyPlan.stages[i].type,keyPlan.stages[i].amount);
         SpectralKey key{&table,table.generation,static_cast<std::uint16_t>(frame),
                         static_cast<std::uint16_t>(band),keyPlan};
-        const auto hash=spectralKeyHash(key),bucket=(hash%cacheBuckets)*cacheWays;
-        for(std::size_t w=0;w<cacheWays;++w){
-            auto& slot=cache_[bucket+w];
-            if(!pin(slot))continue;
-            if(sameSpectralKey(slot.key,key)){
-                const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
-                hint.table=&table;hint.generation=table.generation;
-                hint.frame=static_cast<std::uint32_t>(frame);hint.band=static_cast<std::uint32_t>(band);
-                hint.slot=static_cast<std::uint32_t>(bucket+w);hint.revision=slot.revision;hint.hits=0;
-                touch(slot,hint);
-                unpin(slot);return value;
-            }
-            unpin(slot);
+        const auto hash=spectralKeyHash(key);
+        std::uint32_t slotIndex=0;
+        if(auto* slot=probe(key,hash,slotIndex))
+            return adopt(*slot,slotIndex,table,frame,band,hint,sameContext,false,fadeLength,index,nextIndex,fraction);
+        // The exact key is not cached. A chain with phase stages off the grid
+        // reads its quantized key meanwhile (bounded keys, no miss storm).
+        SpectralKey quantizedKey=key;
+        bool moving=false;
+        for(std::size_t i=0;i<quantizedKey.plan.count;++i) {
+            auto& stage=quantizedKey.plan.stages[i];
+            const float q=quantizedStageAmount(stage.type,stage.amount);
+            moving|=q!=stage.amount; stage.amount=q;
         }
-        request(table,key,hash);
+        if(moving) {
+            const auto quantizedHash=spectralKeyHash(quantizedKey);
+            if(auto* slot=probe(quantizedKey,quantizedHash,slotIndex)) {
+                if(settleProbe) request(table,key,hash); // the plan has settled: build its exact key
+                if(!hint.quantized || !sameContext) { hint.print=planPrint(sourcePlan); hint.stable=0; }
+                return adopt(*slot,slotIndex,table,frame,band,hint,sameContext,true,fadeLength,index,nextIndex,fraction);
+            }
+            if(!sameContext) request(table,key,hash); // first contact: a static plan's exact key, likely
+            request(table,quantizedKey,quantizedHash);
+        } else request(table,key,hash);
+        // Hold the previous table of this frame / band while the new one is
+        // built: the chain keeps sounding processed (previous amount) instead
+        // of dropping to the dry fallback.
+        if(sameContext) {
+            auto& slot=cache_[hint.slot];
+            if(pin(slot)) {
+                if(slot.revision==hint.revision) {
+                    const float value=hint.fade ? fadeRead(slot,hint,index,nextIndex,fraction) : slotValue(slot,index,nextIndex,fraction);
+                    unpin(slot);
+                    heldReads_.fetch_add(1,std::memory_order_relaxed);
+                    return value;
+                }
+                unpin(slot);
+            }
+        }
         fallbackReads_.fetch_add(1,std::memory_order_relaxed);
         const auto& source=table.frames[frame].bands[band].samples;
         for(std::size_t p=0;p<std::min<std::size_t>(sourcePlan.count,maxOscProcessStages);++p)
@@ -273,7 +397,8 @@ public:
     }
     SpectralCompilerStats stats() const noexcept {
         return {requests_.load(std::memory_order_relaxed),prepared_.load(std::memory_order_relaxed),
-                fallbackReads_.load(std::memory_order_relaxed),dropped_.load(std::memory_order_relaxed)};
+                fallbackReads_.load(std::memory_order_relaxed),dropped_.load(std::memory_order_relaxed),
+                heldReads_.load(std::memory_order_relaxed),transitions_.load(std::memory_order_relaxed)};
     }
 private:
     enum:std::uint8_t{empty=0,building=1,ready=2,retiring=3};
@@ -373,7 +498,10 @@ private:
     std::array<CacheSlot,cacheSize> cache_{};std::array<QueueSlot,queueSize> queue_{};
     std::array<std::atomic<std::uint64_t>,pendingSize> pending_{};
     std::atomic<std::uint64_t> write_{0},read_{0},clock_{1};
-    std::atomic<std::uint64_t> requests_{0},prepared_{0},fallbackReads_{0},dropped_{0};
+    std::atomic<std::uint64_t> requests_{0},prepared_{0},fallbackReads_{0},dropped_{0},heldReads_{0},transitions_{0};
+    // Reads of an unchanged exact plan before a moving chain's exact key is
+    // looked up again (~43 ms at 48 kHz).
+    static constexpr std::uint16_t spectralSettleReads=2048;
     std::uint64_t revision_=0; // worker-owned publication sequence
     std::atomic<bool> stop_{false};std::mutex startMutex_;std::thread worker_;bool started_=false;
 };
@@ -432,7 +560,12 @@ Wavetable Wavetable::builtIns() {
     assignWavetableGeneration(table);
     return table;
 }
-void WavetableOscillator::reset(double phase) noexcept { phase_ = std::isfinite(phase) ? phase - std::floor(phase) : 0; rightPhaseLive_=false; }
+void WavetableOscillator::reset(double phase) noexcept {
+    phase_ = std::isfinite(phase) ? phase - std::floor(phase) : 0; rightPhaseLive_=false;
+    // Spectral hints carry transition state (held table, crossfade): a reset
+    // oscillator starts from a fresh lookup, so renders are deterministic.
+    spectralHints_={};
+}
 
 const char* oscProcessName(OscProcessType type) noexcept {
     switch(type) {
@@ -776,10 +909,12 @@ void WavetableOscillator::preparePitch(const Wavetable& table,double frequency,d
 // One read of the current phase: frame interpolation, phase warps / spectral
 // table, PM offset and PSK skew. Stateless apart from the spectral read hints,
 // so a second read at the same phase (stereo RIGHT) is exact.
+// Always inlined: the static-pitch simple read must stay a leaf function
+// (an out-of-line call costs a stack frame on every oscillator read).
 template<bool Simple>
-float WavetableOscillator::readAt(const Wavetable& table,float position,const OscProcessPlan& plan,
+inline __attribute__((always_inline)) float WavetableOscillator::readAt(const Wavetable& table,float position,const OscProcessPlan& plan,
                                   double phaseOffsetCycles,double phaseSkew,std::array<SpectralReadHint,2>& hints,
-                                  double phase,std::size_t bandIndex) noexcept {
+                                  double phase,std::size_t bandIndex,double sampleRate) noexcept {
     const float framePosition=std::clamp(position,0.f,1.f)*static_cast<float>(table.frames.size()-1);
     const auto first=static_cast<std::size_t>(framePosition),second=std::min(first+1,table.frames.size()-1);
     double readPhase=phase;
@@ -806,8 +941,13 @@ float WavetableOscillator::readAt(const Wavetable& table,float position,const Os
     const auto index=powerOfTwo ? whole&(length-1) : whole%length;
     const auto nextIndex=powerOfTwo ? (index+1)&(length-1) : (index+1)%length;
     const float fraction=static_cast<float>(tablePosition-static_cast<double>(whole));
-    auto read=[&](std::size_t frame,std::size_t hintIndex){
-        if(spectral)return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,hints[hintIndex]);
+    // The spectral branch does not exist in the simple instantiation, so the
+    // simple read inlines completely (a leaf function).
+    auto read=[&](std::size_t frame,std::size_t hintIndex) __attribute__((always_inline)) -> float {
+        if constexpr(!Simple) {
+            if(spectral) return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,hints[hintIndex],
+                                                                 static_cast<std::uint16_t>(std::clamp(sampleRate*spectralTransitionSeconds,1.0,4096.0)));
+        } else { (void)hintIndex; (void)hints; (void)sampleRate; }
         const auto& samples=table.frames[frame].bands[bandIndex].samples;
         return samples[index]+fraction*(samples[nextIndex]-samples[index]);};
     const float frameFraction=framePosition-static_cast<float>(first);
@@ -823,7 +963,7 @@ float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,doub
     if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
     preparePitch(table,frequency,sampleRate);
     const double increment=increment_;
-    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_,phase_,bandIndex_);
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_,phase_,bandIndex_,sampleRate);
     phase_+=increment;if(phase_>=1)phase_-=1;
     return frequency>=sampleRate*.5?0:output;
 }
@@ -836,7 +976,7 @@ float WavetableOscillator::nextStereoImpl(const Wavetable& table,double frequenc
     if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position)) { right=0.0f; return 0; }
     preparePitch(table,frequency,sampleRate);
     const double increment=increment_;
-    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_,phase_,bandIndex_);
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_,phase_,bandIndex_,sampleRate);
     const float rightPosition=std::isfinite(positionRight)?positionRight:position;
     float outputRight=0.0f;
     bool rightAboveNyquist=frequency>=sampleRate*.5;
@@ -849,12 +989,12 @@ float WavetableOscillator::nextStereoImpl(const Wavetable& table,double frequenc
         std::size_t band=bandIndex_<bands.size() ? bandIndex_ : 0;
         while(band>0 && bands[band].maximumHarmonic>available) --band;
         while(band+1<bands.size() && bands[band+1].maximumHarmonic<=available) ++band;
-        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints,phaseRight_,band);
+        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints,phaseRight_,band,sampleRate);
         phaseRight_+=std::clamp(frequencyRight/sampleRate,0.0,.499);if(phaseRight_>=1)phaseRight_-=1;
         rightAboveNyquist=frequencyRight>=sampleRate*.5;
     } else {
         rightPhaseLive_=false;
-        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints,phase_,bandIndex_);
+        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints,phase_,bandIndex_,sampleRate);
     }
     phase_+=increment;if(phase_>=1)phase_-=1;
     const bool aboveNyquist=frequency>=sampleRate*.5;

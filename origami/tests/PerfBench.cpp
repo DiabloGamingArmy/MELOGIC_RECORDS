@@ -162,6 +162,9 @@ struct Result {
     double median=0,p95=0,p99=0,worst=0,budgetUs=0;
     std::uint64_t hash=0;          // FNV-1a over every output sample's bits: bit-exact A/B
     std::uint64_t blocks=0,fallbacks=0; // spectral cache misses during measurement
+    std::uint64_t requests=0;      // spectral frames requested from the worker
+    std::uint32_t compiles=0;      // modulation plan compiles during measurement
+    double maxSecondDifference=0;  // click metric: max |x[n] - 2 x[n-1] + x[n-2]|
 };
 
 double percentile(std::vector<double> v,double q) {
@@ -182,9 +185,9 @@ Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
     const auto warmBlocks=std::max(1,int(0.5*s.sampleRate/s.block));
     for(int i=0;i<warmBlocks;++i) { audio.clear(); p.processBlock(audio,i==0 ? midi : none); }
     for(int pass=0;pass<50;++pass) {
-        const auto before=dsp::spectralCompilerStats().fallbackReads;
+        const auto before=dsp::spectralMisses(dsp::spectralCompilerStats());
         for(int i=0;i<warmBlocks/4+1;++i) { audio.clear(); p.processBlock(audio,none); }
-        if(dsp::spectralCompilerStats().fallbackReads==before) break;
+        if(dsp::spectralMisses(dsp::spectralCompilerStats())==before) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     // The warm-up's first-touch spectral misses depend on worker timing and
@@ -199,7 +202,10 @@ Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
     const auto blocks=static_cast<std::size_t>(std::max(200.0,measureSeconds*s.sampleRate/s.block));
     std::vector<double> times; times.reserve(blocks);
     std::uint64_t hash=0xcbf29ce484222325ull;
-    const auto fallbacksBefore=dsp::spectralCompilerStats().fallbackReads;
+    const auto fallbacksBefore=dsp::spectralMisses(dsp::spectralCompilerStats());
+    const auto requestsBefore=dsp::spectralCompilerStats().requests;
+    const auto compilesBefore=p.getUiNodesDiagnostics().compiles;
+    std::array<float,2> previous{},previous2{}; double maxD2=0; std::size_t sampleIndex=0;
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::duration<double>(measureSeconds);
     do {
         for(std::size_t b=0;b<blocks;++b) {
@@ -209,11 +215,18 @@ Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
             p.processBlock(audio,none);
             const auto t1=std::chrono::steady_clock::now();
             times.push_back(std::chrono::duration<double,std::micro>(t1-t0).count());
-            if(!profileLoop) for(int ch=0;ch<2;++ch) {
-                const auto* x=audio.getReadPointer(ch);
-                for(int i=0;i<s.block;++i) {
-                    std::uint32_t bits; std::memcpy(&bits,x+i,sizeof bits);
-                    hash=(hash^bits)*0x100000001b3ull;
+            if(!profileLoop) {
+                for(int ch=0;ch<2;++ch) {
+                    const auto* x=audio.getReadPointer(ch);
+                    for(int i=0;i<s.block;++i) {
+                        std::uint32_t bits; std::memcpy(&bits,x+i,sizeof bits);
+                        hash=(hash^bits)*0x100000001b3ull;
+                    }
+                }
+                for(int i=0;i<s.block;++i,++sampleIndex) for(int ch=0;ch<2;++ch) {
+                    const float x=audio.getSample(ch,i);
+                    if(sampleIndex>=2) maxD2=std::max(maxD2,std::abs(double(x)-2.0*double(previous[std::size_t(ch)])+double(previous2[std::size_t(ch)])));
+                    previous2[std::size_t(ch)]=previous[std::size_t(ch)]; previous[std::size_t(ch)]=x;
                 }
             }
         }
@@ -222,7 +235,10 @@ Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
     r.median=percentile(times,.5); r.p95=percentile(times,.95); r.p99=percentile(times,.99);
     r.worst=times.empty() ? 0.0 : *std::max_element(times.begin(),times.end());
     r.hash=hash; r.blocks=times.size();
-    r.fallbacks=dsp::spectralCompilerStats().fallbackReads-fallbacksBefore;
+    r.fallbacks=dsp::spectralMisses(dsp::spectralCompilerStats())-fallbacksBefore;
+    r.requests=dsp::spectralCompilerStats().requests-requestsBefore;
+    r.compiles=p.getUiNodesDiagnostics().compiles-compilesBefore;
+    r.maxSecondDifference=maxD2;
     return r;
 }
 
@@ -249,6 +265,33 @@ std::vector<Scenario> matrix() {
     m.push_back({"typical, idle FX heavy (no notes)",48000,256,0,[](OrigamiAudioProcessor& p){ oscillators(p,1); busFx(p,true); }});
     for(int b:{32,64,128,256,512,1024}) m.push_back({"typical @ block "+std::to_string(b),48000,b,8,typical});
     for(double sr:{44100.0,96000.0}) m.push_back({"typical @ "+std::to_string(int(sr/1000))+" kHz",sr,256,8,typical});
+    // mct-origami-nested-modulation-manual-qa: manual OSC CHAIN drags (a UI
+    // drag event every other callback, ~94 Hz, sweeping 0.2 <-> 0.8 in 0.6 s)
+    // against the same chain held still and driven by an LFO.
+    const auto chainOf=[](dsp::OscProcessType type) { return [type](OrigamiAudioProcessor& p) {
+        oscillators(p,1,1);
+        const auto id=firstOscillator(p); auto m=p.getUiOscillatorState(id);
+        m.processCount=1; m.nextProcessId=2; m.processes[0]={1,type,0.5f,0x5151u,true};
+        p.setUiOscillatorState(id,m); }; };
+    const auto dragOf=[](float rateScale) { return [rateScale](OrigamiAudioProcessor& p,std::size_t b) {
+        if(b%2) return;
+        const auto id=firstOscillator(p); auto m=p.getUiOscillatorState(id);
+        const double t=double(b)*256.0/48000.0*rateScale;            // seconds
+        const double tri=1.0-std::abs(std::fmod(t/0.6,2.0)-1.0);     // 0..1..0 every 1.2 s
+        m.processes[0].amount=float(0.2+0.6*tri); p.setUiOscillatorState(id,m); }; };
+    for(const auto& [label,type]:std::array<std::pair<const char*,dsp::OscProcessType>,4>{{
+            {"RAND AMP",dsp::OscProcessType::RandAmp},{"SPARSE",dsp::OscProcessType::RandSparse},
+            {"COMB",dsp::OscProcessType::SpectralComb},{"BEND+",dsp::OscProcessType::BendPlus}}}) {
+        m.push_back({std::string("held ")+label+", 8 voices",48000,256,8,chainOf(type)});
+        m.push_back({std::string("drag ")+label+", 8 voices",48000,256,8,chainOf(type),dragOf(1.0f)});
+        m.push_back({std::string("LFO -> ")+label+", 8 voices",48000,256,8,[setup=chainOf(type)](OrigamiAudioProcessor& p){
+            setup(p);
+            auto mod=p.getUiInstrumentState().modulation; const auto id=firstOscillator(p);
+            mod.lfo1.mode=LfoMode::Free; mod.lfo1.rateHz=0.8f;
+            std::size_t slot=0; while(slot<mod.routes.size() && mod.routes[slot].id) ++slot;
+            mod.routes[slot]={mod.nextRouteId++,true,ModSource::Lfo1,{ModDestination::ProcessAmount,id,1},0.6f,true};
+            p.setUiModulationState(mod); }});
+    }
     // Value edits while playing (B44): an oscillator knob republishes the
     // module snapshot; a route amount republishes the modulation state.
     // (OSC 2: OSC 1's level is a host parameter, which overrides module state.)
@@ -307,16 +350,17 @@ int main(int argc,char** argv) {
         }
         return 1;
     }
-    std::printf("%-40s %6s %5s %4s | %9s %9s %9s | %7s %7s | %8s | %-16s | %s\n","scenario","rate","block","vox","median us","p95 us","p99 us","med %","p99 %","ns/smp","output hash","spectral misses");
+    std::printf("%-40s %6s %5s %4s | %9s %9s %9s | %7s %7s | %8s | %-16s | %s | %s | %s | %s\n","scenario","rate","block","vox","median us","p95 us","p99 us","med %","p99 %","ns/smp","output hash","spectral misses","requests","compiles","max d2");
     for(const auto& s:scenarios) {
         bool wanted=argc<=1;
         for(int a=1;a<argc;++a) wanted|=s.name.find(argv[a])!=std::string::npos;
         if(!wanted) continue;
         const auto r=run(s,1.5);
-        std::printf("%-40s %6.1f %5d %4d | %9.1f %9.1f %9.1f | %6.2f%% %6.2f%% | %8.1f | %016llx | %llu\n",
+        std::printf("%-40s %6.1f %5d %4d | %9.1f %9.1f %9.1f | %6.2f%% %6.2f%% | %8.1f | %016llx | %llu | %llu | %u | %.4f\n",
                     s.name.c_str(),s.sampleRate/1000.0,s.block,s.voices,r.median,r.p95,r.p99,
                     100.0*r.median/r.budgetUs,100.0*r.p99/r.budgetUs,1000.0*r.median/double(s.block),
-                    static_cast<unsigned long long>(r.hash),static_cast<unsigned long long>(r.fallbacks));
+                    static_cast<unsigned long long>(r.hash),static_cast<unsigned long long>(r.fallbacks),
+                    static_cast<unsigned long long>(r.requests),r.compiles,r.maxSecondDifference);
         std::fflush(stdout);
     }
     return 0;
