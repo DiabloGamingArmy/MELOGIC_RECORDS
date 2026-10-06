@@ -5361,6 +5361,10 @@ int main(){juce::ScopedJuceInitialiser_GUI gui;
 // Preferences stay in memory (the user's file is never touched). The
 // shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
 ui::UserPreferences::useVolatileStorageForTesting();
+// The content library lives in a temporary folder (never the user's library).
+const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("origami-plugin-tests-"+juce::String(juce::Time::currentTimeMillis()));
+contentBase.createDirectory();
+ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
 try{run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

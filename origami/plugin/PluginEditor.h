@@ -6,6 +6,7 @@
 #include <JuceHeader.h>
 #include "ui/OrigamiHeader.h"
 #include "ui/UserPreferences.h"
+#include "ui/ContentBrowser.h"
 #include "ui/OscillatorRack.h"
 #include "ui/SignalPanels.h"
 #include "ui/ModulationPanel.h"
@@ -25,6 +26,7 @@ class OrigamiAudioProcessor;
 class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropContainer,
                                          public juce::DragAndDropTarget,
+                                         public juce::FileDragAndDropTarget,
                                          private juce::Timer,
                                          private juce::AsyncUpdater {
 public:
@@ -72,7 +74,35 @@ public:
     bool assignModulator(mct::origami::ModSource,juce::Slider&);
     // Test access: the route whose depth a drop at this editor point targets (0: none).
     std::uint32_t modulationDepthTargetAt(juce::Point<int> p) const { return modulationDropAt(p).depthRoute; }
+
+    // mct-origami-content-browser: the content library surfaces.
+    void openContentBrowser(mct::origami::content::ContentType,unsigned oscillatorId=0);
+    void closeContentBrowser();
+    bool contentBrowserOpen() const noexcept { return browserOpen_; }
+    mct::origami::ui::ContentBrowser& contentBrowser() noexcept { return *browser_; }
+    mct::origami::content::ContentLibrary& contentLibrary() noexcept { return library_->library; }
+    bool loadPresetRecord(const mct::origami::content::ContentRecord&);
+    bool loadWavetableRecord(const mct::origami::content::ContentRecord&,unsigned oscillatorId);
+    // The one import pipeline (menu, wavetable editor, Finder drop, tests).
+    juce::Result importWavetableFile(unsigned oscillatorId,const juce::File&);
+    juce::Result exportWavetableFile(unsigned oscillatorId,const juce::File&);
+    void stepPreset(int step);
+    void stepWavetable(unsigned oscillatorId,int step);
+    void showPresetSaveDialog();
+    juce::Result savePreset(const mct::origami::ui::PresetSaveDialog::Fields&,bool replace);
+    mct::origami::ui::PresetSaveDialog& presetSaveDialog() noexcept { return *saveDialog_; }
+    juce::String oscillatorLabel(unsigned oscillatorId) const;
+    bool isInterestedInFileDrag(const juce::StringArray&) override;
+    void filesDropped(const juce::StringArray&,int x,int y) override;
 private:
+    void beginWavetableImport(unsigned oscillatorId);
+    void beginWavetableExport(unsigned oscillatorId);
+    void contentLoaded();
+    juce::SharedResourcePointer<mct::origami::ui::SharedContentLibrary> library_;
+    std::unique_ptr<mct::origami::ui::ContentBrowser> browser_;
+    std::unique_ptr<mct::origami::ui::PresetSaveDialog> saveDialog_;
+    std::unique_ptr<juce::FileChooser> contentChooser_;
+    bool browserOpen_=false;
     class WavetableEditorSurface final : public juce::Component {
         static constexpr int editorHeaderHeight=30;
         static constexpr int regionHeaderHeight=28;
@@ -1951,6 +1981,33 @@ private:
         void paint(juce::Graphics& g) override {
             g.fillAll(mct::origami::ui::Palette::background());
         }
+        // mct-origami-content-browser: the editor edits the opening oscillator's
+        // canonical table; import / export use the shared content pipeline.
+        std::function<bool(const juce::File&,mct::origami::content::WavetableData&,juce::String& status)> onImportFile;
+        void loadDocument(const mct::origami::content::WavetableData& data) {
+            std::vector<mct::origami::ui::WavetableFrame> frames(static_cast<std::size_t>(data.frames()));
+            for(std::size_t f=0;f<frames.size();++f) {
+                frames[f].id=mct::origami::ui::WavetableDocument::nextFrameId();
+                std::copy_n(data.samples.data()+f*mct::origami::ui::kWavetableFrameSize,mct::origami::ui::kWavetableFrameSize,frames[f].samples.begin());
+            }
+            if(frames.empty()) return;
+            document_.frames=std::move(frames);
+            document_.selectedFrame=0;
+            document_.name=data.name.toUpperCase();
+            history_.clear(); historyIndex_=0;
+            frameStrip_.rebuild();
+            frameStrip_.selectRange({0u},0u);
+            refreshSelectedFrame();
+            updateFrameTools();
+            refreshHistoryButtons();
+            header_.setDocumentName(document_.name);
+        }
+        mct::origami::content::WavetableData documentData() const {
+            mct::origami::content::WavetableData data;
+            data.name=document_.name;
+            for(const auto& f:document_.frames) data.samples.insert(data.samples.end(),f.samples.begin(),f.samples.end());
+            return data;
+        }
         mct::origami::dsp::Wavetable compiledWavetable() const {
             mct::origami::dsp::Wavetable table;
             table.name=document_.name.toStdString();
@@ -2142,42 +2199,19 @@ private:
                 });
         }
         void finishFrameImport(const juce::File& file) {
-            juce::AudioFormatManager formats;formats.registerBasicFormats();
-            std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
-            if(!reader) {frameTools_.setStatus("Import failed: unreadable audio file");return;}
-            const auto total=reader->lengthInSamples;
-            if(total<static_cast<juce::int64>(mct::origami::ui::kWavetableFrameSize) ||
-               total%static_cast<juce::int64>(mct::origami::ui::kWavetableFrameSize)!=0 ||
-               total>static_cast<juce::int64>(mct::origami::ui::kWavetableFrameSize*mct::origami::ui::kMaxWavetableFrames)) {
-                frameTools_.setStatus("Import requires 1–256 contiguous 2048-sample frames");return;
+            mct::origami::content::WavetableData data; juce::String status;
+            if(!onImportFile || !onImportFile(file,data,status)) { frameTools_.setStatus(status.isNotEmpty() ? status : juce::String("Import failed")); return; }
+            std::vector<mct::origami::ui::WavetableFrame> frames(static_cast<std::size_t>(data.frames()));
+            for(std::size_t f=0;f<frames.size();++f) {
+                frames[f].id=mct::origami::ui::WavetableDocument::nextFrameId();
+                std::copy_n(data.samples.data()+f*mct::origami::ui::kWavetableFrameSize,mct::origami::ui::kWavetableFrameSize,frames[f].samples.begin());
             }
-            juce::AudioBuffer<float> source(juce::jmax(1,static_cast<int>(reader->numChannels)),static_cast<int>(total));
-            if(!reader->read(&source,0,static_cast<int>(total),0,true,true)) {
-                frameTools_.setStatus("Import failed: audio could not be read");return;
-            }
-            std::vector<mct::origami::ui::WavetableFrame> frames;
-            frames.resize(static_cast<std::size_t>(total)/mct::origami::ui::kWavetableFrameSize);
-            float peak=0.0f;
-            for(std::size_t frameIndex=0;frameIndex<frames.size();++frameIndex) {
-                auto& frame=frames[frameIndex];frame.id=mct::origami::ui::WavetableDocument::nextFrameId();
-                for(std::size_t i=0;i<frame.samples.size();++i) {
-                    double sum=0.0;
-                    const auto sampleIndex=static_cast<int>(frameIndex*frame.samples.size()+i);
-                    for(int channel=0;channel<source.getNumChannels();++channel)
-                        sum+=source.getSample(channel,sampleIndex);
-                    const auto value=static_cast<float>(sum/source.getNumChannels());
-                    if(!std::isfinite(value)) {frameTools_.setStatus("Import failed: non-finite audio");return;}
-                    frame.samples[i]=value;peak=std::max(peak,std::abs(value));
-                }
-            }
-            if(peak<=1.0e-8f) {frameTools_.setStatus("Import failed: empty signal");return;}
-            if(peak>1.0f)for(auto& frame:frames)for(auto& value:frame.samples)value/=peak;
             structuralEdit([&](std::vector<unsigned>&) {
                 document_.frames=std::move(frames);document_.selectedFrame=0;
-                document_.name=file.getFileNameWithoutExtension().toUpperCase();
+                document_.name=data.name.toUpperCase();
                 return true;
             });
-            frameTools_.setStatus("Imported "+file.getFileName());
+            frameTools_.setStatus(status);
         }
         void beginFrameExport() {
             frameFileChooser_=std::make_unique<juce::FileChooser>("Export Wavetable",
@@ -2194,21 +2228,9 @@ private:
                 });
         }
         void finishFrameExport(const juce::File& file) {
-            const auto sampleCount=static_cast<int>(document_.frames.size()*mct::origami::ui::kWavetableFrameSize);
-            juce::AudioBuffer<float> buffer(1,sampleCount);
-            for(std::size_t frameIndex=0;frameIndex<document_.frames.size();++frameIndex)
-                for(std::size_t i=0;i<mct::origami::ui::kWavetableFrameSize;++i)
-                    buffer.setSample(0,static_cast<int>(frameIndex*mct::origami::ui::kWavetableFrameSize+i),
-                                     document_.frames[frameIndex].samples[i]);
-            std::unique_ptr<juce::OutputStream> stream=file.createOutputStream();
-            if(!stream) {frameTools_.setStatus("Export failed: cannot write file");return;}
-            juce::WavAudioFormat format;
-            const auto options=juce::AudioFormatWriterOptions{}.withSampleRate(44100.0).withNumChannels(1).withBitsPerSample(16);
-            auto writer=format.createWriterFor(stream,options);
-            if(!writer) {frameTools_.setStatus("Export failed: cannot create WAV writer");return;}
-            if(!writer->writeFromAudioSampleBuffer(buffer,0,sampleCount))
-                frameTools_.setStatus("Export failed: WAV write error");
-            else frameTools_.setStatus("Exported "+file.getFileName());
+            // 32-bit float: the canonical frames exactly (re-import is lossless).
+            if(mct::origami::content::writeWavetableWav(file,documentData())) frameTools_.setStatus("Exported "+file.getFileName());
+            else frameTools_.setStatus("Export failed: cannot write "+file.getFileName());
         }
         void transformSelection(int op,float gain,float offset) {
             if(!document_.valid() || !waveformCanvas_.hasSelection()) return;

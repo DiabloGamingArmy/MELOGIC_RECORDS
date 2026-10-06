@@ -345,26 +345,27 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             if(safe!=nullptr && safe->onWavetableEditorRequested)
                 safe->onWavetableEditorRequested(safe->id());
         };
-        waveformPrevious_.setTooltip("Previous wavetable (only Basic Shapes is currently installed)");
-        waveformNext_.setTooltip("Next wavetable (only Basic Shapes is currently installed)");
-        waveformPrevious_.setEnabled(false);
-        waveformNext_.setEnabled(false);
-        wavetableBrowser_.setTooltip("Browse or import a wavetable");
+        // mct-origami-content-browser: < > step through the wavetable library;
+        // the name opens EXPORT / IMPORT / BROWSE.
+        waveformPrevious_.setTooltip("Previous wavetable in the library");
+        waveformNext_.setTooltip("Next wavetable in the library");
+        const auto act=[safe=juce::Component::SafePointer<OscillatorCard>(this)](WavetableAction a) {
+            if(safe!=nullptr && safe->onWavetableAction) safe->onWavetableAction(safe->id(),a);
+        };
+        waveformPrevious_.onClick=[act]{ act(WavetableAction::Previous); };
+        waveformNext_.onClick=[act]{ act(WavetableAction::Next); };
+        wavetableBrowser_.setName("OSC WAVETABLE");
+        wavetableBrowser_.setTooltip("Browse, import or export this oscillator's wavetable");
         wavetableBrowser_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
-        wavetableBrowser_.onClick=[safe=juce::Component::SafePointer<OscillatorCard>(this)] {
+        wavetableBrowser_.onClick=[safe=juce::Component::SafePointer<OscillatorCard>(this),act] {
             if(safe==nullptr) return;
             const std::vector<NativeChoiceItem> choices{
-                {1,"Basic Shapes",true,"Factory",true},
-                {100,"Import Wavetable...",true,"Import",false}
+                {int(WavetableAction::Browse),"BROWSE WAVETABLES",true,{},false,{},{}},
+                {int(WavetableAction::Import),"IMPORT WAVETABLE...",true,{},false,{},{}},
+                {int(WavetableAction::Export),"EXPORT WAVETABLE...",true,{},false,{},{}}
             };
-            showNativeChoiceMenu(safe->wavetableBrowser_,"Wavetable",choices,1,[safe](int result) {
-                if(safe==nullptr || result==0) return;
-                if(result==1) {
-                    safe->wavetableBrowser_.setButtonText("BASIC SHAPES");
-                    return;
-                }
-                if(result==100)
-                    safe->beginWavetableImport();
+            showNativeChoiceMenu(safe->wavetableBrowser_,"WAVETABLE",choices,0,[act](int result) {
+                if(result>=1 && result<=3) act(WavetableAction(result));
             });
         };
         panSlider_.setName("OSC PAN");
@@ -1181,91 +1182,9 @@ void OscillatorCard::removeBusRoute(std::size_t row) {
     resized();
 }
 
-void OscillatorCard::beginWavetableImport() {
-    wavetableFileChooser_=std::make_unique<juce::FileChooser>(
-        "Import Wavetable",juce::File{},"*.wav;*.aif;*.aiff");
-    auto safe=juce::Component::SafePointer<OscillatorCard>(this);
-    wavetableFileChooser_->launchAsync(
-        juce::FileBrowserComponent::openMode|juce::FileBrowserComponent::canSelectFiles,
-        [safe](const juce::FileChooser& chooser) {
-            if(safe==nullptr) return;
-            const auto file=chooser.getResult();
-            if(file.existsAsFile()) safe->finishWavetableImport(file);
-            safe->wavetableFileChooser_.reset();
-        });
-}
-
-void OscillatorCard::finishWavetableImport(const juce::File& file) {
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
-    if(!reader) {
-        wavetableBrowser_.setTooltip("Import failed: unsupported or unreadable audio file");
-        return;
-    }
-
-    constexpr std::size_t frameLength=2048;
-    constexpr std::size_t maximumFrames=256;
-    const auto totalSamples=static_cast<std::size_t>(reader->lengthInSamples);
-    if(totalSamples<frameLength || totalSamples%frameLength!=0 ||
-       totalSamples/frameLength>maximumFrames) {
-        wavetableBrowser_.setTooltip(
-            "Import failed: wavetable audio must contain 1-256 contiguous 2048-sample frames");
-        return;
-    }
-
-    juce::AudioBuffer<float> source(juce::jmax(1,static_cast<int>(reader->numChannels)),
-                                    static_cast<int>(totalSamples));
-    if(!reader->read(&source,0,static_cast<int>(totalSamples),0,true,true)) {
-        wavetableBrowser_.setTooltip("Import failed: audio data could not be read");
-        return;
-    }
-
-    auto asset=std::make_unique<ImportedWavetableAsset>();
-    asset->sourceFile=file;
-    asset->name=file.getFileNameWithoutExtension();
-    asset->frameLength=frameLength;
-    asset->monoSamples.resize(totalSamples);
-
-    float peak=0.0f;
-    for(std::size_t i=0;i<totalSamples;++i) {
-        double sum=0.0;
-        for(int channel=0;channel<source.getNumChannels();++channel)
-            sum+=source.getSample(channel,static_cast<int>(i));
-        const float sample=static_cast<float>(sum/static_cast<double>(source.getNumChannels()));
-        if(!std::isfinite(sample)) {
-            wavetableBrowser_.setTooltip("Import failed: audio contains non-finite samples");
-            return;
-        }
-        asset->monoSamples[i]=sample;
-        peak=juce::jmax(peak,std::abs(sample));
-    }
-    if(peak<=1.0e-8f) {
-        wavetableBrowser_.setTooltip("Import failed: wavetable contains no usable signal");
-        return;
-    }
-
-    // Normalize once off the audio thread. The raw frame asset is deliberately
-    // separate from the realtime Wavetable representation; the engine compiler
-    // can generate band-limited tables from this immutable source without ever
-    // parsing files in processBlock().
-    if(peak>1.0f)
-        for(auto& sample:asset->monoSamples) sample/=peak;
-
-    const auto canonical=file.getFullPathName().toLowerCase();
-    const auto identity=static_cast<juce::uint64>(canonical.hashCode64());
-    asset->key="user."+juce::String::toHexString(static_cast<juce::int64>(identity));
-
-    importedWavetable_=std::move(asset);
-    wavetableBrowser_.setButtonText(importedWavetable_->name.toUpperCase());
-    wavetableBrowser_.setTooltip(
-        juce::String(importedWavetable_->frameCount())+" frames · 2048 samples · "+file.getFileName());
-
-    // Do not point OscillatorModuleState::tableId at data the realtime engine
-    // cannot resolve yet. Current Engine/Voice still render one hard-coded
-    // Wavetable for every oscillator; publishing a fake tableId here would make
-    // preset/state validation lie about what is actually audible.
-    repaint();
+void OscillatorCard::setWavetableName(const juce::String& name) {
+    const auto label=name.isNotEmpty() ? name.toUpperCase() : juce::String("BASIC SHAPES");
+    if(wavetableBrowser_.getButtonText()!=label) wavetableBrowser_.setButtonText(label);
 }
 
 void OscillatorCard::setWorkspacePage(WorkspacePage page) {
@@ -2100,6 +2019,7 @@ void OscillatorRack::syncFromModel() {
         viewport_.getViewPositionX(),viewport_.getViewPositionY(),
         viewport_.getWidth(),viewport_.getHeight()).expanded(24,0);
     for(auto& card:cards_) {
+        if(wavetableName) card->setWavetableName(wavetableName(card->id()));
         if(card->getBounds().intersects(visible))
             card->syncFromModel();
     }
@@ -2185,6 +2105,9 @@ void OscillatorRack::createCard(unsigned moduleId) {
     card->onWavetableEditorRequested=[safe](unsigned id) {
         if(safe!=nullptr && safe->onWavetableEditorRequested)
             safe->onWavetableEditorRequested(id);
+    };
+    card->onWavetableAction=[safe](unsigned id,OscillatorCard::WavetableAction action) {
+        if(safe!=nullptr && safe->onWavetableAction) safe->onWavetableAction(id,action);
     };
     content_.addAndMakeVisible(*card);
     cards_.push_back(std::move(card));

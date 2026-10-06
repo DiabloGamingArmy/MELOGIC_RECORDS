@@ -19,7 +19,13 @@ public:
     // mct-origami-nested-modulation-manual-qa: the "..." utility menu's items
     // and their action (also used by tests). CAPTURE KEYBOARD INPUT is a
     // per-user preference shared by every instance, never patch state.
-    enum UtilityItem { globalFxItem=1, captureKeyboardItem=2 };
+    enum UtilityItem { globalFxItem=1, captureKeyboardItem=2, initPresetItem=3 };
+    // mct-origami-content-browser: the preset name opens the PRESETS browser;
+    // < > step through the browser's current results; SAVE saves with metadata.
+    std::function<void()> onPresetBrowserRequested,onSaveRequested,onInitRequested;
+    std::function<void(int)> onPresetStep;
+    void setPresetName(const juce::String&);
+    juce::String presetName() const { return preset_.getButtonText(); }
     std::vector<NativeChoiceItem> utilityMenuItems() const;
     void chooseUtility(int item);
     void paint(juce::Graphics&) override;
