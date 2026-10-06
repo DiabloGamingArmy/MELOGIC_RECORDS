@@ -870,6 +870,7 @@ CompiledModulation::PlanChange CompiledModulation::classifyChange(const Modulati
     const auto& k=planKey_;
     if(!k.valid || k.sampleRate!=sampleRate_ || k.filterEnabled!=state.filterEnabled) return PlanChange::Topology;
     for(std::size_t i=0;i<4;++i) if(k.lfoModes[i]!=lfoSettings(state,i).mode) return PlanChange::Topology;
+    for(std::size_t i=0;i<4;++i) if(k.lfoStereo[i]!=(lfoSettings(state,i).stereo>0.0f)) return PlanChange::Topology;
     for(std::size_t i=0;i<state.routes.size();++i) if(!sameRoute(k.routes[i],state.routes[i])) return PlanChange::Topology;
     for(std::size_t i=0;i<modules.size();++i) {
         ModulePlanKey m;
@@ -892,6 +893,7 @@ void CompiledModulation::storePlanKey(const ModulationState& state,const std::ar
     auto& k=planKey_;
     k.valid=true; k.sampleRate=sampleRate_; k.filterEnabled=state.filterEnabled;
     for(std::size_t i=0;i<4;++i) k.lfoModes[i]=lfoSettings(state,i).mode;
+    for(std::size_t i=0;i<4;++i) k.lfoStereo[i]=lfoSettings(state,i).stereo>0.0f;
     k.routes=state.routes; k.operators=state.operators;
     for(std::size_t i=0;i<modules.size();++i) {
         auto& m=k.modules[i]; m=ModulePlanKey{};

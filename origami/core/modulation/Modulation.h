@@ -964,6 +964,10 @@ private:
         std::array<ModRoute,ModulationState::capacity> routes{};
         std::array<ControlOperator,ModulationState::maxControlOperators> operators{};
         std::array<LfoMode,4> lfoModes{};
+        // mct-origami-nested-modulation-manual-qa: whether each LFO is a stereo
+        // source (STEREO > 0) shapes the stereo plan, so crossing zero is a
+        // topology change (a value change above zero is not).
+        std::array<bool,4> lfoStereo{};
         bool filterEnabled=true;
         std::array<ModulePlanKey,16> modules{};
     };

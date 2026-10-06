@@ -803,8 +803,22 @@ void lfoStereoModulation() {
         auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000,256,2); e->setModulationState(s1); e->reset();
         std::array<float,256> l{},r{}; float* p[]{l.data(),r.data()}; e->process(p,2,256);
         const auto before=e->nodesDiagnostics();
-        for(int i=0;i<10;++i) { auto m=s1; m.lfo1.stereo=float(i)/10.0f; e->setModulationState(m); e->process(p,2,256); }
-        check(e->nodesDiagnostics().compiles==before.compiles,"STEREO knob changes never recompile");
+        for(int i=1;i<=10;++i) { auto m=s1; m.lfo1.stereo=float(i)/10.0f; e->setModulationState(m); e->process(p,2,256); }
+        check(e->nodesDiagnostics().compiles==before.compiles,"STEREO knob changes above zero never recompile (crossing zero is a plan change)");
+        // mct-origami-nested-modulation-manual-qa: raising STEREO from 0 during
+        // playback (no reset) makes the plan stereo at once.
+        {
+            auto e2=std::make_unique<OrigamiEngine>(); e2->prepare(48000,256,2);
+            auto m0=s1; m0.lfo1.stereo=0.0f; e2->setModulationState(m0); e2->reset(); e2->noteOn(57,.8f);
+            for(int b=0;b<20;++b) e2->process(p,2,256);
+            auto m1=m0; m1.lfo1.stereo=1.0f; e2->setModulationState(m1);
+            double diff=0; for(int b=0;b<40;++b) { e2->process(p,2,256); for(int i=0;i<256;++i) diff=std::max(diff,double(std::abs(l[i]-r[i]))); }
+            check(diff>1e-3,"STEREO 0 -> 100% while playing takes effect without a reset");
+            auto m2=m1; m2.lfo1.stereo=0.0f; e2->setModulationState(m2);
+            for(int b=0;b<4;++b) e2->process(p,2,256);
+            bool same=true; for(int b=0;b<8;++b) { e2->process(p,2,256); for(int i=0;i<256;++i) same=same && l[i]==r[i]; }
+            check(same,"STEREO back to 0 while playing: mono again");
+        }
     }
     {   // State: v33 only when STEREO is used; older states load mono.
         auto e=std::make_unique<OrigamiEngine>();
