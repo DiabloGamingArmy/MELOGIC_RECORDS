@@ -24,6 +24,7 @@
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
 #include "PluginProcessor.h"
+#include <cstring>
 // mct-origami-audio-reengineer-p04-ui-telemetry-decimation
 // mct-origami-audio-reengineer-p03-midi-preallocation
 #include "PluginEditor.h"
@@ -54,6 +55,9 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
     // parameters. The audio thread only ever sees prepared plans.
     fxWorkspace_.onChanged=[this]{syncFxRenderer();};
     syncFxRenderer();
+    // mct-origami-content-browser: the factory INIT preset is exactly the
+    // state of a freshly constructed instrument.
+    getStateInformation(initState_);
 }
 void OrigamiAudioProcessor::syncFxRenderer() {
     // Render slots follow the canonical bus order (== the engine's slot map).
@@ -523,11 +527,24 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // Deep Audit P03: complete host/session restores cross into the
     // renderer only at a host-block boundary. setStateInformation() never
     // mutates or suspends live DSP.
-    mct::origami::InstrumentState pendingRestore;
-    if(restoreMailbox_.consume(pendingRestore)) {
-        engine_.restoreInstrumentState(pendingRestore);
-        // A full instrument generation replaces note/runtime ownership.
+    // mct-origami-content-browser: a restore replaces every voice at once.
+    // If the instrument is sounding, this block fades out (3 ms) on the old
+    // state and the restore applies at the next boundary: no hard cut, one
+    // block later. A silent instrument restores immediately, as before.
+    bool fadeOutBlock=false;
+    if(restoreDeferred_) {
+        engine_.restoreInstrumentState(deferredRestore_);
         resetArpeggiatorRuntime(false);
+        restoreDeferred_=false;
+    } else if(restoreMailbox_.consume(deferredRestore_)) {
+        if(runtimeOutputPeak_.load(std::memory_order_relaxed)>1.0e-4f) {
+            restoreDeferred_=true; fadeOutBlock=true;
+            fadedRestores_.fetch_add(1,std::memory_order_relaxed);
+        } else {
+            engine_.restoreInstrumentState(deferredRestore_);
+            // A full instrument generation replaces note/runtime ownership.
+            resetArpeggiatorRuntime(false);
+        }
     }
 
     // Patch 14/19: consume latest UI performance state after a restore. The
@@ -674,6 +691,13 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         fxEnvironment_.process(buffer.getWritePointer(0),buffer.getWritePointer(1),
                                auxThisBlock_ ? auxPointers_.data() : nullptr,engine_.renderBusCount(),total,
                                &engine_.fxModulationOutput(),engine_.masterAfterFxActive(),engine_.blockMasterGain());
+    if(fadeOutBlock) {
+        const int fade=std::max(1,std::min(total,static_cast<int>(std::lround(0.003*getSampleRate()))));
+        for(int ch=0;ch<buffer.getNumChannels();++ch) {
+            auto* x=buffer.getWritePointer(ch);
+            for(int i=0;i<total;++i) x[i]*=i<fade ? 1.0f-static_cast<float>(i+1)/static_cast<float>(fade) : 0.0f;
+        }
+    }
 
     bool callbackHasSignal=false;
     float callbackPeak=0.0f,callbackMaxDelta=0.0f;
@@ -776,12 +800,19 @@ void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
     bytes.insert(bytes.end(),fx.begin(),fx.end());
     appendWord(static_cast<std::uint32_t>(fx.size()));
     appendWord(fxWorkspaceMagic);
+    const auto content=encodeContentTrailer();
+    bytes.insert(bytes.end(),content.begin(),content.end());
+    appendWord(static_cast<std::uint32_t>(content.size()));
+    appendWord(contentMagic);
     appendWord(visualMagic);
     appendWord(visualizationMask_.load(std::memory_order_acquire));
     dest.replaceAll(bytes.data(),bytes.size());
 }
 void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
-    if(size<=0) return;
+    restoreState(data,size);
+}
+bool OrigamiAudioProcessor::restoreState(const void* data, int size) {
+    if(size<=0) return false;
 
     int instrumentSize=size;
     if(size>=8) {
@@ -799,6 +830,51 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
         }
     }
 
+    // mct-origami-content-browser trailer: preset identity + custom wavetables.
+    struct RestoredTable { mct::origami::OscillatorModuleId id=0; juce::String contentId; mct::origami::content::WavetableData data; };
+    std::vector<RestoredTable> restoredTables;
+    UiPresetIdentity restoredPreset;
+    bool haveContent=false;
+    if(instrumentSize>=8) {
+        const auto* bytes=static_cast<const std::uint8_t*>(data);
+        const auto readWord=[bytes](int offset) {
+            std::uint32_t value=0;
+            for(int i=0;i<4;++i) value=(value<<8)|bytes[offset+i];
+            return value;
+        };
+        if(readWord(instrumentSize-4)==contentMagic) {
+            const auto length=static_cast<int>(readWord(instrumentSize-8));
+            if(length<4 || length>instrumentSize-8) return false;
+            const int start=instrumentSize-8-length;
+            int pos=start; const int end=start+length;
+            bool ok=true;
+            const auto word=[&]()->std::uint32_t { if(pos+4>end) { ok=false; return 0; } const auto v=readWord(pos); pos+=4; return v; };
+            const auto text=[&]()->juce::String {
+                const auto n=word();
+                if(!ok || n>4096 || pos+static_cast<int>(n)>end) { ok=false; return {}; }
+                juce::String t=juce::String::fromUTF8(reinterpret_cast<const char*>(bytes+pos),static_cast<int>(n)); pos+=static_cast<int>(n); return t;
+            };
+            if(word()!=1u) return false;
+            restoredPreset.id=text(); restoredPreset.name=text();
+            const auto count=word();
+            if(!ok || count>mct::origami::OscillatorModuleBank::capacity) return false;
+            for(std::uint32_t k=0;k<count && ok;++k) {
+                RestoredTable t; t.id=word(); t.contentId=text(); t.data.name=text();
+                const auto frames=word();
+                if(!ok || t.id==0 || frames<1 || frames>static_cast<std::uint32_t>(mct::origami::content::maxWavetableFrames)) return false;
+                const auto samples=static_cast<std::size_t>(frames)*mct::origami::content::wavetableFrameSamples;
+                if(pos+static_cast<int>(samples*4)>end) return false;
+                t.data.samples.resize(samples);
+                for(auto& v:t.data.samples) { const auto bits=word(); std::memcpy(&v,&bits,sizeof v); }
+                if(!t.data.valid()) return false;
+                restoredTables.push_back(std::move(t));
+            }
+            if(!ok || pos!=end) return false;
+            haveContent=true;
+            instrumentSize=start;
+        }
+    }
+
     std::vector<std::uint8_t> workspaceBytes;
     std::optional<mct::origami::fx::FxGraph> legacyGraph;
     if(instrumentSize>=8) {
@@ -811,13 +887,13 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
         const auto tag=readWord(instrumentSize-4);
         if(tag==fxStateMagic || tag==fxWorkspaceMagic) {
             const auto length=static_cast<int>(readWord(instrumentSize-8));
-            if(length<0 || length>instrumentSize-8) return;
+            if(length<0 || length>instrumentSize-8) return false;
             const int start=instrumentSize-8-length;
             if(tag==fxWorkspaceMagic) {
                 workspaceBytes.assign(bytes+start,bytes+start+length);
             } else {
                 mct::origami::fx::FxGraph graph;
-                if(!mct::origami::fx::decodeFxGraph(bytes+start,static_cast<std::size_t>(length),graph)) return;
+                if(!mct::origami::fx::decodeFxGraph(bytes+start,static_cast<std::size_t>(length),graph)) return false;
                 legacyGraph=std::move(graph);
             }
             instrumentSize=start;
@@ -833,10 +909,10 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
         };
         if(readWord(instrumentSize-4)==controlLayoutMagic) {
             const auto length=static_cast<int>(readWord(instrumentSize-8));
-            if(length<0 || length>instrumentSize-8) return;
+            if(length<0 || length>instrumentSize-8) return false;
             const int start=instrumentSize-8-length;
             mct::origami::nodes::ControlLayout decoded;
-            if(!decoded.decode(bytes+start,static_cast<std::size_t>(length))) return;
+            if(!decoded.decode(bytes+start,static_cast<std::size_t>(length))) return false;
             controlLayout=std::move(decoded);
             instrumentSize=start;
         }
@@ -846,10 +922,10 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     // complete fixed-size generation at the next callback boundary.
     mct::origami::InstrumentState state;
     if(!mct::origami::decodeInstrumentState(
-            data,static_cast<std::size_t>(instrumentSize),state)) return;
+            data,static_cast<std::size_t>(instrumentSize),state)) return false;
     if(!workspaceBytes.empty()) {
         mct::origami::fx::FxWorkspace probe; // validate before touching anything
-        if(!probe.decode(workspaceBytes.data(),workspaceBytes.size())) return;
+        if(!probe.decode(workspaceBytes.data(),workspaceBytes.size())) return false;
     }
 
     {
@@ -862,6 +938,24 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     // Keep the independent performance mailbox generation coherent with the
     // complete restore. Any subsequent UI performance edit overwrites this.
     performanceMailbox_.publish(uiPerformanceState_);
+    }
+    // Custom wavetables travel with the state: tables of the restored
+    // oscillators are published (they wait for those oscillators to exist in
+    // the renderer); an oscillator without one returns to BASIC SHAPES.
+    {
+        const juce::ScopedLock lock(stateLock_);
+        const auto previous=std::move(wavetableSources_);
+        wavetableSources_.clear();
+        for(auto& t:restoredTables) {
+            bool exists=false; for(const auto& m:state.oscillators) exists|=m.id!=0 && m.id==t.id;
+            if(!exists) continue;
+            if(engine_.publishWavetableForPendingOscillator(t.id,compileWavetable(t.data)))
+                wavetableSources_[t.id]={std::make_shared<const mct::origami::content::WavetableData>(std::move(t.data)),t.contentId};
+        }
+        for(const auto& [id,source]:previous)
+            if(wavetableSources_.count(id)==0) engine_.publishWavetableForPendingOscillator(id,mct::origami::dsp::Wavetable::builtIns());
+        currentPreset_=haveContent ? restoredPreset : UiPresetIdentity{{},"UNTITLED"};
+        uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     }
     // DAW macro parameters take the restored macro bases and names (outside
     // the model lock: this notifies the host).
@@ -879,6 +973,7 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     // States without the trailer (pre-N03) use the deterministic default layout.
     if(controlLayout) controlLayout_=std::move(*controlLayout); else controlLayout_.clear();
     syncFxRenderer();
+    return true;
 }
 
 std::uint32_t OrigamiAudioProcessor::getUiVisualizationMask() const noexcept {
@@ -1092,6 +1187,7 @@ mct::origami::OscillatorModuleId OrigamiAudioProcessor::addUiOscillator() noexce
 bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId id) noexcept {
     const juce::ScopedLock lock(stateLock_);
     if(!engine_.removeOscillatorModule(id)) return false;
+    wavetableSources_.erase(id); // a removed oscillator's table goes with it
 
     std::array<mct::origami::OscillatorModuleState,
                mct::origami::OscillatorModuleBank::capacity> compact{};
@@ -1117,6 +1213,81 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
     bumpUiModelRevision();
     uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     return true;
+}
+// ---- mct-origami-content-browser -------------------------------------------
+mct::origami::dsp::Wavetable OrigamiAudioProcessor::compileWavetable(const mct::origami::content::WavetableData& data) {
+    // The same canonical representation the wavetable editor commits: one
+    // full-band frame per source frame (the engine band-limits at read time).
+    mct::origami::dsp::Wavetable table;
+    table.name=data.name.toStdString();
+    table.tableLength=mct::origami::content::wavetableFrameSamples;
+    for(int f=0;f<data.frames();++f) {
+        mct::origami::dsp::WavetableFrame frame;
+        mct::origami::dsp::WavetableBand band;
+        band.maximumHarmonic=static_cast<unsigned>(mct::origami::content::wavetableFrameSamples/2);
+        const auto* first=data.samples.data()+static_cast<std::size_t>(f)*mct::origami::content::wavetableFrameSamples;
+        band.samples.assign(first,first+mct::origami::content::wavetableFrameSamples);
+        frame.bands.push_back(std::move(band));
+        table.frames.push_back(std::move(frame));
+    }
+    return table;
+}
+bool OrigamiAudioProcessor::setUiOscillatorWavetable(mct::origami::OscillatorModuleId id,mct::origami::content::WavetableData data,const juce::String& contentId) {
+    if(id==0 || !data.valid()) return false;
+    const bool factory=contentId==mct::origami::content::ContentLibrary::basicShapesId;
+    // Prepared here (message thread): validation, allocation, generation
+    // stamp. The audio thread only swaps pointers at a block boundary.
+    auto table=factory ? mct::origami::dsp::Wavetable::builtIns() : compileWavetable(data);
+    if(!installUiOscillatorWavetable(id,std::move(table))) return false;
+    const juce::ScopedLock lock(stateLock_);
+    if(factory) wavetableSources_.erase(id);
+    else wavetableSources_[id]={std::make_shared<const mct::origami::content::WavetableData>(std::move(data)),contentId};
+    return true;
+}
+OrigamiAudioProcessor::UiWavetableSource OrigamiAudioProcessor::getUiOscillatorWavetable(mct::origami::OscillatorModuleId id) const {
+    const juce::ScopedLock lock(stateLock_);
+    const auto it=wavetableSources_.find(id);
+    return it!=wavetableSources_.end() ? it->second : UiWavetableSource{};
+}
+OrigamiAudioProcessor::UiPresetIdentity OrigamiAudioProcessor::getUiCurrentPreset() const {
+    const juce::ScopedLock lock(stateLock_);
+    return currentPreset_;
+}
+void OrigamiAudioProcessor::setUiCurrentPreset(const juce::String& id,const juce::String& name) {
+    const juce::ScopedLock lock(stateLock_);
+    currentPreset_={id,name};
+}
+bool OrigamiAudioProcessor::loadUiPresetState(const juce::MemoryBlock& state,const juce::String& id,const juce::String& name) {
+    if(state.getSize()==0 || state.getSize()>static_cast<std::size_t>(std::numeric_limits<int>::max())) return false;
+    if(!restoreState(state.getData(),static_cast<int>(state.getSize()))) return false;
+    setUiCurrentPreset(id,name);
+    return true;
+}
+bool OrigamiAudioProcessor::loadUiInitPreset() {
+    return loadUiPresetState(initState_,mct::origami::content::ContentLibrary::initPresetId,"INIT");
+}
+std::vector<std::uint8_t> OrigamiAudioProcessor::encodeContentTrailer() const {
+    std::vector<std::uint8_t> out;
+    const auto word=[&out](std::uint32_t v) { for(int shift=24;shift>=0;shift-=8) out.push_back(static_cast<std::uint8_t>(v>>shift)); };
+    const auto text=[&](const juce::String& t) {
+        const auto utf8=t.toUTF8(); const auto n=std::min<std::size_t>(std::strlen(utf8.getAddress()),4096);
+        word(static_cast<std::uint32_t>(n)); out.insert(out.end(),utf8.getAddress(),utf8.getAddress()+n);
+    };
+    const juce::ScopedLock lock(stateLock_);
+    word(1u);
+    text(currentPreset_.id); text(currentPreset_.name);
+    std::vector<std::pair<mct::origami::OscillatorModuleId,const UiWavetableSource*>> live;
+    for(const auto& [id,source]:wavetableSources_) {
+        bool exists=false; for(const auto& m:uiInstrumentState_.oscillators) exists|=m.id!=0 && m.id==id;
+        if(exists && source.data) live.push_back({id,&source});
+    }
+    word(static_cast<std::uint32_t>(live.size()));
+    for(const auto& [id,source]:live) {
+        word(id); text(source->contentId); text(source->data->name);
+        word(static_cast<std::uint32_t>(source->data->frames()));
+        for(float v:source->data->samples) { std::uint32_t bits; std::memcpy(&bits,&v,sizeof bits); word(bits); }
+    }
+    return out;
 }
 bool OrigamiAudioProcessor::installUiOscillatorWavetable(
     mct::origami::OscillatorModuleId id,mct::origami::dsp::Wavetable table) {

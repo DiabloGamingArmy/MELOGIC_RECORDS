@@ -76,9 +76,13 @@ bool OrigamiEngine::publishWavetableForOscillator(OscillatorModuleId id,dsp::Wav
     // All validation (a full scan of every sample) and the generation stamp
     // happen here, off the audio thread.
     if(id==0 || oscillatorModules_.state(id).id==0 || !table.valid()) return false;
+    return publishWavetableForPendingOscillator(id,std::move(table));
+}
+bool OrigamiEngine::publishWavetableForPendingOscillator(OscillatorModuleId id,dsp::Wavetable table) {
+    if(id==0 || !table.valid()) return false;
     dsp::assignWavetableGeneration(table);
     collectRetiredWavetables();
-    auto* handoff=new WavetableHandoff{id,std::move(table),nullptr};
+    auto* handoff=new WavetableHandoff{id,std::move(table),nullptr,0};
     handoff->next=wavetableIncoming_.load(std::memory_order_relaxed);
     while(!wavetableIncoming_.compare_exchange_weak(handoff->next,handoff,
                                                     std::memory_order_release,std::memory_order_relaxed)) {}
@@ -107,6 +111,13 @@ bool OrigamiEngine::adoptWavetableHandoffs(WavetableHandoff* list) noexcept {
         auto* h=ordered; ordered=h->next;
         bool exists=false;
         for(const auto& m:hostModules_) exists|=m.id==h->id;
+        if(!exists && ++h->waitBlocks<maxHandoffWaitBlocks) {
+            // Its oscillator is not here yet (a restore in flight): back on
+            // the incoming stack for the next block (pointer pushes only).
+            h->next=wavetableIncoming_.load(std::memory_order_relaxed);
+            while(!wavetableIncoming_.compare_exchange_weak(h->next,h,std::memory_order_release,std::memory_order_relaxed)) {}
+            continue;
+        }
         if(auto* destination=exists ? wavetableSlotFor(h->id) : nullptr) {
             using std::swap;
             swap(destination->table,h->table); // vector / string pointer swaps: no allocation

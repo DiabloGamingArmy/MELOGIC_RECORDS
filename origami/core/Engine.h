@@ -58,6 +58,9 @@ public:
     // replaced table travels back in the same holder and is freed by the next
     // non-audio call (publish / collect) or the destructor.
     bool publishWavetableForOscillator(OscillatorModuleId id,dsp::Wavetable table);
+    // mct-origami-content-browser: for a state restore in flight, whose
+    // oscillator `id` exists in the restored state but not yet here.
+    bool publishWavetableForPendingOscillator(OscillatorModuleId id,dsp::Wavetable table);
     void collectRetiredWavetables() noexcept;
     bool wavetableHandoffPending() const noexcept { return wavetableIncoming_.load(std::memory_order_acquire)!=nullptr; }
     ~OrigamiEngine();
@@ -218,7 +221,12 @@ private:
         OscillatorModuleId id=0;
         dsp::Wavetable table;
         WavetableHandoff* next=nullptr;
+        // mct-origami-content-browser: a table published with a restored state
+        // may arrive before that state's oscillator exists in the renderer; it
+        // waits (re-queued, no allocation) for at most this many blocks.
+        std::uint32_t waitBlocks=0;
     };
+    static constexpr std::uint32_t maxHandoffWaitBlocks=16;
     // Two lock-free stacks: the producer pushes / takes all, the audio thread
     // takes all / pushes. Push-only + take-all has no ABA hazard.
     std::atomic<WavetableHandoff*> wavetableIncoming_{nullptr},wavetableRetired_{nullptr};
