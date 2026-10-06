@@ -50,14 +50,18 @@ bool OrigamiEngine::installWavetable(dsp::Wavetable table) {
     dsp::assignWavetableGeneration(table);
     wavetable_ = std::move(table); reset(); return true;
 }
+OrigamiEngine::OscillatorWavetableSlot* OrigamiEngine::wavetableSlotFor(OscillatorModuleId id) noexcept {
+    OscillatorWavetableSlot* destination=nullptr;
+    for(auto& slot:oscillatorWavetables_) {
+        if(slot.id==id) return &slot;
+        if(destination==nullptr && slot.id==0) destination=&slot;
+    }
+    return destination;
+}
 bool OrigamiEngine::installWavetableForOscillator(OscillatorModuleId id,dsp::Wavetable table) {
     if(id==0 || oscillatorModules_.state(id).id==0 || !table.valid()) return false;
     dsp::assignWavetableGeneration(table);
-    OscillatorWavetableSlot* destination=nullptr;
-    for(auto& slot:oscillatorWavetables_) {
-        if(slot.id==id) { destination=&slot; break; }
-        if(destination==nullptr && slot.id==0) destination=&slot;
-    }
+    auto* destination=wavetableSlotFor(id);
     if(destination==nullptr) return false;
     destination->id=id;
     destination->table=std::move(table);
@@ -67,13 +71,62 @@ bool OrigamiEngine::installWavetableForOscillator(OscillatorModuleId id,dsp::Wav
     // without assigning it to unrelated oscillator modules.
     return true;
 }
+bool OrigamiEngine::publishWavetableForOscillator(OscillatorModuleId id,dsp::Wavetable table) {
+    // All validation (a full scan of every sample) and the generation stamp
+    // happen here, off the audio thread.
+    if(id==0 || oscillatorModules_.state(id).id==0 || !table.valid()) return false;
+    dsp::assignWavetableGeneration(table);
+    collectRetiredWavetables();
+    auto* handoff=new WavetableHandoff{id,std::move(table),nullptr};
+    handoff->next=wavetableIncoming_.load(std::memory_order_relaxed);
+    while(!wavetableIncoming_.compare_exchange_weak(handoff->next,handoff,
+                                                    std::memory_order_release,std::memory_order_relaxed)) {}
+    return true;
+}
+void OrigamiEngine::collectRetiredWavetables() noexcept {
+    for(auto* h=wavetableRetired_.exchange(nullptr,std::memory_order_acquire);h!=nullptr;) {
+        auto* next=h->next; delete h; h=next;
+    }
+}
+OrigamiEngine::~OrigamiEngine() {
+    collectRetiredWavetables();
+    for(auto* h=wavetableIncoming_.exchange(nullptr,std::memory_order_acquire);h!=nullptr;) {
+        auto* next=h->next; delete h; h=next;
+    }
+}
+// Audio thread, host-block boundary, after the module snapshot was consumed.
+// `list` is newest-first; adopt in publication order so the latest table for
+// a module wins. Every holder (now carrying the replaced table, or the
+// rejected one) returns on the retired stack.
+bool OrigamiEngine::adoptWavetableHandoffs(WavetableHandoff* list) noexcept {
+    WavetableHandoff* ordered=nullptr;
+    while(list) { auto* next=list->next; list->next=ordered; ordered=list; list=next; }
+    bool installed=false;
+    while(ordered) {
+        auto* h=ordered; ordered=h->next;
+        bool exists=false;
+        for(const auto& m:hostModules_) exists|=m.id==h->id;
+        if(auto* destination=exists ? wavetableSlotFor(h->id) : nullptr) {
+            using std::swap;
+            swap(destination->table,h->table); // vector / string pointer swaps: no allocation
+            destination->id=h->id;
+            installed=true;
+        }
+        h->next=wavetableRetired_.load(std::memory_order_relaxed);
+        while(!wavetableRetired_.compare_exchange_weak(h->next,h,std::memory_order_release,std::memory_order_relaxed)) {}
+    }
+    return installed;
+}
 void OrigamiEngine::rebuildHostWavetables() noexcept {
+    // A slot id is only ever set for a table validated before it was
+    // installed: no per-rebuild scan of every sample here (this runs on the
+    // audio thread after every oscillator state edit).
     for(std::size_t i=0;i<hostWavetables_.size();++i) {
         hostWavetables_[i]=&wavetable_;
         const auto id=hostModules_[i].id;
         if(id==0) continue;
         for(const auto& slot:oscillatorWavetables_) {
-            if(slot.id==id && slot.table.valid()) {
+            if(slot.id==id) {
                 hostWavetables_[i]=&slot.table;
                 break;
             }
@@ -367,6 +420,11 @@ void OrigamiEngine::latchParameters() noexcept {
 bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     if(hostBlockActive_ || !prepared_ || channels<1 || channels>2 || channels!=outputChannels_) return false;
     latchParameters();
+    // Take published editor tables BEFORE consuming the module snapshot: a
+    // table is published after its module, so this block's snapshot then
+    // already contains that module.
+    auto* handoffs=wavetableIncoming_.load(std::memory_order_relaxed)!=nullptr
+        ? wavetableIncoming_.exchange(nullptr,std::memory_order_acquire) : nullptr;
     const bool oscillatorGenerationChanged=
         oscillatorModules_.consumeSnapshot(hostModules_,hostModuleGeneration_);
     const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
@@ -380,7 +438,18 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     BusSlotMap slots;
     const bool slotsChanged=busSlotMailbox_.consume(slots) && slots!=hostBusSlots_;
     if(slotsChanged) hostBusSlots_=slots;
-    if(oscillatorGenerationChanged || moduleTopologyChanged || slotsChanged) {
+    bool tablesChanged=false;
+    if(oscillatorGenerationChanged || moduleTopologyChanged) {
+        // A removed module's table is released here, on the audio thread, but
+        // its storage is not freed: a later adopted table swaps it out.
+        for(auto& slot:oscillatorWavetables_) if(slot.id) {
+            bool exists=false;
+            for(const auto& m:hostModules_) exists|=m.id==slot.id;
+            if(!exists) slot.id=0;
+        }
+    }
+    if(handoffs) tablesChanged=adoptWavetableHandoffs(handoffs);
+    if(oscillatorGenerationChanged || moduleTopologyChanged || slotsChanged || tablesChanged) {
         oscillatorPlan_.compile(hostModules_,hostBusSlots_);
         rebuildHostWavetables();
     }
@@ -759,12 +828,9 @@ OscillatorModuleId OrigamiEngine::addOscillatorModule() noexcept {
 }
 bool OrigamiEngine::removeOscillatorModule(OscillatorModuleId id) noexcept {
     if(!oscillatorModules_.remove(id)) return false;
-    for(auto& slot:oscillatorWavetables_) {
-        if(slot.id!=id) continue;
-        slot={};
-        break;
-    }
-    rebuildHostWavetables();
+    // The module's table slot is NOT touched here: this runs beside a live
+    // audio thread that may be reading it. beginHostBlock releases the slot
+    // when the snapshot without this module arrives (see adoptWavetableHandoffs).
 
     // Clear cross-oscillator routing slots whose source just disappeared.
     // Stable module IDs are authoritative, so a later oscillator cannot inherit

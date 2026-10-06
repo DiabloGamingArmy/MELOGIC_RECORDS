@@ -1408,6 +1408,38 @@ void oscillatorRevisionSemanticsAudit() {
     check(processor.getUiOscillatorState(3).id==0,"deleted oscillator is gone canonically");
 }
 
+
+// mct-origami-dsp-performance-stereo-chain: an editor wavetable commit while
+// notes play crosses into the callback without heap traffic (the previous
+// mailbox deep-copied the table in processBlock and freed the old one there).
+void wavetableCommitRealtimeAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
+    p.setPlayConfigDetails(0,2,48000.0,256); p.prepareToPlay(48000.0,256);
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi; midi.ensureSize(4096);
+    for(int n=0;n<6;++n) midi.addEvent(juce::MidiMessage::noteOn(1,48+n*3,.7f),n);
+    p.processBlock(audio,midi); midi.clear();
+    auto table=mct::origami::dsp::Wavetable::builtIns();
+    for(auto& f:table.frames) for(auto& b:f.bands) for(auto& v:b.samples) v*=-.8f;
+    for(int round=0;round<3;++round) {
+        check(p.installUiOscillatorWavetable(2,table),"editor table commits during playback");
+#ifndef ORIGAMI_SANITIZED
+        pluginAllocations.store(0); pluginGuardAllocations.store(true);
+#endif
+        for(int b=0;b<4;++b) { audio.clear(); p.processBlock(audio,midi); }
+#ifndef ORIGAMI_SANITIZED
+        pluginGuardAllocations.store(false);
+        check(pluginAllocations.load()==0,"wavetable commit adoption allocates nothing in processBlock");
+#endif
+        (void)p.getUiRuntimeVisualizationSnapshot(); // UI poll frees replaced tables
+    }
+    check(magnitude(audio)>0.0f,"playback continues across table commits");
+    check(p.removeUiOscillator(2),"remove the oscillator whose table is live");
+    for(int b=0;b<4;++b) { audio.clear(); p.processBlock(audio,midi); }
+    bool finite=true;
+    for(int ch=0;ch<2;++ch) for(int i=0;i<256;++i) finite=finite && std::isfinite(audio.getSample(ch,i));
+    check(finite,"playback stays finite after removing a module with a live table");
+}
+
 void modulationKnobBaseAudit() {
     auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
     auto module=processor.getUiOscillatorState(2);
@@ -4781,6 +4813,7 @@ void run() {
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();
     oscillatorRevisionSemanticsAudit();
+    wavetableCommitRealtimeAudit();
     modulationKnobBaseAudit();
     matrixStableChainDestinationAudit();
     matrixDynamicRouteAudit();

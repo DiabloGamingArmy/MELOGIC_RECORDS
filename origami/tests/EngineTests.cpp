@@ -9,10 +9,12 @@
 #include "core/dsp/Filter.h"
 #include "core/RealtimeThreadPolicy.h"
 #include "core/preset/Patch.h"
+#include "tests/OptimizedPathGolden.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -23,15 +25,21 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
-namespace { std::atomic<bool> guardAllocations {false}; std::atomic<unsigned> allocations {0}; }
+namespace {
+std::atomic<bool> guardAllocations {false}; std::atomic<unsigned> allocations {0},frees {0};
+// Per-thread accounting for concurrent tests: only a thread that set this
+// flag (the simulated audio thread) is counted.
+thread_local bool audioThread=false;
+std::atomic<unsigned> audioAllocations {0},audioFrees {0};
+}
 #ifndef ORIGAMI_SANITIZED
 // ASan owns allocation interception; count realtime allocations in normal builds.
-void* operator new(std::size_t size) { if(guardAllocations.load()) ++allocations; if(void* p=std::malloc(size?size:1)) return p; throw std::bad_alloc(); }
+void* operator new(std::size_t size) { if(guardAllocations.load()) ++allocations; if(audioThread) ++audioAllocations; if(void* p=std::malloc(size?size:1)) return p; throw std::bad_alloc(); }
 void* operator new[](std::size_t size) { return ::operator new(size); }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+void operator delete(void* p) noexcept { if(p && guardAllocations.load()) ++frees; if(p && audioThread) ++audioFrees; std::free(p); }
+void operator delete[](void* p) noexcept { ::operator delete(p); }
+void operator delete(void* p, std::size_t) noexcept { ::operator delete(p); }
+void operator delete[](void* p, std::size_t) noexcept { ::operator delete(p); }
 #endif
 using namespace mct::origami;
 namespace {
@@ -461,6 +469,48 @@ void audioRateFastMathAudit() {
     }
     check(powWorst<2.0e-6,"fast audio curve-power accuracy");
 
+    // mct-origami-dsp-performance-stereo-chain: the bit-level exp2 / log2
+    // splits must reproduce the previous std::ldexp / std::frexp versions
+    // bit for bit (a sound-preserving optimisation, not a new approximation).
+    {
+        const auto referenceExp2=[](double x) {
+            if(!std::isfinite(x)) return 1.0;
+            x=std::clamp(x,-126.0,126.0);
+            const int whole=static_cast<int>(std::floor(x));
+            const double y=(x-static_cast<double>(whole))*0.69314718055994530942;
+            const double p=1.0+y*(1.0+y*(0.5+y*(1.0/6.0+y*(1.0/24.0+
+                y*(1.0/120.0+y*(1.0/720.0+y*(1.0/5040.0+y*(1.0/40320.0))))))));
+            return std::ldexp(p,whole);
+        };
+        const auto referenceLog2=[](double x) {
+            if(!(x>0.0) || !std::isfinite(x)) return -126.0;
+            int exponent=0; double mantissa=std::frexp(x,&exponent);
+            mantissa*=2.0; --exponent;
+            const double z=(mantissa-1.0)/(mantissa+1.0),z2=z*z;
+            double term=z,sum=term;
+            term*=z2;sum+=term/3.0; term*=z2;sum+=term/5.0; term*=z2;sum+=term/7.0;
+            term*=z2;sum+=term/9.0; term*=z2;sum+=term/11.0; term*=z2;sum+=term/13.0;
+            return static_cast<double>(exponent)+2.0*sum*1.4426950408889634074;
+        };
+        const auto same=[](double a,double b) { return std::memcmp(&a,&b,sizeof a)==0; };
+        std::uint64_t state=0x9e3779b97f4a7c15ull;
+        const auto next=[&] { state^=state<<13; state^=state>>7; state^=state<<17; return state; };
+        bool exp2Same=true,log2Same=true;
+        for(int i=-260000;i<=260000;++i) exp2Same=exp2Same && same(dsp::fastExp2Audio(i/2000.0),referenceExp2(i/2000.0));
+        for(int i=0;i<200000;++i) {
+            const double r=static_cast<double>(next()>>11)*0x1p-53;
+            exp2Same=exp2Same && same(dsp::fastExp2Audio(-140.0+280.0*r),referenceExp2(-140.0+280.0*r));
+            std::uint64_t bits=next(); double x; std::memcpy(&x,&bits,sizeof x); x=std::abs(x); // every exponent, subnormals included
+            log2Same=log2Same && same(dsp::fastLog2Positive(x),referenceLog2(x));
+            log2Same=log2Same && same(dsp::fastLog2Positive(r),referenceLog2(r));
+        }
+        for(double x:{std::numeric_limits<double>::denorm_min(),std::numeric_limits<double>::min(),1.0,0.5,
+                      std::numeric_limits<double>::max(),0.0,-1.0,std::numeric_limits<double>::infinity()})
+            log2Same=log2Same && same(dsp::fastLog2Positive(x),referenceLog2(x));
+        check(exp2Same,"bit-level exp2 split is bit-identical to the ldexp version");
+        check(log2Same,"bit-level log2 split is bit-identical to the frexp version (normal and subnormal)");
+    }
+
     double foldWorst=0.0;
     for(int i=-8000;i<=8000;++i) {
         const double x=static_cast<double>(i)/1000.0;
@@ -854,6 +904,163 @@ void performanceSourceCurveAudit() {
           "50 percent bipolar LFO depth reaches oscillator level full scale");
 }
 
+
+// mct-origami-dsp-performance-stereo-chain: the handoff under real
+// concurrency. One thread renders continuously (the audio thread) while the
+// main thread publishes tables to two oscillators, collects replaced ones,
+// and removes / re-adds a module whose table is live. The audio thread must
+// never allocate or free, playback must stay finite, and every holder must
+// be reclaimed (the engine destructor frees anything still in flight).
+void wavetableHandoffConcurrencyAudit() {
+    const auto authored=[](float gain) {
+        auto table=dsp::Wavetable::builtIns();
+        for(auto& frame:table.frames) for(auto& band:frame.bands) for(auto& v:band.samples) v*=gain;
+        return table;
+    };
+    std::vector<dsp::Wavetable> tables; for(float g:{.9f,-.7f,.5f,-.3f}) tables.push_back(authored(g));
+    auto owner=std::make_unique<OrigamiEngine>(); auto& engine=*owner;
+    prepare(engine,48000,2);
+    const auto second=engine.addOscillatorModule();
+    for(int note:{45,52,57,64}) check(engine.noteOn(note,.8f),"concurrency audit notes");
+    std::atomic<bool> stop{false},finite{true};
+    std::atomic<unsigned> blocks{0};
+    std::thread audio([&] {
+        std::vector<float> l(256),r(256); float* io[2]{l.data(),r.data()};
+        audioThread=true;
+        while(!stop.load(std::memory_order_acquire)) {
+            engine.process(io,2,256);
+            for(int i=0;i<256;++i) if(!std::isfinite(l[std::size_t(i)]) || !std::isfinite(r[std::size_t(i)])) finite.store(false);
+            blocks.fetch_add(1,std::memory_order_relaxed);
+        }
+        audioThread=false;
+    });
+    // Same-thread rule of the plugin: UI-side engine edits are serialized
+    // (stateLock_), never with process().
+    OscillatorModuleId third=engine.addOscillatorModule();
+    unsigned published=0;
+    for(int round=0;round<240;++round) {
+        auto a=tables[std::size_t(round)%tables.size()],b=tables[std::size_t(round+1)%tables.size()];
+        published+=engine.publishWavetableForOscillator(second,std::move(a)) ? 1u : 0u;
+        if(third) published+=engine.publishWavetableForOscillator(third,std::move(b)) ? 1u : 0u;
+        if(round%16==7 && third) { engine.removeOscillatorModule(third); third=0; }
+        else if(round%16==11 && !third) third=engine.addOscillatorModule();
+        engine.collectRetiredWavetables();
+        const auto target=blocks.load()+1;
+        while(blocks.load()<target) std::this_thread::yield(); // let at least one callback adopt
+    }
+    stop.store(true,std::memory_order_release);
+    audio.join();
+    engine.collectRetiredWavetables();
+#ifndef ORIGAMI_SANITIZED
+    check(audioAllocations.load()==0 && audioFrees.load()==0,"concurrent table commits / module removal: the audio thread never allocates or frees");
+#endif
+    check(finite.load(),"concurrent table commits keep playback finite");
+    check(published>240,"tables were published throughout");
+    check(blocks.load()>=240,"the audio thread rendered throughout");
+}
+
+// mct-origami-dsp-performance-stereo-chain: every optimised path renders the
+// pre-optimisation output bit for bit (hashes captured on 378ad97), at block
+// sizes 32 / 256 / 1000, deterministically.
+void optimizedPathGoldenAudit() {
+    const bool print=std::getenv("ORIGAMI_PRINT_GOLDEN")!=nullptr;
+    static constexpr std::uint64_t expected[golden::scenarioCount]{
+        0x8b54461996998697ull,0xf2cb0320aab297acull,0x69eb600ae29a68dbull,
+        0x0186663dd655c3d1ull,0x47585a3f316d4135ull,0xa740b1d6675595c3ull};
+    for(int s=0;s<golden::scenarioCount;++s) {
+        const auto a=golden::render(s,32),b=golden::render(s,256),c=golden::render(s,1000),again=golden::render(s,256);
+        if(print) std::cout<<"GOLDEN "<<golden::scenarioName(s)<<" 0x"<<std::hex<<b.hash<<std::dec<<"\n";
+        check(a.finite && b.finite && c.finite,"golden render stays finite");
+        check(a.hash==b.hash && b.hash==c.hash,"optimised paths are block-size independent (32 / 256 / 1000)");
+        check(again.hash==b.hash,"optimised paths render deterministically");
+        check(b.hash==expected[s],"optimised paths match the pre-optimisation golden render");
+    }
+}
+
+// mct-origami-dsp-performance-stereo-chain: editor wavetable commits while
+// voices play. The audio thread adopts by swap: it never allocates or frees
+// (the old mailbox copied the table and freed the previous one in the
+// callback), the result equals an exclusive install, back-to-back commits to
+// two oscillators are both kept, and removing a module whose table is live
+// frees nothing under the audio thread.
+void wavetableHandoffAudit() {
+    const auto authored=[](float gain) {
+        auto table=dsp::Wavetable::builtIns();
+        for(auto& frame:table.frames) for(auto& band:frame.bands) for(auto& v:band.samples) v*=gain;
+        return table;
+    };
+    // Preallocated output: the guarded sections measure the engine only.
+    const auto play=[](OrigamiEngine& e,std::vector<float>& out) {
+        for(std::size_t i=0;i<out.size();i+=256) { float* ptr=out.data()+i; check(e.process(&ptr,1,std::min<std::size_t>(256,out.size()-i)),"handoff render block"); }
+    };
+    std::vector<float> adopted(1024),expected(1024),scratch(1024);
+    auto referenceOwner=std::make_unique<OrigamiEngine>(),actualOwner=std::make_unique<OrigamiEngine>();
+    auto& reference=*referenceOwner;auto& actual=*actualOwner;
+    prepare(reference);prepare(actual);
+    const auto second=actual.addOscillatorModule();
+    check(second!=0 && second==reference.addOscillatorModule(),"second oscillator for the handoff audit");
+    for(auto* e:{&reference,&actual}) {
+        for(int note:{48,55,60,67}) check(e->noteOn(note,.8f),"handoff audit notes");
+        render(*e,512,256);
+    }
+    // Two commits before one callback: both oscillators must receive theirs.
+    check(actual.publishWavetableForOscillator(1,authored(-.9f)),"OSC 1 table publishes");
+    check(actual.publishWavetableForOscillator(second,authored(.5f)),"OSC 2 table publishes");
+    check(!actual.publishWavetableForOscillator(99,authored(1.f)),"unknown module rejected before publication");
+    auto broken=authored(1.f);broken.frames[0].bands[0].samples[3]=std::numeric_limits<float>::quiet_NaN();
+    check(!actual.publishWavetableForOscillator(1,std::move(broken)),"invalid table rejected before publication");
+    check(reference.installWavetableForOscillator(1,authored(-.9f)) &&
+          reference.installWavetableForOscillator(second,authored(.5f)),"exclusive reference installs");
+    check(actual.wavetableHandoffPending(),"tables wait for the callback boundary");
+#ifndef ORIGAMI_SANITIZED
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+#endif
+    play(actual,adopted);
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(allocations.load()==0 && frees.load()==0,"adopting editor tables allocates and frees nothing in the callback");
+#endif
+    check(!actual.wavetableHandoffPending(),"both tables adopted at the boundary");
+    play(reference,expected);
+    bool same=adopted.size()==expected.size();
+    for(std::size_t i=0;same && i<adopted.size();++i) same=adopted[i]==expected[i];
+    check(same,"published tables render exactly like an exclusive install (both oscillators)");
+    // Replace a live table, then remove the module whose table is playing.
+    check(actual.publishWavetableForOscillator(second,authored(.25f)),"replacement publishes");
+#ifndef ORIGAMI_SANITIZED
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+#endif
+    play(actual,scratch);
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(allocations.load()==0 && frees.load()==0,"replacing a live table frees nothing in the callback");
+    frees.store(0);guardAllocations.store(true);
+#endif
+    actual.collectRetiredWavetables(); // non-audio thread: the replaced tables are freed here
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(frees.load()>0,"replaced tables are freed by the non-audio collector");
+#endif
+    check(actual.removeOscillatorModule(second),"remove the module with a live table");
+#ifndef ORIGAMI_SANITIZED
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+#endif
+    play(actual,scratch);
+    const auto& afterRemove=scratch;
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(allocations.load()==0 && frees.load()==0,"removing a module with a live table frees nothing in the callback");
+#endif
+    check(std::all_of(afterRemove.begin(),afterRemove.end(),[](float v){return std::isfinite(v);}),"playback stays finite after removal");
+    // The released slot is reused by the next commit (its stale storage is
+    // swapped out and freed off-thread).
+    const auto third=actual.addOscillatorModule();
+    check(actual.publishWavetableForOscillator(third,authored(.7f)),"new module table publishes");
+    render(actual,256,256);
+    check(!actual.wavetableHandoffPending(),"released slot accepts a new table");
+    actual.collectRetiredWavetables();
+}
+
 int main() {
     // OrigamiEngine/Voice are intentionally large fixed-storage realtime
     // objects. Keep every engine-heavy regression off the process stack so the
@@ -876,6 +1083,9 @@ int main() {
         std::cerr<<"spectral playback\n";spectralCachePlayback();
         std::cerr<<"spectral concurrent eviction\n";spectralCacheConcurrentEviction();
         std::cerr<<"realtime thread policy\n";realtimeThreadPolicyAudit();
+        std::cerr<<"wavetable handoff\n";wavetableHandoffAudit();
+        std::cerr<<"wavetable handoff concurrency\n";wavetableHandoffConcurrencyAudit();
+        std::cerr<<"optimised-path golden renders\n";optimizedPathGoldenAudit();
         std::cerr<<"registry and patches\n";registryAndPatches();
         std::cerr<<"envelope timing\n";envelopeTiming();
         std::cerr<<"pitch and blocks\n";pitchAndBlocks();

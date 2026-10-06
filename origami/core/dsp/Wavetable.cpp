@@ -170,6 +170,19 @@ bool sameProcessPlan(const OscProcessPlan& a,const OscProcessPlan& b) noexcept {
     }
     return true;
 }
+// A source plan addresses a cached key exactly when its quantized form equals
+// the key's plan (the same test the full lookup performs after quantizing).
+bool planMatchesKey(const OscProcessPlan& source,const OscProcessPlan& key) noexcept {
+    const auto count=std::min<std::size_t>(source.count,maxOscProcessStages);
+    if(count!=key.count) return false;
+    for(std::size_t i=0;i<count;++i) {
+        const auto& x=source.stages[i];const auto& y=key.stages[i];
+        if(x.type!=y.type || x.seed!=y.seed) return false;
+        const float amount=oscProcessIsSpectral(x.type) ? quantizedSpectralAmount(x.type,x.amount) : x.amount;
+        if(amount!=y.amount) return false;
+    }
+    return true;
+}
 bool sameSpectralKey(const SpectralKey& a,const SpectralKey& b) noexcept {
     return a.table==b.table && a.generation==b.generation && a.frame==b.frame &&
            a.band==b.band && sameProcessPlan(a.plan,b.plan);
@@ -213,10 +226,11 @@ public:
         // A stable chain needs neither re-quantization nor re-hashing per sample.
         // Revision validation under the pin handles eviction and table reuse.
         if(hint.revision && hint.table==&table && hint.generation==table.generation &&
-           hint.frame==frame && hint.band==band && sameProcessPlan(hint.plan,sourcePlan)) {
+           hint.frame==frame && hint.band==band) {
             auto& slot=cache_[hint.slot];
             if(pin(slot)) {
-                if(slot.revision==hint.revision) {
+                // The slot cannot be rewritten while pinned: its key is stable.
+                if(slot.revision==hint.revision && planMatchesKey(sourcePlan,slot.key.plan)) {
                     const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
                     touch(slot,hint);
                     unpin(slot);
@@ -239,8 +253,8 @@ public:
             if(sameSpectralKey(slot.key,key)){
                 const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
                 hint.table=&table;hint.generation=table.generation;
-                hint.frame=frame;hint.band=band;hint.plan=sourcePlan;
-                hint.slot=bucket+w;hint.revision=slot.revision;hint.hits=0;
+                hint.frame=static_cast<std::uint32_t>(frame);hint.band=static_cast<std::uint32_t>(band);
+                hint.slot=static_cast<std::uint32_t>(bucket+w);hint.revision=slot.revision;hint.hits=0;
                 touch(slot,hint);
                 unpin(slot);return value;
             }
@@ -483,13 +497,17 @@ const char* oscProcessCategory(OscProcessType type) noexcept {
     return "";
 }
 
+// The largest double below 1 (== std::nextafter(1.0, 0.0)) as a constant: the
+// libm call was not folded and ran once per process stage per read.
+constexpr double belowOne=0x1.fffffffffffffp-1;
+static_assert(belowOne<1.0 && 1.0-belowOne==0x1p-53,"largest double below one");
 double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) noexcept {
-    const auto wrap01=[](double x) noexcept { x-=std::floor(x); return std::clamp(x,0.0,std::nextafter(1.0,0.0)); };
+    const auto wrap01=[](double x) noexcept { x-=std::floor(x); return std::clamp(x,0.0,belowOne); };
     const auto mix=[](double a,double b,double t) noexcept { return a+(b-a)*t; };
     const auto triangle=[](double x) noexcept { x-=std::floor(x/2.0)*2.0; return 1.0-std::abs(x-1.0); };
     const auto quantize=[](double x,int steps) noexcept { return std::floor(x*steps)/static_cast<double>(steps); };
 
-    const double p=std::clamp(phase,0.0,std::nextafter(1.0,0.0));
+    const double p=std::clamp(phase,0.0,belowOne);
     const double amount=std::clamp(static_cast<double>(rawAmount),
                                    static_cast<double>(oscProcessAmountMinimum(type)),1.0);
     if(std::abs(amount)<=std::numeric_limits<double>::epsilon() || type==OscProcessType::Off)
@@ -515,7 +533,7 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             const double shaped=p<0.5
                 ? 0.5*fastPow01(p*2.0,exponent)
                 : 1.0-0.5*fastPow01((1.0-p)*2.0,exponent);
-            return std::clamp(shaped,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(shaped,0.0,belowOne);
         }
         case OscProcessType::Sync: {
             const double cycles=1.0+amount*7.0;
@@ -524,7 +542,7 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
         }
         case OscProcessType::Mirror: {
             const double mirrored=1.0-std::abs(p*2.0-1.0);
-            return std::clamp(p+(mirrored-p)*amount,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(p+(mirrored-p)*amount,0.0,belowOne);
         }
         case OscProcessType::Asym: {
             // Bipolar: negative moves the split left; positive moves it right.
@@ -534,41 +552,41 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
         }
         case OscProcessType::SCurve: {
             const double s=p*p*(3.0-2.0*p);
-            return std::clamp(mix(p,s,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,s,amount),0.0,belowOne);
         }
         case OscProcessType::Pinch: {
             const double x=p*2.0-1.0;
             const double y=std::copysign(fastPow01(std::abs(x),1.0+amount*5.0),x);
-            return std::clamp(y*0.5+0.5,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(y*0.5+0.5,0.0,belowOne);
         }
         case OscProcessType::Expand: {
             const double x=p*2.0-1.0;
             const double y=std::copysign(fastPow01(std::abs(x),1.0/(1.0+amount*4.0)),x);
-            return std::clamp(y*0.5+0.5,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(y*0.5+0.5,0.0,belowOne);
         }
         case OscProcessType::CenterPull:
-            return std::clamp(0.5+(p-0.5)*(1.0-amount*0.88),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(0.5+(p-0.5)*(1.0-amount*0.88),0.0,belowOne);
         case OscProcessType::EdgePull: {
             const double k=1.0-amount*0.88;
-            return std::clamp(p<0.5 ? p*k : 1.0-(1.0-p)*k,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(p<0.5 ? p*k : 1.0-(1.0-p)*k,0.0,belowOne);
         }
         case OscProcessType::Sync2:return wrap01(p*(1.0+amount));
         case OscProcessType::Sync3:return wrap01(p*(1.0+amount*2.0));
         case OscProcessType::Sync4:return wrap01(p*(1.0+amount*3.0));
         case OscProcessType::Sync16:return wrap01(p*(1.0+amount*15.0));
-        case OscProcessType::Fold:return std::clamp(triangle(p*(1.0+amount*5.0)),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Fold:return std::clamp(triangle(p*(1.0+amount*5.0)),0.0,belowOne);
         case OscProcessType::SoftFold: {
             const double f=triangle(p*(1.0+amount*4.0));
-            return std::clamp(0.5-0.5*std::cos(f*pi),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(0.5-0.5*std::cos(f*pi),0.0,belowOne);
         }
         case OscProcessType::ReflectLeft:
-            return std::clamp(mix(p,p<0.5?p:1.0-p,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,p<0.5?p:1.0-p,amount),0.0,belowOne);
         case OscProcessType::ReflectRight:
-            return std::clamp(mix(p,p<0.5?1.0-p:p,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,p<0.5?1.0-p:p,amount),0.0,belowOne);
         case OscProcessType::AlternateReflect: {
             const int s=std::min(3,static_cast<int>(p*4.0)); const double local=p*4.0-s;
             const double target=(s+(s%2?1.0-local:local))/4.0;
-            return std::clamp(mix(p,target,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,target,amount),0.0,belowOne);
         }
         case OscProcessType::PhaseShift:
             // +/- 180 degrees; 0 is the physical top/center of the amount knob.
@@ -579,22 +597,22 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             return wrap01(p+std::sin(4.0*pi*p)*amount*0.10);
         case OscProcessType::Twist:
             return wrap01(p+(std::sin(2.0*pi*p)*0.10+std::sin(6.0*pi*p)*0.055)*amount);
-        case OscProcessType::ZigZag:return std::clamp(mix(p,triangle(p*3.0),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::ZigZag:return std::clamp(mix(p,triangle(p*3.0),amount),0.0,belowOne);
         case OscProcessType::Staircase: {
             const int steps=2+static_cast<int>(std::round(amount*14.0));
-            return std::clamp(mix(p,quantize(p,steps),amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,quantize(p,steps),amount),0.0,belowOne);
         }
-        case OscProcessType::Reverse:return std::clamp(mix(p,1.0-p,amount),0.0,std::nextafter(1.0,0.0));
-        case OscProcessType::Quantize4:return std::clamp(mix(p,quantize(p,4),amount),0.0,std::nextafter(1.0,0.0));
-        case OscProcessType::Quantize8:return std::clamp(mix(p,quantize(p,8),amount),0.0,std::nextafter(1.0,0.0));
-        case OscProcessType::Quantize16:return std::clamp(mix(p,quantize(p,16),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Reverse:return std::clamp(mix(p,1.0-p,amount),0.0,belowOne);
+        case OscProcessType::Quantize4:return std::clamp(mix(p,quantize(p,4),amount),0.0,belowOne);
+        case OscProcessType::Quantize8:return std::clamp(mix(p,quantize(p,8),amount),0.0,belowOne);
+        case OscProcessType::Quantize16:return std::clamp(mix(p,quantize(p,16),amount),0.0,belowOne);
         case OscProcessType::Scramble2:return wrap01(mix(p,wrap01(p+0.5),amount));
         case OscProcessType::Scramble4: {
             static constexpr int perm[4]={2,0,3,1};
             const int s=std::min(3,static_cast<int>(p*4.0)); const double local=p*4.0-s;
-            return std::clamp(mix(p,(perm[s]+local)/4.0,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,(perm[s]+local)/4.0,amount),0.0,belowOne);
         }
-        case OscProcessType::Chaos:return std::clamp(mix(p,4.0*p*(1.0-p),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Chaos:return std::clamp(mix(p,4.0*p*(1.0-p),amount),0.0,belowOne);
         case OscProcessType::Window: {
             // Positive expands outward; negative compresses inward.
             const double scale=amount>=0.0
@@ -732,22 +750,36 @@ float WavetableOscillator::nextSimple(const Wavetable& table,double frequency,do
     static constexpr OscProcessPlan empty{};
     return nextImpl<true>(table,frequency,sampleRate,position,empty,0.0,0.0);
 }
-template<bool Simple>
-float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,double sampleRate,float position,
-                                  const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew) noexcept {
-    if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
+// Pitch metadata shared by every read of a sample: phase increment and the
+// band-limited table band for this frequency (exact keys: FM, glide and
+// sample-rate changes stay audio-rate without rescanning bands every sample).
+void WavetableOscillator::preparePitch(const Wavetable& table,double frequency,double sampleRate) noexcept {
     if(pitchTable_!=&table || pitchGeneration_!=table.generation ||
        pitchFrequency_!=frequency || pitchSampleRate_!=sampleRate) {
         increment_=std::clamp(frequency/sampleRate,0.0,.499);
         const double available=frequency>0?sampleRate*.45/frequency:1;
         const auto& bands=table.frames[0].bands;
-        bandIndex_=0;
-        while(bandIndex_+1<bands.size() && bands[bandIndex_+1].maximumHarmonic<=available) ++bandIndex_;
+        // The band is the highest one whose harmonic limit fits (band 0 when
+        // none does). Limits strictly increase (Wavetable::valid), so walking
+        // from the previous band reaches the same index as a scan from 0, in
+        // zero or one step for vibrato / glide / FM / pitch bend. Kept inline
+        // and register-light: the static-pitch read stays a leaf function
+        // (a call or spill here costs a stack frame on every read).
+        std::size_t band=bandIndex_<bands.size() ? bandIndex_ : 0;
+        while(band>0 && bands[band].maximumHarmonic>available) --band;
+        while(band+1<bands.size() && bands[band+1].maximumHarmonic<=available) ++band;
+        bandIndex_=band;
         pitchTable_=&table;pitchGeneration_=table.generation;
         pitchFrequency_=frequency;pitchSampleRate_=sampleRate;
     }
+}
+// One read of the current phase: frame interpolation, phase warps / spectral
+// table, PM offset and PSK skew. Stateless apart from the spectral read hints,
+// so a second read at the same phase (stereo RIGHT) is exact.
+template<bool Simple>
+float WavetableOscillator::readAt(const Wavetable& table,float position,const OscProcessPlan& plan,
+                                  double phaseOffsetCycles,double phaseSkew,std::array<SpectralReadHint,2>& hints) noexcept {
     const auto bandIndex=bandIndex_;
-    const double increment=increment_;
     const float framePosition=std::clamp(position,0.f,1.f)*static_cast<float>(table.frames.size()-1);
     const auto first=static_cast<std::size_t>(framePosition),second=std::min(first+1,table.frames.size()-1);
     double readPhase=phase_;
@@ -765,11 +797,17 @@ float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,doub
         if(!spectral) for(std::size_t i=0;i<count;++i)
             readPhase=processOscillatorPhase(readPhase,plan.stages[i].type,plan.stages[i].amount);
     }
-    const double tablePosition=readPhase*static_cast<double>(table.tableLength);
-    const auto index=static_cast<std::size_t>(tablePosition)%table.tableLength,nextIndex=(index+1)%table.tableLength;
-    const float fraction=static_cast<float>(tablePosition-static_cast<double>(static_cast<std::size_t>(tablePosition)));
+    const std::size_t length=table.tableLength;
+    const double tablePosition=readPhase*static_cast<double>(length);
+    const auto whole=static_cast<std::size_t>(tablePosition);
+    // Power-of-two tables (every built-in and spectral table) wrap with a
+    // mask: the same indices without two integer divisions per read.
+    const bool powerOfTwo=(length&(length-1))==0;
+    const auto index=powerOfTwo ? whole&(length-1) : whole%length;
+    const auto nextIndex=powerOfTwo ? (index+1)&(length-1) : (index+1)%length;
+    const float fraction=static_cast<float>(tablePosition-static_cast<double>(whole));
     auto read=[&](std::size_t frame,std::size_t hintIndex){
-        if(spectral)return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,spectralHints_[hintIndex]);
+        if(spectral)return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,hints[hintIndex]);
         const auto& samples=table.frames[frame].bands[bandIndex].samples;
         return samples[index]+fraction*(samples[nextIndex]-samples[index]);};
     const float frameFraction=framePosition-static_cast<float>(first);
@@ -777,9 +815,46 @@ float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,doub
     // An exact frame does not consume the adjacent frame, so it needs no
     // lookup, pin, or spectral compilation request for that frame.
     const float b=frameFraction>0.0f && second!=first ? read(second,1) : a;
-    const float output=a+frameFraction*(b-a);
+    return a+frameFraction*(b-a);
+}
+template<bool Simple>
+float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,double sampleRate,float position,
+                                  const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew) noexcept {
+    if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
+    preparePitch(table,frequency,sampleRate);
+    const double increment=increment_;
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_);
     phase_+=increment;if(phase_>=1)phase_-=1;
     return frequency>=sampleRate*.5?0:output;
+}
+// mct-origami-dsp-performance-stereo-chain: one phase advance, two reads.
+template<bool Simple>
+float WavetableOscillator::nextStereoImpl(const Wavetable& table,double frequency,double sampleRate,
+        float position,const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew,
+        float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
+        std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
+    if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position)) { right=0.0f; return 0; }
+    preparePitch(table,frequency,sampleRate);
+    const double increment=increment_;
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_);
+    const float outputRight=readAt<Simple>(table,std::isfinite(positionRight)?positionRight:position,planRight,
+                                           phaseOffsetRight,phaseSkewRight,rightHints);
+    phase_+=increment;if(phase_>=1)phase_-=1;
+    const bool aboveNyquist=frequency>=sampleRate*.5;
+    right=aboveNyquist?0.0f:outputRight;
+    return aboveNyquist?0:output;
+}
+float WavetableOscillator::nextStereo(const Wavetable& table,double frequency,double sampleRate,
+        float position,const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew,
+        float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
+        std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
+    return nextStereoImpl<false>(table,frequency,sampleRate,position,plan,phaseOffsetCycles,phaseSkew,
+                                 positionRight,planRight,phaseOffsetRight,phaseSkewRight,rightHints,right);
+}
+float WavetableOscillator::nextStereoSimple(const Wavetable& table,double frequency,double sampleRate,
+        float position,float positionRight,std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
+    static constexpr OscProcessPlan empty{};
+    return nextStereoImpl<true>(table,frequency,sampleRate,position,empty,0.0,0.0,positionRight,empty,0.0,0.0,rightHints,right);
 }
 
 double midiFrequency(int note) noexcept { return 440.0 * std::exp2((std::clamp(note, 0, 127) - 69) / 12.0); }

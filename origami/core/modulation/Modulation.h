@@ -17,6 +17,7 @@
 #include "core/dsp/Filter.h"
 #include "core/dsp/Envelope.h"
 #include <array>
+#include <type_traits>
 #include <atomic>
 #include <algorithm>
 #include <cmath>
@@ -613,6 +614,10 @@ private:
 };
 
 template<class T> class LatestStateMailbox {
+    // mct-origami-dsp-performance-stereo-chain: consume() copies on the audio
+    // thread, so a payload must never own heap storage (a vector / string copy
+    // allocates there; the replaced value would be freed there).
+    static_assert(std::is_trivially_copyable_v<T>,"LatestStateMailbox payloads cross to the audio thread by copy: no heap-owning types");
 public:
     void publish(const T& state) noexcept {
         slots_[back_]=state;
@@ -639,21 +644,38 @@ private:
 // Destination capability (audited against the DSP that owns each value):
 //  A Stereo            LEVEL (per-oscillator gain before pan), CUTOFF and
 //                      RESONANCE (per-oscillator filter, independent L/R state)
-//  B RequiresStereoDsp WT POSITION, OCTAVE / SEMITONE / FINE (one oscillator
-//                      phase per module), OSC process and route amounts (inside
-//                      the mono oscillator chain), FX parameters (one value per
-//                      effect node), MASTER GAIN (per voice, or after FX at
-//                      block rate depending on FX ORDER)
+//                      mct-origami-dsp-performance-stereo-chain: the oscillator
+//                      READ side too: WT POSITION and every OSC CHAIN process /
+//                      route amount. The oscillator's only state is its phase,
+//                      so RIGHT is a second read at the same phase (frame,
+//                      phase warp, spectral table, PM / PSK offset, post-route
+//                      shaping). FM route amounts are read from LEFT (they
+//                      change the phase increment: oscillator state).
+//  B RequiresStereoDsp OCTAVE / SEMITONE / FINE (one oscillator phase per
+//                      module), FX parameters (one value per effect node),
+//                      MASTER GAIN (per voice, or after FX at block rate
+//                      depending on FX ORDER)
 //  C Scalar            PAN, DETUNE, TUNING, TRANSPOSE, PORTA, SWING
 //  D Ambiguous         ENV / LFO SCALING (they scale the sources themselves)
 // B, C and D read the LEFT / reference value: turning STEREO never changes them.
 enum class StereoCapability : std::uint8_t { Stereo=0, RequiresStereoDsp=1, Scalar=2, Ambiguous=3 };
+// Stereo destinations consumed by the oscillator READ (not the filter / gain).
+constexpr bool stereoOscillatorRead(ModDestination d) noexcept {
+    switch(d) {
+        case ModDestination::WtPosition:
+        case ModDestination::Process1Amount: case ModDestination::Process2Amount: case ModDestination::ProcessAmount:
+        case ModDestination::Route1Amount: case ModDestination::Route2Amount: case ModDestination::RouteAmount: return true;
+        default: return false;
+    }
+}
 constexpr StereoCapability stereoCapability(ModDestination d) noexcept {
     switch(d) {
-        case ModDestination::Level: case ModDestination::Cutoff: case ModDestination::Resonance: return StereoCapability::Stereo;
-        case ModDestination::WtPosition: case ModDestination::Octave: case ModDestination::Semitone: case ModDestination::Fine:
+        case ModDestination::Level: case ModDestination::Cutoff: case ModDestination::Resonance:
+        case ModDestination::WtPosition:
         case ModDestination::Process1Amount: case ModDestination::Process2Amount: case ModDestination::ProcessAmount:
         case ModDestination::Route1Amount: case ModDestination::Route2Amount: case ModDestination::RouteAmount:
+            return StereoCapability::Stereo;
+        case ModDestination::Octave: case ModDestination::Semitone: case ModDestination::Fine:
         case ModDestination::FxParameter: case ModDestination::MasterGain: return StereoCapability::RequiresStereoDsp;
         case ModDestination::EnvelopeScaling: case ModDestination::LfoScaling: return StereoCapability::Ambiguous;
         default: return StereoCapability::Scalar;
@@ -677,6 +699,10 @@ struct StereoModulationFrame {
     bool cutoffSplit=false,resonanceSplit=false;
     float cutoff=8000.0f,resonance=.1f;
     dsp::LowPassCoefficients filter{};                      // RIGHT's filter (valid when split)
+    // Every stereo group's RIGHT value by group index (bit i of rightMask: valid).
+    // The oscillator-read destinations are consumed from here.
+    std::array<float,ModulationState::capacity> right{};
+    std::uint32_t rightMask=0;
     bool active=false;                                      // any right value / delta this sample
     bool filterSplit() const noexcept { return cutoffSplit || resonanceSplit; }
 };
@@ -707,7 +733,7 @@ struct ModulationFrame {
     void copyForVoice(const ModulationFrame& g,const std::array<std::uint8_t,16>& active,std::size_t activeCount,std::uint16_t moduleMask=0xffffu,bool withStereo=false) noexcept {
         if(withStereo) { // only when the plan carries stereo terms
             if(g.stereo.active) stereo=g.stereo;
-            else { stereo.active=false; stereo.globalLfo.mask=0; stereo.operatorMask=0; stereo.levelMask=0; stereo.cutoffSplit=stereo.resonanceSplit=false; }
+            else { stereo.active=false; stereo.globalLfo.mask=0; stereo.operatorMask=0; stereo.levelMask=0; stereo.rightMask=0; stereo.cutoffSplit=stereo.resonanceSplit=false; }
         }
         for(std::size_t i=0;i<activeCount && i<active.size();++i)
             if((moduleMask>>active[i])&1u) modules[active[i]]=g.modules[active[i]];
@@ -751,6 +777,13 @@ public:
     // reached by an LFO (directly or through component-wise NODES operators).
     // False: no right channel is ever computed, copied or read (mono plan).
     bool hasStereoPlan() const noexcept { return stereoPlan_; }
+    // Oscillator-read stereo groups (WT POSITION, OSC CHAIN amounts) by module
+    // and in total, plus what each group addresses: prepared at compile time
+    // so the voice never searches for them.
+    std::uint32_t moduleReadStereoGroups(std::size_t module) const noexcept { return module<16 ? moduleReadGroups_[module] : 0u; }
+    std::uint32_t readStereoGroups() const noexcept { return readGroupsAll_; }
+    struct ReadTarget { ModDestination parameter=ModDestination::None; std::uint8_t item=0; };
+    const ReadTarget& readTarget(std::size_t group) const noexcept { return readTargets_[group]; }
     // N05: ENV 2 / ENV 3 retrigger requests produced this sample (bit 1 / 2).
     std::uint8_t envelopeTriggers(const ModulationFrame&) const noexcept;
     bool hasEnvelopeTriggers() const noexcept { return envelopeTriggerCount_!=0; }
@@ -866,11 +899,14 @@ private:
                                     const ModulationFrame& f,const ModulationFrame& operators) noexcept;
     void runOperatorRight(const CompiledOp&,const std::array<float,voiceSourceCount>*,const StereoSourceValues*,
                           ModulationFrame&,ControlOpRuntime&,const ModulationFrame& globalOperators) const noexcept;
-    static void writeRight(ModulationFrame&,const Group&,float normalized) noexcept;
+    static void writeRight(ModulationFrame&,const Group&,std::size_t group,float normalized) noexcept;
     float stereoDelta(const Group&,const ModulationFrame&,const std::array<float,globalSourceCount>*,
                       const std::array<float,voiceSourceCount>*,const StereoSourceValues*,bool voice) const noexcept;
     void finishStereo(ModulationFrame&,bool voice) const noexcept;
     bool stereoPlan_=false;
+    std::array<std::uint32_t,16> moduleReadGroups_{};
+    std::uint32_t readGroupsAll_=0;
+    std::array<ReadTarget,ModulationState::capacity> readTargets_{};
     std::array<std::uint8_t,ModulationState::capacity> stereoGroups_{};
     std::size_t stereoGroupCount_=0;
     std::array<CompiledOp,operatorSlotCount> ops_{};
@@ -936,6 +972,14 @@ private:
     bool voiceFilter_=false;
     bool filterEnabled_=true;
     bool smoothingActive_=false;
+    // mct-origami-dsp-performance-stereo-chain: the (group, slot) pairs whose
+    // weight differs from its target after compile. advance() glides only
+    // these (every other slot is already at its target: a no-op); a list that
+    // would overflow falls back to the full scan.
+    struct MovingSlot { std::uint8_t group=0,slot=0; };
+    static constexpr std::size_t movingCapacity=128;
+    std::array<MovingSlot,movingCapacity> moving_{};
+    std::size_t movingCount_=0;
 
     // P06: tan() is prepared into a fixed coefficient basis table off RT.
     dsp::LowPassCoefficientTable filterTable_{};

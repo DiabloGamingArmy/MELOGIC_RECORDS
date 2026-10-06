@@ -188,11 +188,14 @@ struct Wavetable {
 };
 // Audio-owned lookup metadata only. Cache samples remain worker-owned and are
 // read under a bounded pin; no pointer to recyclable sample storage escapes.
+// mct-origami-dsp-performance-stereo-chain: the hint no longer carries a copy
+// of the process plan (~100 B); it is validated against the pinned cache
+// slot's own key instead (exact). Every oscillator holds two hints, so this
+// is most of a voice's footprint.
 struct SpectralReadHint {
     const Wavetable* table=nullptr;
     std::uint64_t generation=0,revision=0;
-    std::size_t frame=0,band=0,slot=0;
-    OscProcessPlan plan{};
+    std::uint32_t frame=0,band=0,slot=0;
     unsigned hits=0;
 };
 class WavetableOscillator {
@@ -210,10 +213,24 @@ public:
                double phaseSkew=0.0) noexcept;
     // Compiled topology guarantees no processes or cross-oscillator routing.
     float nextSimple(const Wavetable&,double frequency,double sampleRate,float position) noexcept;
+    // Stereo modulation of the READ side (WT position, OSC CHAIN amounts,
+    // PM / PSK): one phase advance, a second read at the same phase into
+    // `right`. LEFT is bit-identical to next() / nextSimple().
+    float nextStereo(const Wavetable&,double frequency,double sampleRate,
+                     float position,const OscProcessPlan&,double phaseOffsetCycles,double phaseSkew,
+                     float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
+                     std::array<SpectralReadHint,2>& rightHints,float& right) noexcept;
+    float nextStereoSimple(const Wavetable&,double frequency,double sampleRate,float position,float positionRight,
+                           std::array<SpectralReadHint,2>& rightHints,float& right) noexcept;
     double phase() const noexcept { return phase_; }
 private:
+    void preparePitch(const Wavetable&,double frequency,double sampleRate) noexcept;
+    template<bool Simple> float readAt(const Wavetable&,float position,const OscProcessPlan&,double,double,
+                                       std::array<SpectralReadHint,2>&) noexcept;
     template<bool Simple> float nextImpl(const Wavetable&,double,double,float,
         const OscProcessPlan&,double,double) noexcept;
+    template<bool Simple> float nextStereoImpl(const Wavetable&,double,double,float,const OscProcessPlan&,double,double,
+        float,const OscProcessPlan&,double,double,std::array<SpectralReadHint,2>&,float&) noexcept;
     double phase_ = 0;
     // Pitch metadata is independent of phase and chain amounts. Exact keys
     // keep FM, glide and sample-rate changes audio-rate without rescanning

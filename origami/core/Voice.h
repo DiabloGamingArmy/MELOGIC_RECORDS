@@ -171,5 +171,8 @@ private:
     // module's CUTOFF / RESONANCE differ between channels (bit m live).
     std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFiltersRight_{};
     std::uint16_t rightFilterLive_=0;
+    // mct-origami-dsp-performance-stereo-chain: RIGHT's spectral read hints per
+    // module (a stereo OSC CHAIN reads a second spectral table key). Cold.
+    std::array<std::array<dsp::SpectralReadHint,2>,maxOscillatorModules> rightSpectralHints_{};
 };
 }

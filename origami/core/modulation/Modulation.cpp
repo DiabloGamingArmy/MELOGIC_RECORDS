@@ -315,6 +315,9 @@ float Lfo::mseg(const LfoSettings& s,double phase) noexcept {
 }
 
 float Lfo::next(const LfoSettings& s,double sampleRate) noexcept {
+    // RIGHT's smoother restarts from LEFT whenever a stereo read resumes
+    // (STEREO turned back up, or the plan switched back to stereo).
+    smoothReadyRight_=false;
     return lfoFunctionsNeutral(s) ? legacyNext<false>(s,sampleRate,nullptr) : processedNext<false>(s,sampleRate,nullptr);
 }
 
@@ -943,6 +946,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     voiceProcessModules_.fill(false);
     voiceModuleMask_=0;
     smoothingActive_=false;
+    movingCount_=0;
     filterEnabled_=state.filterEnabled;
     // N04: operators in topological order, inputs resolved to slots, ranges
     // and execution domains propagated. Fixed arrays; no allocation.
@@ -1119,8 +1123,15 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                             if(oldRouted[q]==routedOutput_[r]) { g.weight[sourceSlotCount+r]=old[j].weight[sourceSlotCount+q]; break; }
                     break;
                 }
-            for(std::size_t s=0;s<totalSlotCount;++s)
+            for(std::size_t s=0;s<totalSlotCount;++s) {
                 if(std::abs(g.target[s]-g.weight[s])>1.0e-6f) smoothingActive_=true;
+                // Exact inequality: a tiny delta still snaps on the first
+                // advance, exactly as the full scan did.
+                if(!(g.target[s]==g.weight[s])) {
+                    if(movingCount_<movingCapacity) moving_[movingCount_]={static_cast<std::uint8_t>(i),static_cast<std::uint8_t>(s)};
+                    ++movingCount_;
+                }
+            }
         }
         g.globalSlotCount=0;g.voiceSlotCount=0;
         for(std::size_t s=0;s<globalSourceCount;++s)
@@ -1154,13 +1165,21 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     // Which operators can carry a right value (component-wise continuous
     // operators fed, directly or through others, by an LFO) and which
     // stereo-capable destinations read a source that may be stereo.
-    const auto lfoOfSlot=[](std::size_t slot)->int {
-        if(slot<4) return int(slot);                                    // global (FREE) LFO 1..4
-        if(slot>=globalSourceCount && slot<sourceSlotCount) {
+    // mct-origami-dsp-performance-stereo-chain: only an LFO whose STEREO is
+    // non-zero is a stereo source. STEREO is ModulationState, so changing it
+    // recompiles this plan; a patch whose LFOs are all at STEREO 0 renders
+    // through the mono instantiation (the pre-stereo path) instead of the
+    // stereo one with every right channel idle.
+    std::array<bool,4> lfoStereo{};
+    for(std::size_t l=0;l<4;++l) lfoStereo[l]=lfoSettings(state,l).stereo>0.0f;
+    const auto lfoOfSlot=[&lfoStereo](std::size_t slot)->int {
+        int l=-1;
+        if(slot<4) l=int(slot);                                         // global (FREE) LFO 1..4
+        else if(slot>=globalSourceCount && slot<sourceSlotCount) {
             const auto v=slot-globalSourceCount;
-            if(v>=3 && v<=6) return int(v-3);                           // per-voice LFO 1..4
+            if(v>=3 && v<=6) l=int(v-3);                                // per-voice LFO 1..4
         }
-        return -1;
+        return l>=0 && lfoStereo[std::size_t(l)] ? l : -1;
     };
     std::array<bool,operatorSlotCount> opStereo{};
     for(std::size_t i=0;i<opCount_;++i) {
@@ -1183,6 +1202,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         opStereo[c.slot]=c.stereo;
     }
     stereoGroupCount_=0;
+    moduleReadGroups_.fill(0u); readGroupsAll_=0; readTargets_={};
     for(std::size_t i=0;i<count_;++i) {
         auto& g=groups_[i];
         g.stereo=false; g.stereoGlobalLfos=g.stereoVoiceLfos=0; g.stereoGlobalOps=g.stereoVoiceOps=0;
@@ -1198,26 +1218,40 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             if(out%maxControlOutputs==0 && opStereo[out/maxControlOutputs]) g.stereoVoiceOps|=1u<<r;
         }
         g.stereo=g.stereoGlobalLfos!=0 || g.stereoVoiceLfos!=0 || g.stereoGlobalOps!=0 || g.stereoVoiceOps!=0;
-        if(g.stereo) stereoGroups_[stereoGroupCount_++]=static_cast<std::uint8_t>(i);
+        if(g.stereo) {
+            stereoGroups_[stereoGroupCount_++]=static_cast<std::uint8_t>(i);
+            if(stereoOscillatorRead(g.address.parameter) && g.slot<16) {
+                moduleReadGroups_[g.slot]|=1u<<i; readGroupsAll_|=1u<<i;
+                std::uint8_t item=static_cast<std::uint8_t>(g.itemSlot);
+                if(g.address.parameter==ModDestination::Process1Amount || g.address.parameter==ModDestination::Route1Amount) item=0;
+                if(g.address.parameter==ModDestination::Process2Amount || g.address.parameter==ModDestination::Route2Amount) item=1;
+                readTargets_[i]={g.address.parameter,item};
+            }
+        }
     }
     stereoPlan_=stereoGroupCount_!=0;
 }
 void CompiledModulation::advance(float alpha) noexcept {
     if(!smoothingActive_) return;
     bool stillMoving=false;
-    for(std::size_t i=0;i<count_;++i) {
-        for(std::size_t s=0;s<totalSlotCount;++s) {
-            auto& value=groups_[i].weight[s];
-            const float target=groups_[i].target[s];
-            const float delta=target-value;
-            if(std::abs(delta)<=1.0e-5f) {
-                value=target;
-                continue;
-            }
-            value+=alpha*delta;
-            if(std::abs(target-value)>1.0e-5f) stillMoving=true;
-            else value=target;
+    const auto glide=[&](std::size_t i,std::size_t s) noexcept {
+        auto& value=groups_[i].weight[s];
+        const float target=groups_[i].target[s];
+        const float delta=target-value;
+        if(std::abs(delta)<=1.0e-5f) {
+            value=target;
+            return;
         }
+        value+=alpha*delta;
+        if(std::abs(target-value)>1.0e-5f) stillMoving=true;
+        else value=target;
+    };
+    if(movingCount_<=movingCapacity) {
+        // Per sample while a route amount glides: only the slots that moved.
+        for(std::size_t k=0;k<movingCount_;++k) glide(moving_[k].group,moving_[k].slot);
+    } else {
+        for(std::size_t i=0;i<count_;++i)
+            for(std::size_t s=0;s<totalSlotCount;++s) glide(i,s);
     }
     smoothingActive_=stillMoving;
 }
@@ -1280,13 +1314,14 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
 }
 // RIGHT channel of a stereo-capable destination: the same normalized ->
 // parameter mapping (and clamping) as write(), into the frame's right slots.
-void CompiledModulation::writeRight(ModulationFrame& f,const Group& g,float n) noexcept {
+void CompiledModulation::writeRight(ModulationFrame& f,const Group& g,std::size_t group,float n) noexcept {
     if(!std::isfinite(n)) n=0.0f;
     n=std::clamp(n,0.0f,1.0f);
     float v=g.minimum+n*(g.maximum-g.minimum);
     if(g.address.parameter==ModDestination::Cutoff)
         v=g.minimum*static_cast<float>(dsp::fastExp2Audio(static_cast<double>(n)*g.log2Span));
     auto& st=f.stereo;
+    st.right[group]=v; st.rightMask|=1u<<group;
     switch(g.address.parameter) {
         case ModDestination::Level: st.level[g.slot]=v; st.levelMask|=std::uint16_t(1u<<g.slot); break;
         case ModDestination::Cutoff: st.cutoff=v; st.cutoffSplit=true; break;
@@ -2272,7 +2307,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
     // Stereo terms are evaluated only while some LFO / operator actually has a
     // right value (STEREO > 0); otherwise the frame is simply mono.
     const bool stereoNow=stereoPlan_ && (f.stereo.globalLfo.mask!=0 || f.stereo.operatorMask!=0);
-    if(stereoPlan_) { f.stereo.levelMask=0; f.stereo.cutoffSplit=f.stereo.resonanceSplit=false; f.stereo.active=stereoNow; }
+    if(stereoPlan_) { f.stereo.levelMask=0; f.stereo.rightMask=0; f.stereo.cutoffSplit=f.stereo.resonanceSplit=false; f.stereo.active=stereoNow; }
     for(std::size_t i=0;i<count_;++i) {
         const auto& g=groups_[i];
         if(isFxDestination(g.address.parameter)) continue;
@@ -2295,7 +2330,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
         if(stereoNow && g.stereo) {
             const float d=stereoDelta(g,f,&sources,nullptr,nullptr,false);
             f.stereo.delta[i]=d;
-            if(d!=0.0f) writeRight(f,g,n+d);
+            if(d!=0.0f) writeRight(f,g,i,n+d);
         }
     }
     if(f.filterEnabled) f.filter=globalFilter(rate,f.cutoff,f.resonance);
@@ -2325,10 +2360,13 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
             // voice's own stereo terms; zero means RIGHT == LEFT here.
             const float base=f.stereo.active && std::isfinite(f.stereo.delta[i]) ? f.stereo.delta[i] : 0.0f;
             const float d=base+stereoDelta(g,f,nullptr,&sources,voiceStereo,true);
-            if(d!=0.0f) writeRight(f,g,n+d);
-            else if(g.address.parameter==ModDestination::Level) f.stereo.levelMask&=std::uint16_t(~(1u<<g.slot));
-            else if(g.address.parameter==ModDestination::Cutoff) f.stereo.cutoffSplit=false;
-            else if(g.address.parameter==ModDestination::Resonance) f.stereo.resonanceSplit=false;
+            if(d!=0.0f) writeRight(f,g,i,n+d);
+            else {
+                f.stereo.rightMask&=~(1u<<i);
+                if(g.address.parameter==ModDestination::Level) f.stereo.levelMask&=std::uint16_t(~(1u<<g.slot));
+                else if(g.address.parameter==ModDestination::Cutoff) f.stereo.cutoffSplit=false;
+                else if(g.address.parameter==ModDestination::Resonance) f.stereo.resonanceSplit=false;
+            }
         }
     }
     if(voiceFilter_) f.filter=filterTable_.make(f.cutoff,f.resonance);
