@@ -46,6 +46,13 @@ std::uint64_t FxEnvironment::compileCount() const noexcept {
     return total;
 }
 
+std::pair<float,float> FxEnvironment::consumeInputPeaks(FxBusId bus) noexcept {
+    const auto count=activeBuses_.load(std::memory_order_acquire);
+    for(std::size_t b=0;b<count && b<maxRenderBuses;++b)
+        if(renderers_[b]->boundBus()==bus)
+            return {inputPeak_[2*b].exchange(0.0f,std::memory_order_acq_rel),inputPeak_[2*b+1].exchange(0.0f,std::memory_order_acq_rel)};
+    return {0.0f,0.0f};
+}
 std::pair<float,float> FxEnvironment::consumePeaks() noexcept {
     return {peakLeft_.exchange(0.0f,std::memory_order_acq_rel),peakRight_.exchange(0.0f,std::memory_order_acq_rel)};
 }
@@ -64,6 +71,9 @@ void FxEnvironment::process(float* mainLeft,float* mainRight,float* const* aux,s
     // Neutral fast path: MAIN only, MAIN graph is IN -> OUT, globals neutral:
     // bit-exact pass-through (old patches sound identical).
     if(buses==1 && neutralGlobals && renderers_[0]->identity()) {
+        float il=0.0f,ir=0.0f; // MAIN IN: the signal entering the graph
+        for(int i=0;i<samples;++i) { il=std::max(il,std::abs(mainLeft[i])); ir=std::max(ir,std::abs(mainRight[i])); }
+        noteInputPeak(0,il,ir);
         renderers_[0]->process(mainLeft,mainRight,samples,modulation); // adopts plans; untouched audio
         float pl=0.0f,pr=0.0f;
         for(int i=0;i<samples;++i) { pl=std::max(pl,std::abs(mainLeft[i])); pr=std::max(pr,std::abs(mainRight[i])); }
@@ -93,12 +103,15 @@ void FxEnvironment::processChunk(float* mainLeft,float* mainRight,float* const* 
         float* l=busPointer(b,0);
         float* r=busPointer(b,1);
         if(l==nullptr || r==nullptr) continue;
+        float il=0.0f,ir=0.0f;
         for(int i=0;i<n;++i) {
             l[i]=(std::isfinite(l[i]) ? l[i] : 0.0f)*gains[i];
             r[i]=(std::isfinite(r[i]) ? r[i] : 0.0f)*gains[i];
             dryL[i]+=l[i];
             dryR[i]+=r[i];
+            il=std::max(il,std::abs(l[i])); ir=std::max(ir,std::abs(r[i]));
         }
+        noteInputPeak(b,il,ir); // the bus IN node's signal (after GLOBAL input gain)
     }
     // 2) each bus through its own compiled graph (in place).
     for(std::size_t b=0;b<buses;++b) {

@@ -1619,21 +1619,35 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     // V22.2.1 live WT POS overlay. Uses the actual preview rectangle detected
     // from this source file rather than hard-coded layout geometry.
     {
-        float physical=parameterGetter_
-            ? juce::jlimit(0.0f,3.0f,parameterGetter_(mct::origami::ParameterId::Waveform))
-            : 0.0f;
+        // mct-origami-manual-qa-ui-wavetable-fixes: the viewport draws THIS
+        // oscillator's canonical table (the frames the engine renders), at
+        // its own WT POSITION, exactly as Voice maps it: position x (frames - 1).
+        auto positionModule=moduleGetter_ ? moduleGetter_(display_.id) : mct::origami::OscillatorModuleState{};
+        float position=positionModule.id ? positionModule.wtPosition
+            : (parameterGetter_ ? juce::jlimit(0.0f,3.0f,parameterGetter_(mct::origami::ParameterId::Waveform))/3.0f : 0.0f);
 
         // Matrix modulation must be visible in the source viewport, not merely
         // audible. WT Position is normalized 0..1 in the modulation engine.
-        physical=juce::jlimit(0.0f,3.0f,
-            physical+modulationUiAllRoutesValue(ModDestination::WtPosition,display_.id)*3.0f);
+        position=juce::jlimit(0.0f,1.0f,position+modulationUiAllRoutesValue(ModDestination::WtPosition,display_.id));
+        const float physical=position*3.0f;
 
-        const int a=juce::jlimit(0,3,int(std::floor(physical)));
-        const int next=juce::jmin(3,a+1);
-        const float blend=physical-float(a);
+        const auto table=wavetableData ? wavetableData(display_.id) : nullptr;
+        const int frameCount=table ? table->frames() : 4;
+        const float framePosition=position*float(frameCount-1);
+        const int a=juce::jlimit(0,frameCount-1,int(std::floor(framePosition)));
+        const int next=juce::jmin(frameCount-1,a+1);
+        const float blend=framePosition-float(a);
 
-        auto shape=[](int which,float phase) {
+        auto shape=[&table](int which,float phase) {
             phase-=std::floor(phase);
+            if(table) {
+                // Linear read of the committed frame (2048 samples).
+                const float pos=phase*float(mct::origami::content::wavetableFrameSamples);
+                const auto i=static_cast<std::size_t>(pos)%mct::origami::content::wavetableFrameSamples;
+                const auto j=(i+1)%mct::origami::content::wavetableFrameSamples;
+                const float* frame=table->samples.data()+static_cast<std::size_t>(which)*mct::origami::content::wavetableFrameSamples;
+                return frame[i]+(pos-std::floor(pos))*(frame[j]-frame[i]);
+            }
             switch(which) {
                 case 0: return std::sin(juce::MathConstants<float>::twoPi*phase);
                 case 1: return 2.0f*phase-1.0f;
@@ -1698,17 +1712,17 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         if(spectralPreview) {
             const int wtKey=juce::roundToInt(physical*128.0f);
             const bool stale=!spectralPreviewValid_ ||
-                spectralPreviewWtKey_!=wtKey ||
+                spectralPreviewWtKey_!=wtKey || spectralPreviewTable_!=table.get() ||
                 !samePlan(spectralPreviewPlan_,visualPlan);
 
             if(stale) {
                 if(spectralPreviewValid_)
                     spectralPreviewPrevious_=spectralPreviewCache_;
                 std::array<float,previewSize> previewSource{};
-                const float visualPhysical=static_cast<float>(wtKey)/128.0f;
-                const int va=juce::jlimit(0,3,int(std::floor(visualPhysical)));
-                const int vb=juce::jmin(3,va+1);
-                const float vblend=visualPhysical-float(va);
+                const float visualFrame=static_cast<float>(wtKey)/(128.0f*3.0f)*float(frameCount-1);
+                const int va=juce::jlimit(0,frameCount-1,int(std::floor(visualFrame)));
+                const int vb=juce::jmin(frameCount-1,va+1);
+                const float vblend=visualFrame-float(va);
                 for(std::size_t sampleIndex=0;sampleIndex<previewSize;++sampleIndex) {
                     const float phase=static_cast<float>(sampleIndex)/static_cast<float>(previewSize);
                     const float ya=shape(va,phase),yb=shape(vb,phase);
@@ -1718,6 +1732,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                     previewSource.data(),spectralPreviewCache_.data(),visualPlan);
 
                 spectralPreviewWtKey_=wtKey;
+                spectralPreviewTable_=table.get();
                 spectralPreviewPlan_=visualPlan;
                 if(!spectralPreviewValid_)
                     spectralPreviewPrevious_=spectralPreviewCache_;
@@ -2020,6 +2035,7 @@ void OscillatorRack::syncFromModel() {
         viewport_.getWidth(),viewport_.getHeight()).expanded(24,0);
     for(auto& card:cards_) {
         if(wavetableName) card->setWavetableName(wavetableName(card->id()));
+        if(wavetableData) card->noteWavetable(wavetableData(card->id()).get()); // a commit repaints at once
         if(card->getBounds().intersects(visible))
             card->syncFromModel();
     }
@@ -2108,6 +2124,9 @@ void OscillatorRack::createCard(unsigned moduleId) {
     };
     card->onWavetableAction=[safe](unsigned id,OscillatorCard::WavetableAction action) {
         if(safe!=nullptr && safe->onWavetableAction) safe->onWavetableAction(id,action);
+    };
+    card->wavetableData=[safe](unsigned id)->std::shared_ptr<const mct::origami::content::WavetableData> {
+        return safe!=nullptr && safe->wavetableData ? safe->wavetableData(id) : nullptr;
     };
     content_.addAndMakeVisible(*card);
     cards_.push_back(std::move(card));

@@ -178,6 +178,7 @@ public:
     // mct-origami-fx-graph-dsp-bus-routing-p02
     // Peak output since the previous call (UI meter telemetry, lock-free).
     std::pair<float,float> consumeUiFxPeaks() noexcept { return fxEnvironment_.consumePeaks(); }
+    std::pair<float,float> consumeUiFxInputPeaks(mct::origami::fx::FxBusId bus) noexcept { return fxEnvironment_.consumeInputPeaks(bus); }
     std::uint64_t getFxCompileCount() const noexcept { return fxEnvironment_.compileCount(); }
     mct::origami::fx::FxViewState& getUiFxViewState() noexcept { return fxViewState_; }
     // mct-origami-nodes-n03-control: NODES CONTROL-layer view metadata

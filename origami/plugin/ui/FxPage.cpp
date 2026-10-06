@@ -399,7 +399,7 @@ FxNodeComponent::~FxNodeComponent()=default;
 
 juce::Rectangle<int> FxNodeComponent::sizeFor(const FxNode& n) noexcept {
     switch(n.kind) {
-    case FxNodeKind::Source: return {0,0,150,82};
+    case FxNodeKind::Source: return {0,0,176,98}; // room for legible L / R input meters
     case FxNodeKind::Output: return {0,0,164,226};
     case FxNodeKind::Split: case FxNodeKind::Merge: {
         const int branches=juce::jmax<int>(n.ports.inputs,n.ports.outputs);
@@ -539,18 +539,31 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         break;
     }
     case FxNodeKind::Source: {
+        // mct-origami-manual-qa-ui-wavetable-fixes: an audio INPUT endpoint,
+        // not a generator: live L / R meters of the signal entering this
+        // graph (MAIN: the synth voice sum; a user bus: its oscillator sends).
         text(g,page_.busName(node_.bus)+" IN",local.withHeight(32).reduced(12,0),11.5f,Palette::text());
-        if(!detailed) break;
-        text(g,node_.bus==mainBusId ? "SYNTH VOICE SUM" : "OSCILLATOR SENDS",local.withTrimmedTop(32).withHeight(16).reduced(12,0),Type::secondary,Palette::muted());
-        auto wave=juce::Rectangle<float>(12.0f,54.0f,float(getWidth())-40.0f,18.0f);
-        juce::Path p;
-        for(int i=0;i<=40;++i) {
-            const float t=float(i)/40.0f;
-            const juce::Point<float> pt{wave.getX()+t*wave.getWidth(),wave.getCentreY()-std::sin(t*juce::MathConstants<float>::twoPi*2.0f)*wave.getHeight()*.4f};
-            if(i==0) p.startNewSubPath(pt); else p.lineTo(pt);
+        if(!detailed) break; // zoomed out: the title only
+        auto lower=local.withTrimmedTop(36).withTrimmedBottom(6).withTrimmedLeft(12).withTrimmedRight(22);
+        auto meters=lower.removeFromLeft(36);
+        for(int channel=0;channel<2;++channel) {
+            auto column=meters.removeFromLeft(18);
+            auto meterWell=column.withTrimmedBottom(12).reduced(3,0);
+            well(g,meterWell);
+            const float linear=channel==0 ? meterLeft_ : meterRight_;
+            const float level=meterHeight(linear);
+            if(level>0.0f) {
+                auto fill=meterWell.toFloat().reduced(1.5f);
+                fill=fill.withTop(fill.getBottom()-fill.getHeight()*level);
+                g.setColour(signalShade(.85f,.85f));
+                g.fillRect(fill);
+                if(linear>=0.891f) { g.setColour(signalSourceColour()); g.fillRect(fill.withHeight(2.0f)); } // within 1 dB of full scale
+            }
+            text(g,channel==0 ? "L" : "R",column.removeFromBottom(12),Type::secondary,Palette::muted(),juce::Justification::centred);
         }
-        g.setColour(Palette::accent().withAlpha(.7f));
-        g.strokePath(p,juce::PathStrokeType(1.2f));
+        lower.removeFromLeft(8);
+        text(g,node_.bus==mainBusId ? "SYNTH VOICE SUM" : "OSCILLATOR SENDS",lower.removeFromTop(lower.getHeight()/2),Type::secondary,Palette::muted());
+        text(g,"STEREO AUDIO",lower,Type::secondary,Palette::muted().withAlpha(.75f));
         break;
     }
     case FxNodeKind::Output: {
@@ -3754,6 +3767,16 @@ void FxPage::updateMeters() {
     if(meterLeft_<1.0e-5f) meterLeft_=0.0f;
     if(meterRight_<1.0e-5f) meterRight_=0.0f;
     if(auto* out=canvas_.nodeComponent(graph().outputNode())) out->setMeter(meterLeft_,meterRight_);
+    // IN nodes: the real signal entering this graph, same ballistics as OUT.
+    if(!host_.inputPeaks) return;
+    for(const auto& node:graph().nodes()) {
+        if(node.kind!=FxNodeKind::Source) continue;
+        const auto [inL,inR]=host_.inputPeaks(node.bus);
+        auto& m=inputMeters_[node.id];
+        m.first=std::max(inL,m.first*0.86f); if(m.first<1.0e-5f) m.first=0.0f;
+        m.second=std::max(inR,m.second*0.86f); if(m.second<1.0e-5f) m.second=0.0f;
+        if(auto* c=canvas_.nodeComponent(node.id)) c->setMeter(m.first,m.second);
+    }
 }
 
 void FxPage::refresh(bool force) {

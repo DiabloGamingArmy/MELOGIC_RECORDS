@@ -13,6 +13,7 @@
 #include "core/OscillatorModule.h"
 #include "core/ParameterRegistry.h"
 #include "core/InstrumentState.h"
+#include "../content/ContentLibrary.h"
 #include <memory>
 #include <vector>
 #include <limits>
@@ -98,6 +99,10 @@ public:
     enum class WavetableAction { Browse=1, Import=2, Export=3, Previous=4, Next=5 };
     std::function<void(unsigned,WavetableAction)> onWavetableAction;
     void setWavetableName(const juce::String&);
+    // Repaints the viewport when the committed table changed (true then).
+    bool noteWavetable(const void* table) { if(table==shownTable_) return false; shownTable_=table; repaint(); return true; }
+    // The oscillator's canonical table (null: the factory BASIC SHAPES).
+    std::function<std::shared_ptr<const mct::origami::content::WavetableData>(unsigned)> wavetableData;
     // mct-origami-ui-legibility-cleanup: the one header layout shared by
     // resized() and paint: OSC N | MODE [..] | PHASE [..] | ROUTE [..] | PWR | -.
     // Every width is measured from its text; nothing is a reserved slot.
@@ -291,6 +296,8 @@ private:
     std::array<float,2048> spectralPreviewPrevious_{};
     float spectralPreviewMorph_=1.0f;
     int spectralPreviewWtKey_=-1;
+    const void* spectralPreviewTable_=nullptr;
+    const void* shownTable_=nullptr; // the canonical table the viewport last drew // the table the cached spectral preview was built from
     dsp::OscProcessPlan spectralPreviewPlan_{};
     bool spectralPreviewValid_=false;
 };
@@ -334,6 +341,7 @@ public:
     std::function<void(unsigned)> onWavetableEditorRequested;
     std::function<void(unsigned,OscillatorCard::WavetableAction)> onWavetableAction;
     std::function<juce::String(unsigned)> wavetableName; // the oscillator's table, for its selector
+    std::function<std::shared_ptr<const mct::origami::content::WavetableData>(unsigned)> wavetableData; // for the viewport
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     void timerCallback() override {
