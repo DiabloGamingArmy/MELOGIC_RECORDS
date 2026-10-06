@@ -1,5 +1,6 @@
 // mct-origami-modulation-row-consistency
 #include "ModulationSourceRow.h"
+#include "ModulationDestinations.h"
 
 namespace mct::origami::ui {
 
@@ -24,6 +25,10 @@ juce::String modulationRouteTargetLabel(const InstrumentState& state,std::uint32
     for(const auto& route:state.modulation.routes)
         if(route.id==routeId) {found=&route;break;}
     if(!found) return {};
+    // mct-origami-nested-modulation-manual-qa: "LFO 2 RATE", a macro's name,
+    // "[LFO 2 → OSC 2 LEVEL] DEPTH".
+    if(isNestedDestination(found->destination.parameter))
+        return modulationAddressLabel(modulationDestinationCatalog(state,{}),state.modulation,found->destination);
 
     juce::String target;
     switch(found->destination.parameter) {

@@ -19,5 +19,13 @@ struct ModulationDestinationEntry {
 std::vector<ModulationDestinationEntry> modulationDestinationCatalog(const InstrumentState&,const ModulationBindings&);
 // "OSC 1 · LEVEL"; empty when the address is not in the catalog.
 juce::String modulationDestinationLabel(const std::vector<ModulationDestinationEntry>&,const ModAddress&);
+// mct-origami-nested-modulation-manual-qa: the catalog group of the nested
+// destinations (LFO RATE, MACRO, route DEPTH). NODES keeps its own picker.
+inline const juce::String nestedDestinationGroup{"Modulation"};
+// Human-readable target / route names, nested routes resolved recursively:
+// "OSC 2 LEVEL", "LFO 2 RATE", "[LFO 2 → OSC 2 LEVEL] DEPTH",
+// "LFO 3 → [LFO 2 → OSC 2 LEVEL] DEPTH".
+juce::String modulationAddressLabel(const std::vector<ModulationDestinationEntry>&,const ModulationState&,const ModAddress&,int depth=0);
+juce::String modulationRouteLabel(const std::vector<ModulationDestinationEntry>&,const ModulationState&,const ModRoute&,int depth=0);
 
 }
