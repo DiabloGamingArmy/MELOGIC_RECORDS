@@ -3824,6 +3824,233 @@ void nodesMenuHierarchyAudit() {
     check(disabled && reason.contains("one sequencer"),"a second SEQUENCER stays disabled in the tree, with its reason");
 }
 
+// mct-origami-content-browser: presets / wavetables through the editor, the
+// processor and the audio thread.
+void contentBrowserAudit() {
+    using namespace mct::origami;
+    using content::ContentType;
+    juce::SharedResourcePointer<ui::UserPreferences> preferences;
+    const bool previousCapture=preferences->captureKeyboardInput();
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi,none;
+    const auto block=[&](juce::MidiBuffer& m){ audio.clear(); p.processBlock(audio,m); m.clear(); };
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    auto& library=editor->contentLibrary();
+    auto& browser=editor->contentBrowser();
+    const auto osc1=p.getUiInstrumentState().oscillators[0].id;
+
+    // ---- entry + layout: the browser replaces the workspace between the bars.
+    check(p.getUiCurrentPreset().id==content::ContentLibrary::initPresetId && p.getUiCurrentPreset().name=="INIT","a new instrument is the factory INIT preset");
+    editor->openContentBrowser(ContentType::Preset);
+    ui::OrigamiHeader* header=nullptr; ui::PerformanceKeyboard* keys=nullptr; ui::OscillatorRack* rack=nullptr;
+    walk(*editor,[&](juce::Component& c){
+        if(auto* x=dynamic_cast<ui::OrigamiHeader*>(&c)) header=x;
+        if(auto* x=dynamic_cast<ui::PerformanceKeyboard*>(&c)) keys=x;
+        if(auto* x=dynamic_cast<ui::OscillatorRack*>(&c)) rack=x; });
+    check(header && keys && rack && editor->contentBrowserOpen() && browser.isVisible() && !rack->isVisible() && header->isVisible() && keys->isVisible(),
+          "PRESETS browser: header and performance bar stay, the workspace is the browser");
+    check(browser.getY()>=header->getBottom() && browser.getBottom()<=keys->getY() && browser.getWidth()==header->getWidth(),"the browser fills the space between the permanent bars");
+    check(browser.selectedRecord()!=nullptr && browser.selectedRecord()->id==content::ContentLibrary::initPresetId,"reopening selects the loaded preset (INIT)");
+    editor->closeContentBrowser();
+    check(!browser.isVisible() && rack->isVisible(),"closing returns to the editor");
+
+    // ---- save with metadata (the state blob is the instrument; metadata is not).
+    p.setUiParameter(ParameterId::OscLevel,0.42f);
+    ui::PresetSaveDialog::Fields fields{"Murphy Bass","Gino","Bass","dark, mono","Low, wide and round."};
+    check(editor->savePreset(fields,false).wasOk(),"SAVE AS NEW writes a user preset");
+    const auto murphy=p.getUiCurrentPreset();
+    const auto* saved=library.find(murphy.id);
+    check(saved!=nullptr && saved->origin==content::ContentOrigin::User && saved->author=="Gino" && saved->tags.size()==2 && saved->description=="Low, wide and round."
+          && saved->oscillators==[&]{ int n=0; for(const auto& m:p.getUiInstrumentState().oscillators) n+=m.id!=0; return n; }() && saved->macros==4 && saved->created>0,"user preset metadata (author, tags, description, created, summary) indexed");
+    check(murphy.name=="Murphy Bass" && header->presetName()=="Murphy Bass","the header shows the saved preset");
+    const auto murphyState=encodeInstrumentState(p.getUiInstrumentState());
+
+    // ---- load: browser load == direct state load; INIT; reopen on the loaded preset.
+    check(editor->loadPresetRecord(*library.find(content::ContentLibrary::initPresetId)),"INIT loads");
+    block(none);
+    check(std::abs(p.getUiParameter(ParameterId::OscLevel)-0.42f)>1.0e-3f,"INIT restores the default sound");
+    editor->openContentBrowser(ContentType::Preset);
+    check(browser.selectId(murphy.id) && browser.loadSelected() && !editor->contentBrowserOpen(),"select + LOAD loads and closes");
+    check(encodeInstrumentState(p.getUiInstrumentState())==murphyState,"browser load reproduces the saved instrument exactly");
+    {
+        auto direct=std::make_unique<OrigamiAudioProcessor>(); direct->prepareToPlay(48000.0,256);
+        juce::MemoryBlock bytes; check(library.loadPresetState(*library.find(murphy.id),bytes),"preset bytes");
+        direct->setStateInformation(bytes.getData(),int(bytes.getSize()));
+        check(encodeInstrumentState(direct->getUiInstrumentState())==murphyState,"browser load == direct setStateInformation of the same file");
+    }
+    editor->openContentBrowser(ContentType::Preset);
+    check(browser.selectedRecord()!=nullptr && browser.selectedRecord()->id==murphy.id,"reopening locates the loaded preset");
+    // Metadata / favorite edits never touch the sound.
+    library.setFavorite(murphy.id,true);
+    auto edited=*library.find(murphy.id); edited.description="Edited words"; edited.tags.add("edited");
+    check(library.updateMetadata(edited).wasOk(),"metadata edit");
+    { juce::MemoryBlock a; library.loadPresetState(*library.find(murphy.id),a);
+      auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256); q->setStateInformation(a.getData(),int(a.getSize()));
+      check(encodeInstrumentState(q->getUiInstrumentState())==murphyState,"favorite / description / tags leave the DSP state unchanged"); }
+    // Factory is read-only: SAVE over INIT creates a user preset.
+    editor->loadPresetRecord(*library.find(content::ContentLibrary::initPresetId));
+    check(editor->savePreset({"Init Copy","","","",""},true).wasOk() && p.getUiCurrentPreset().id!=content::ContentLibrary::initPresetId
+          && library.find(content::ContentLibrary::initPresetId)->format=="builtin","saving over a factory preset creates a user preset");
+    // Rename keeps identity; < > steps through the browser's results.
+    check(library.rename(murphy.id,"Murphy Sub").wasOk() && library.find(murphy.id)->name=="Murphy Sub","rename preserves the content id");
+    browser.setScope("user");
+    editor->loadPresetRecord(*library.find(murphy.id));
+    const auto before=p.getUiCurrentPreset().id;
+    editor->stepPreset(1);
+    check(p.getUiCurrentPreset().id!=before && library.find(p.getUiCurrentPreset().id)->origin==content::ContentOrigin::User,"next preset within the current (USER) results");
+    editor->stepPreset(-1);
+    check(p.getUiCurrentPreset().id==before,"previous returns");
+    editor->closeContentBrowser();
+    // Malformed / missing files fail safely.
+    const auto badFile=library.presetsDirectory().getChildFile("Broken.origami");
+    badFile.replaceWithText("{\"format\":\"mct.origami.preset\",\"schema\":1,\"id\":\"user.preset.bad\",\"name\":\"Bad\",\"state\":\"QUJD\"}");
+    content::ContentRecord bad; bad.id="user.preset.bad"; bad.name="Bad"; bad.file=badFile; bad.format="origami-preset";
+    const auto stateBefore=encodeInstrumentState(p.getUiInstrumentState());
+    check(!editor->loadPresetRecord(bad) && encodeInstrumentState(p.getUiInstrumentState())==stateBefore,"a malformed preset does not load and changes nothing");
+    bad.file=library.presetsDirectory().getChildFile("Missing.origami");
+    check(!editor->loadPresetRecord(bad),"a missing preset fails safely");
+    badFile.deleteFile();
+
+    // ---- rapid loads while playing; the restore fades instead of cutting.
+    midi.addEvent(juce::MidiMessage::noteOn(1,48,0.9f),0); midi.addEvent(juce::MidiMessage::noteOn(1,55,0.9f),0);
+    block(midi); for(int i=0;i<16;++i) block(none);
+    float baselineStep=0.0f;
+    { float prev=audio.getSample(0,255);
+      for(int i=0;i<4;++i) { block(none); for(int n=0;n<256;++n) { const float v=audio.getSample(0,n); baselineStep=std::max(baselineStep,std::abs(v-prev)); prev=v; } } }
+    const auto fadedBefore=p.fadedRestores();
+    float lastSample=audio.getSample(0,255),maxStep=0.0f;
+    bool finite=true;
+    editor->loadPresetRecord(*library.find(content::ContentLibrary::initPresetId));
+    for(int i=0;i<4;++i) {
+        block(none);
+        for(int n=0;n<256;++n) { const float v=audio.getSample(0,n); finite&=std::isfinite(v);
+            maxStep=std::max(maxStep,std::abs(v-lastSample)); lastSample=v; }
+    }
+    std::cerr<<"[content] preset load during held notes: max sample step "<<maxStep<<" (the held notes' own max step "<<baselineStep<<")\n";
+    check(finite && p.fadedRestores()==fadedBefore+1,"a preset load while notes sound fades out first");
+    check(maxStep<=baselineStep*1.05f+1.0e-4f,"no step at the preset change larger than the sound's own (3 ms fade, no hard cut)");
+    for(int i=0;i<40;++i) {
+        editor->loadPresetRecord(*library.find(i%2 ? murphy.id : juce::String(content::ContentLibrary::initPresetId)));
+        if(i%3==0) midi.addEvent(juce::MidiMessage::noteOn(1,40+i%12,0.8f),0);
+        block(midi);
+        for(int n=0;n<256;++n) finite&=std::isfinite(audio.getSample(0,n));
+    }
+    block(none); block(none);
+    check(finite && encodeInstrumentState(p.getUiInstrumentState())==murphyState,"40 rapid loads while playing: finite, the last load wins");
+
+    // ---- wavetables: import -> library -> oscillator; export; round trip; state.
+    const auto dir=juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("origami-wt-"+juce::String(juce::Time::currentTimeMillis()));
+    dir.createDirectory();
+    content::WavetableData metal; metal.name="Metal";
+    for(int i=0;i<8*2048;++i) metal.samples.push_back(0.7f*std::sin(float(i)*0.013f)*std::cos(float(i/2048)*0.4f));
+    content::WavetableData glass=metal; glass.name="Glass"; for(auto& v:glass.samples) v*=-0.5f;
+    check(content::writeWavetableWav(dir.getChildFile("Metal.wav"),metal) && content::writeWavetableWav(dir.getChildFile("Glass.wav"),glass),"source wavs");
+    { const auto r=editor->importWavetableFile(osc1,dir.getChildFile("Metal.wav"));
+      check(r.wasOk(),"IMPORT WAVETABLE into OSC 1"); }
+    auto source=p.getUiOscillatorWavetable(osc1);
+    check(source.data && source.data->samples==metal.samples && source.contentId.startsWith("user.wavetable."),"OSC 1 holds the imported table (library identity)");
+    const auto metalId=source.contentId;
+    check(library.find(metalId)!=nullptr && library.find(metalId)->origin==content::ContentOrigin::Imported,"the import is in the IMPORTED library");
+    check(editor->importWavetableFile(osc1,dir.getChildFile("Metal.wav")).wasOk() && p.getUiOscillatorWavetable(osc1).contentId==metalId,"importing the same file again reuses it (no duplicate)");
+    // Two oscillators, two tables.
+    const auto osc2=p.addUiOscillator();
+    check(osc2!=0 && editor->importWavetableFile(osc2,dir.getChildFile("Glass.wav")).wasOk(),"IMPORT into OSC 2");
+    check(p.getUiOscillatorWavetable(osc2).data->samples==glass.samples && p.getUiOscillatorWavetable(osc1).data->samples==metal.samples,"two oscillators keep different tables");
+    // Browser in wavetable mode targets the initiating oscillator and locates its table.
+    editor->openContentBrowser(ContentType::Wavetable,osc2);
+    check(browser.mode()==ContentType::Wavetable && browser.target()==osc2 && browser.selectedRecord()!=nullptr && browser.selectedRecord()->id==p.getUiOscillatorWavetable(osc2).contentId,
+          "BROWSE WAVETABLES from OSC 2 locates OSC 2's table");
+    check(browser.selectId(content::ContentLibrary::basicShapesId) && browser.loadSelected() && !p.getUiOscillatorWavetable(osc2).data,"loading BASIC SHAPES into OSC 2 returns it to the factory table");
+    check(p.getUiOscillatorWavetable(osc1).data->samples==metal.samples,"OSC 1 is untouched");
+    // Export -> re-import is exact; an edited (custom) table exports too.
+    check(editor->exportWavetableFile(osc1,dir.getChildFile("Exported.wav")).wasOk(),"EXPORT WAVETABLE");
+    content::WavetableData back;
+    check(content::readWavetableFile(dir.getChildFile("Exported.wav"),back)==content::ReadResult::Ok && back.samples==metal.samples,"export / import round trip is bit-exact");
+    auto custom=metal; custom.samples[5]=0.123f; custom.name="Edited";
+    check(p.setUiOscillatorWavetable(osc2,custom,{}) && editor->exportWavetableFile(osc2,dir.getChildFile("Edited.wav")).wasOk()
+          && content::readWavetableFile(dir.getChildFile("Edited.wav"),back)==content::ReadResult::Ok && back.samples==custom.samples,"an edited table exports exactly");
+    check(editor->importWavetableFile(0,dir.getChildFile("Truncated.wav")).failed(),"a missing file fails safely");
+    dir.getChildFile("Bad.wav").replaceWithText("RIFF nonsense");
+    check(editor->importWavetableFile(osc1,dir.getChildFile("Bad.wav")).failed() && p.getUiOscillatorWavetable(osc1).data->samples==metal.samples,"a malformed file is rejected; OSC 1 keeps its table");
+    // Patches stay self-contained: tables travel in the state.
+    juce::MemoryBlock session; p.getStateInformation(session);
+    {
+        auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256);
+        q->setStateInformation(session.getData(),int(session.getSize()));
+        check(q->getUiOscillatorWavetable(osc1).data && q->getUiOscillatorWavetable(osc1).data->samples==metal.samples && q->getUiOscillatorWavetable(osc1).contentId==metalId
+              && q->getUiOscillatorWavetable(osc2).data && q->getUiOscillatorWavetable(osc2).data->samples==custom.samples,"saved state restores every oscillator's table (no library needed)");
+        juce::AudioBuffer<float> a(2,256); juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1,60,0.8f),0);
+        float peak=0.0f; for(int i=0;i<20;++i) { a.clear(); q->processBlock(a,m); m.clear(); peak=std::max(peak,a.getMagnitude(0,256)); }
+        check(peak>1.0e-3f && std::isfinite(peak),"the restored tables play");
+    }
+    // The engine renders the table: OSC 1 Metal vs BASIC SHAPES differ.
+    const auto render=[&]{ juce::AudioBuffer<float> a(2,512); juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1,60,0.8f),0);
+                           std::vector<float> out; for(int i=0;i<8;++i) { a.clear(); p.processBlock(a,m); m.clear(); out.insert(out.end(),a.getReadPointer(0),a.getReadPointer(0)+512); }
+                           juce::MidiBuffer off; off.addEvent(juce::MidiMessage::allNotesOff(1),0); for(int i=0;i<40;++i) { a.clear(); p.processBlock(a,off); off.clear(); } return out; };
+    p.removeUiOscillator(osc2);
+    for(int i=0;i<4;++i) block(none);
+    const auto withMetal=render();
+    p.setUiOscillatorWavetable(osc1,content::basicShapes(),content::ContentLibrary::basicShapesId);
+    for(int i=0;i<4;++i) block(none);
+    const auto withBasic=render();
+    check(withMetal!=withBasic,"the oscillator renders the loaded table");
+    // Delete an oscillator while its table publication is pending.
+    const auto osc3=p.addUiOscillator();
+    check(p.setUiOscillatorWavetable(osc3,glass,{}) && p.removeUiOscillator(osc3),"publish then delete before the audio thread adopts it");
+    for(int i=0;i<24;++i) block(none);
+    check(!p.getUiOscillatorWavetable(osc3).data,"the deleted oscillator's table is dropped");
+    // Audio thread: adopting tables and applying a preset restore allocates nothing.
+    p.setUiOscillatorWavetable(osc1,metal,metalId);
+    editor->loadPresetRecord(*library.find(murphy.id));
+    p.setUiOscillatorWavetable(osc1,glass,{});
+    juce::MidiBuffer held; held.ensureSize(4096); held.addEvent(juce::MidiMessage::noteOn(1,50,0.8f),0);
+#ifndef ORIGAMI_SANITIZED
+    pluginAllocations.store(0,std::memory_order_relaxed);
+    pluginGuardAllocations.store(true,std::memory_order_release);
+#endif
+    for(int i=0;i<24;++i) { audio.clear(); p.processBlock(audio,i==0 ? held : none); }
+#ifndef ORIGAMI_SANITIZED
+    pluginGuardAllocations.store(false,std::memory_order_release);
+    check(pluginAllocations.load()==0,"preset restore + wavetable adoption on the audio thread allocate nothing");
+#endif
+    held.clear();
+    // Rapid table switching while a note is held.
+    held.addEvent(juce::MidiMessage::noteOn(1,52,0.8f),0); block(held);
+    for(int i=0;i<60;++i) {
+        p.setUiOscillatorWavetable(osc1,i%2 ? metal : glass,{});
+        block(none);
+        for(int n=0;n<256;++n) finite&=std::isfinite(audio.getSample(0,n));
+    }
+    check(finite,"rapid wavetable switching while holding a note stays finite");
+
+    // ---- keyboard: CAPTURE KEYBOARD INPUT off -> browser keys go to the host.
+    preferences->setCaptureKeyboardInput(false);
+    editor->openContentBrowser(ContentType::Preset);
+    const auto deliver=[](juce::Component& focused,const juce::KeyPress& key) {
+        for(auto* c=&focused;c!=nullptr;c=c->getParentComponent()) if(c->keyPressed(key)) return true;
+        return false;
+    };
+    const int sel=browser.selectedIndex();
+    check(!deliver(browser,juce::KeyPress('a',{},'a')) && !deliver(browser,juce::KeyPress(juce::KeyPress::downKey)) && browser.selectedIndex()==sel,
+          "capture OFF, search not focused: letters and arrows go to the host");
+    auto& search=browser.searchField();
+    check(search.keyPressed(juce::KeyPress('m',{},'m')) && search.getText()=="m","the search field types when the user clicked it");
+    browser.setSearchText("murphy");
+    check(browser.results().size()==1 && browser.record(0)->name=="Murphy Sub","search narrows the results");
+    browser.setSearchText("zzzz-nothing");
+    check(browser.results().empty(),"no results");
+    browser.setSearchText({});
+    preferences->setCaptureKeyboardInput(true);
+    check(deliver(browser,juce::KeyPress(juce::KeyPress::downKey)) || browser.results().size()<2,"capture ON: arrows move the selection");
+    check(deliver(browser,juce::KeyPress(juce::KeyPress::escapeKey)) && !editor->contentBrowserOpen(),"Escape closes the browser");
+    preferences->setCaptureKeyboardInput(previousCapture);
+    dir.deleteRecursively();
+}
+
 // mct-origami-nested-modulation-manual-qa: CAPTURE KEYBOARD INPUT (default
 // OFF). OFF: no Origami shortcut consumes a key (it returns through the
 // window to the host); text fields the user opened still type; Escape is
@@ -5104,6 +5331,7 @@ void run() {
     synthDynamicMacrosAudit();
     nestedModulationUiAudit();
     captureKeyboardInputAudit();
+    contentBrowserAudit();
     lfoEditorControlsAudit();
     typographyAudit();
     macroGridAndOscHeaderAudit();

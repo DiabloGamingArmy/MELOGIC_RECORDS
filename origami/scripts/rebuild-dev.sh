@@ -46,6 +46,15 @@ fi
 echo "===== RUNNING MCT ORIGAMI FX GRAPH REGRESSION GATE ====="
 "$FX_TEST"
 
+# Content library gate: content model, index, metadata, wavetable I/O.
+CONTENT_TEST="$BUILD/origami_content_tests"
+if [[ ! -x "$CONTENT_TEST" ]]; then
+  echo "ERROR: Origami content library executable was not built: $CONTENT_TEST" >&2
+  exit 1
+fi
+echo "===== RUNNING MCT ORIGAMI CONTENT LIBRARY GATE ====="
+"$CONTENT_TEST"
+
 test -d "$APP_BUILD"
 test -d "$AU_BUILD"
 test -d "$VST3_BUILD"

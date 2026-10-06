@@ -240,6 +240,12 @@ if(ORIGAMI_BUILD_VST3)
     target_include_directories(origami_plugin_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/OrigamiPlugin_artefacts/JuceLibraryCode")
     target_link_libraries(origami_plugin_tests PRIVATE OrigamiPlugin origami_patch OrigamiAssets juce::juce_audio_utils juce::juce_gui_extra)
     add_test(NAME origami_plugin_ui COMMAND origami_plugin_tests)
+    # mct-origami-content-browser: content model / library / wavetable I/O.
+    add_executable(origami_content_tests tests/ContentTests.cpp)
+    target_compile_definitions(origami_content_tests PRIVATE ${origami_plugin_definitions})
+    target_include_directories(origami_content_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/OrigamiPlugin_artefacts/JuceLibraryCode")
+    target_link_libraries(origami_content_tests PRIVATE OrigamiPlugin origami_patch OrigamiAssets juce::juce_audio_utils juce::juce_gui_extra)
+    add_test(NAME origami_content COMMAND origami_content_tests)
     # mct-origami-dsp-performance-stereo-chain: performance regression harness
     # (a measurement tool: built with the tests, never registered as a gate).
     add_executable(origami_perf_bench tests/PerfBench.cpp)
