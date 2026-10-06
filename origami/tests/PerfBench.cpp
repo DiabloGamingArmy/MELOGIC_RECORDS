@@ -128,6 +128,16 @@ void stereoChainRoute(OrigamiAudioProcessor& p) {
         mod.routes[slot++]={mod.nextRouteId++,true,ModSource::Lfo1,{ModDestination::ProcessAmount,id,m.processes[i].id},0.5f,true};
     p.setUiModulationState(mod);
 }
+// A common live case: LFO vibrato on FINE (audio-rate pitch on every
+// oscillator / unison voice) plus the pitch wheel held off-centre.
+void vibrato(OrigamiAudioProcessor& p) {
+    auto mod=p.getUiInstrumentState().modulation;
+    const auto id=firstOscillator(p);
+    mod.lfo1.mode=LfoMode::Free; mod.lfo1.rateHz=5.5f;
+    std::size_t slot=0; while(slot<mod.routes.size() && mod.routes[slot].id) ++slot;
+    mod.routes[slot]={mod.nextRouteId++,true,ModSource::Lfo1,{ModDestination::Fine,id,0},0.08f,true};
+    if(!p.setUiModulationState(mod)) std::fprintf(stderr,"warning: vibrato route rejected\n");
+}
 void nodes(OrigamiAudioProcessor& p,bool heavy) {
     auto mod=heavy ? scenarios::maximal() : scenarios::mixedControl();
     mod.macroMask=p.getUiInstrumentState().modulation.macroMask;
@@ -219,6 +229,7 @@ std::vector<Scenario> matrix() {
     m.push_back({"4 osc, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){ oscillators(p,4); }});
     m.push_back({"16 osc, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){ oscillators(p,16); }});
     for(unsigned u:{4u,8u,16u}) m.push_back({"1 osc unison "+std::to_string(u)+", 16 voices",48000,256,16,[u](OrigamiAudioProcessor& p){ oscillators(p,1,u); }});
+    m.push_back({"vibrato, unison 8, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){ oscillators(p,1,8); vibrato(p); }});
     m.push_back({"chain light, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){ oscillators(p,2); chain(p,false); }});
     m.push_back({"chain heavy (spectral), 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){ oscillators(p,2); chain(p,true); }});
     m.push_back({"chain heavy + stereo LFO, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){ oscillators(p,2); chain(p,true); stereoChainRoute(p); }});
