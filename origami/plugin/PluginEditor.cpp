@@ -21,6 +21,7 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "ui/NativeChoiceMenu.h"
+#include "core/preset/StateCodec.h"
 #include "ui/ModulationDestinations.h"
 #include "ui/ModulationUiTelemetry.h"
 #include <cmath>
@@ -125,6 +126,56 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     addChildComponent(globalOverlay_);
     globalFx_->onClose=[this]{globalOverlay_.dismiss();};
     header_.onGlobalFxRequested=[this]{openGlobalFx();};
+    // mct-origami-content-browser
+    {
+        using mct::origami::content::ContentType;
+        mct::origami::ui::ContentBrowser::Host host;
+        host.loadedPresetId=[this]{ return processor_.getUiCurrentPreset().id; };
+        host.loadedWavetableId=[this](unsigned id)->juce::String {
+            const auto source=processor_.getUiOscillatorWavetable(id);
+            if(!source.data) return mct::origami::content::ContentLibrary::basicShapesId;
+            return source.contentId.isNotEmpty() ? source.contentId : juce::String("custom");
+        };
+        host.loadPreset=[this](const mct::origami::content::ContentRecord& r){ return loadPresetRecord(r); };
+        host.loadWavetable=[this](const mct::origami::content::ContentRecord& r,unsigned id){ return loadWavetableRecord(r,id); };
+        host.importWavetable=[this](unsigned id){ beginWavetableImport(id); };
+        host.oscillatorLabel=[this](unsigned id){ return oscillatorLabel(id); };
+        host.close=[this]{ closeContentBrowser(); };
+        browser_=std::make_unique<mct::origami::ui::ContentBrowser>(library_->library,std::move(host));
+        addChildComponent(*browser_);
+        saveDialog_=std::make_unique<mct::origami::ui::PresetSaveDialog>();
+        saveDialog_->onCancel=[this]{ globalOverlay_.dismiss(); };
+        saveDialog_->onSave=[this](const mct::origami::ui::PresetSaveDialog::Fields& f,bool replace) {
+            const auto result=savePreset(f,replace);
+            if(result.wasOk()) globalOverlay_.dismiss();
+            else juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,"SAVE PRESET",result.getErrorMessage());
+        };
+        header_.onPresetBrowserRequested=[this]{ if(browserOpen_ && browser_->mode()==ContentType::Preset) closeContentBrowser(); else openContentBrowser(ContentType::Preset); };
+        header_.onPresetStep=[this](int step){ stepPreset(step); };
+        header_.onSaveRequested=[this]{ showPresetSaveDialog(); };
+        header_.onInitRequested=[this]{ if(processor_.loadUiInitPreset()) { library_->library.markUsed(ContentType::Preset,mct::origami::content::ContentLibrary::initPresetId); contentLoaded(); } };
+        using Action=mct::origami::ui::OscillatorCard::WavetableAction;
+        oscillators_.onWavetableAction=[this](unsigned id,Action action) {
+            if(action==Action::Browse) openContentBrowser(ContentType::Wavetable,id);
+            if(action==Action::Import) beginWavetableImport(id);
+            if(action==Action::Export) beginWavetableExport(id);
+            if(action==Action::Previous) stepWavetable(id,-1);
+            if(action==Action::Next) stepWavetable(id,1);
+        };
+        oscillators_.wavetableName=[this](unsigned id)->juce::String {
+            const auto source=processor_.getUiOscillatorWavetable(id);
+            return source.data ? source.data->name : juce::String("BASIC SHAPES");
+        };
+        wavetableEditor_.onImportFile=[this](const juce::File& file,mct::origami::content::WavetableData& data,juce::String& status) {
+            mct::origami::content::ContentRecord record; bool duplicate=false;
+            const auto result=library_->library.importWavetable(file,record,duplicate);
+            if(result.failed()) { status="Import failed: "+result.getErrorMessage(); return false; }
+            if(!library_->library.loadWavetable(record,data)) { status="Import failed: unreadable library copy"; return false; }
+            status=duplicate ? "Already in the library: "+record.name : "Imported "+file.getFileName()+" into the library";
+            return true;
+        };
+        header_.setPresetName(processor_.getUiCurrentPreset().name);
+    }
     fxPage_.onOpenSynthFilter=[this]{header_.selectMode(0);};
     header_.onModeSelected=[this](int mode){
         currentPage_=mode;
@@ -464,6 +515,7 @@ void OrigamiAudioProcessorEditor::timerCallback() {
 
     modulation_.syncFromModel();macros_.syncFromModel();matrix_.syncFromModel();filter_.syncFromModel();
     performance_.syncArpFromModel();
+    header_.setPresetName(processor_.getUiCurrentPreset().name); // a host restore may change it
     if(arpSelected_) arpeggiator_.syncFromModel();
     if(globalSelected_) global_.syncFromModel();
     if(fxSelected_) fxPage_.syncFromModel();
@@ -724,6 +776,9 @@ void OrigamiAudioProcessorEditor::openKnobValueEditor(juce::Slider& slider) {
 void OrigamiAudioProcessorEditor::paint(juce::Graphics& g) {g.fillAll(Palette::background());}
 
 void OrigamiAudioProcessorEditor::openWavetableEditor(unsigned oscillatorId) {
+    // mct-origami-content-browser: edit this oscillator's own table.
+    const auto source=processor_.getUiOscillatorWavetable(oscillatorId);
+    wavetableEditor_.loadDocument(source.data ? *source.data : mct::origami::content::basicShapes());
     wavetableEditorOscillatorId_=oscillatorId;
     wavetableEditorSelected_=true;
     resized();
@@ -739,8 +794,15 @@ void OrigamiAudioProcessorEditor::closeWavetableEditor() {
     // path, so neither can silently discard the authored table.
     const auto targetOscillator=wavetableEditorOscillatorId_;
     if(targetOscillator!=0) {
-        auto table=wavetableEditor_.compiledWavetable();
-        processor_.installUiOscillatorWavetable(targetOscillator,std::move(table));
+        // An unchanged table keeps its library identity; an edited one is the
+        // oscillator's own (saved in the patch, exportable, no library id).
+        auto data=wavetableEditor_.documentData();
+        const auto source=processor_.getUiOscillatorWavetable(targetOscillator);
+        const auto& reference=source.data ? *source.data : mct::origami::content::basicShapes();
+        const bool unchanged=reference.samples==data.samples;
+        const auto contentId=unchanged ? (source.data ? source.contentId : juce::String(mct::origami::content::ContentLibrary::basicShapesId)) : juce::String();
+        if(unchanged) data.name=reference.name;
+        processor_.setUiOscillatorWavetable(targetOscillator,std::move(data),contentId);
     }
 
     wavetableEditorSelected_=false;
@@ -768,12 +830,16 @@ void OrigamiAudioProcessorEditor::resized() {
     // Wavetable editing is an application-level takeover: preserve the global
     // Origami header and performance keyboard, replace everything between them.
     wavetableEditor_.setBounds(mainArea);
-    wavetableEditor_.setVisible(wavetableEditorSelected_);
-    matrix_.setVisible(!wavetableEditorSelected_ && matrixSelected_ && !arpSelected_);
-    arpeggiator_.setVisible(!wavetableEditorSelected_ && arpSelected_);
-    global_.setVisible(!wavetableEditorSelected_ && globalSelected_ && !arpSelected_);
-    fxPage_.setVisible(!wavetableEditorSelected_ && fxSelected_ && !arpSelected_);
-    const bool synthVisible=!wavetableEditorSelected_ && !matrixSelected_ && !arpSelected_ && !globalSelected_ && !fxSelected_;
+    // mct-origami-content-browser: the browser replaces the workspace too.
+    browser_->setBounds(mainArea);
+    browser_->setVisible(browserOpen_);
+    const bool takeover=wavetableEditorSelected_ || browserOpen_;
+    wavetableEditor_.setVisible(wavetableEditorSelected_ && !browserOpen_);
+    matrix_.setVisible(!takeover && matrixSelected_ && !arpSelected_);
+    arpeggiator_.setVisible(!takeover && arpSelected_);
+    global_.setVisible(!takeover && globalSelected_ && !arpSelected_);
+    fxPage_.setVisible(!takeover && fxSelected_ && !arpSelected_);
+    const bool synthVisible=!takeover && !matrixSelected_ && !arpSelected_ && !globalSelected_ && !fxSelected_;
     for(auto* component:std::array<juce::Component*,4>{{&oscillators_,&modulation_,&filter_,&macros_}})
         component->setVisible(synthVisible);
 
@@ -790,8 +856,8 @@ void OrigamiAudioProcessorEditor::resized() {
 
     const auto transform=juce::AffineTransform::scale(scale);
     globalOverlay_.setBounds(designBounds);
-    const std::array<juce::Component*,12> visibleComponents{{
-        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_,&wavetableEditor_,&globalOverlay_
+    const std::array<juce::Component*,13> visibleComponents{{
+        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_,&wavetableEditor_,browser_.get(),&globalOverlay_
     }};
 
     for(auto* component:visibleComponents)
@@ -799,6 +865,7 @@ void OrigamiAudioProcessorEditor::resized() {
 
     if(wavetableEditorSelected_)
         wavetableEditor_.toFront(false);
+    if(browserOpen_) browser_->toFront(false);
     if(globalOverlay_.isShowing()) globalOverlay_.toFront(true);
 }
 
@@ -843,4 +910,167 @@ bool OrigamiAudioProcessorEditor::assignModulator(mct::origami::ModSource source
     for(const auto& r:dragBindings_.snapshot().modulation.routes)
         if(r.id && r.source==source && r.destination==mct::origami::ModAddress{destination,oscillator,itemId}) return true;
     return createDraggedRoute(source,slider);
+}
+
+// ---- mct-origami-content-browser ----------------------------------------------------
+void OrigamiAudioProcessorEditor::openContentBrowser(mct::origami::content::ContentType type,unsigned oscillatorId) {
+    browserOpen_=true;
+    resized();
+    browser_->open(type,oscillatorId);
+    browser_->grabKeyboardFocus(); // Escape closes; other keys follow CAPTURE KEYBOARD INPUT
+}
+void OrigamiAudioProcessorEditor::closeContentBrowser() {
+    if(!browserOpen_) return;
+    browserOpen_=false;
+    resized();
+}
+juce::String OrigamiAudioProcessorEditor::oscillatorLabel(unsigned oscillatorId) const {
+    unsigned ordinal=0;
+    for(const auto& m:processor_.getUiInstrumentState().oscillators) if(m.id) { ++ordinal; if(m.id==oscillatorId) return "OSC "+juce::String(ordinal); }
+    return "OSC";
+}
+void OrigamiAudioProcessorEditor::contentLoaded() {
+    header_.setPresetName(processor_.getUiCurrentPreset().name);
+    oscillators_.syncFromModel();
+    refreshModulationViews();
+}
+bool OrigamiAudioProcessorEditor::loadPresetRecord(const mct::origami::content::ContentRecord& r) {
+    bool ok=false;
+    if(r.id==mct::origami::content::ContentLibrary::initPresetId) ok=processor_.loadUiInitPreset();
+    else {
+        juce::MemoryBlock state;
+        ok=library_->library.loadPresetState(r,state) && processor_.loadUiPresetState(state,r.id,r.name);
+    }
+    if(ok) contentLoaded();
+    return ok;
+}
+bool OrigamiAudioProcessorEditor::loadWavetableRecord(const mct::origami::content::ContentRecord& r,unsigned oscillatorId) {
+    if(oscillatorId==0) return false;
+    mct::origami::content::WavetableData data;
+    if(!library_->library.loadWavetable(r,data)) return false;
+    if(!processor_.setUiOscillatorWavetable(oscillatorId,std::move(data),r.id)) return false;
+    library_->library.markUsed(r.type,r.id);
+    oscillators_.syncFromModel();
+    return true;
+}
+juce::Result OrigamiAudioProcessorEditor::importWavetableFile(unsigned oscillatorId,const juce::File& file) {
+    mct::origami::content::ContentRecord record; bool duplicate=false;
+    const auto result=library_->library.importWavetable(file,record,duplicate);
+    if(result.failed()) return result;
+    if(oscillatorId!=0 && !loadWavetableRecord(record,oscillatorId)) return juce::Result::fail("Imported, but the table could not be loaded");
+    if(browserOpen_) { browser_->refresh(); browser_->selectId(record.id); }
+    return juce::Result::ok();
+}
+juce::Result OrigamiAudioProcessorEditor::exportWavetableFile(unsigned oscillatorId,const juce::File& file) {
+    const auto source=processor_.getUiOscillatorWavetable(oscillatorId);
+    const auto data=source.data ? *source.data : mct::origami::content::basicShapes();
+    return mct::origami::content::writeWavetableWav(file,data) ? juce::Result::ok() : juce::Result::fail("Could not write "+file.getFullPathName());
+}
+void OrigamiAudioProcessorEditor::beginWavetableImport(unsigned oscillatorId) {
+    contentChooser_=std::make_unique<juce::FileChooser>("IMPORT WAVETABLE",juce::File{},"*.wav;*.aif;*.aiff");
+    juce::Component::SafePointer<OrigamiAudioProcessorEditor> safe(this);
+    contentChooser_->launchAsync(juce::FileBrowserComponent::openMode|juce::FileBrowserComponent::canSelectFiles,
+        [safe,oscillatorId](const juce::FileChooser& chooser) {
+            if(safe==nullptr) return;
+            const auto file=chooser.getResult();
+            if(file.existsAsFile()) {
+                const auto result=safe->importWavetableFile(oscillatorId,file);
+                if(result.failed()) juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,"IMPORT WAVETABLE",file.getFileName()+": "+result.getErrorMessage());
+            }
+        });
+}
+void OrigamiAudioProcessorEditor::beginWavetableExport(unsigned oscillatorId) {
+    const auto source=processor_.getUiOscillatorWavetable(oscillatorId);
+    const auto name=source.data ? source.data->name : juce::String("BASIC SHAPES");
+    contentChooser_=std::make_unique<juce::FileChooser>("EXPORT WAVETABLE",
+        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(juce::File::createLegalFileName(name)+".wav"),"*.wav");
+    juce::Component::SafePointer<OrigamiAudioProcessorEditor> safe(this);
+    contentChooser_->launchAsync(juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::canSelectFiles|juce::FileBrowserComponent::warnAboutOverwriting,
+        [safe,oscillatorId](const juce::FileChooser& chooser) {
+            if(safe==nullptr) return;
+            const auto file=chooser.getResult();
+            if(file==juce::File{}) return;
+            const auto result=safe->exportWavetableFile(oscillatorId,file.withFileExtension(".wav"));
+            if(result.failed()) juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,"EXPORT WAVETABLE",result.getErrorMessage());
+        });
+}
+void OrigamiAudioProcessorEditor::stepPreset(int step) {
+    using mct::origami::content::ContentType;
+    const auto next=browser_->neighbour(ContentType::Preset,processor_.getUiCurrentPreset().id,step);
+    if(const auto* r=library_->library.find(next)) { const auto copy=*r; if(loadPresetRecord(copy)) library_->library.markUsed(ContentType::Preset,copy.id); }
+}
+void OrigamiAudioProcessorEditor::stepWavetable(unsigned oscillatorId,int step) {
+    using mct::origami::content::ContentType;
+    const auto source=processor_.getUiOscillatorWavetable(oscillatorId);
+    const auto current=source.data ? source.contentId : juce::String(mct::origami::content::ContentLibrary::basicShapesId);
+    const auto next=browser_->neighbour(ContentType::Wavetable,current,step);
+    if(const auto* r=library_->library.find(next)) { const auto copy=*r; loadWavetableRecord(copy,oscillatorId); }
+}
+void OrigamiAudioProcessorEditor::showPresetSaveDialog() {
+    const auto current=processor_.getUiCurrentPreset();
+    const auto* record=library_->library.find(current.id);
+    mct::origami::ui::PresetSaveDialog::Fields f;
+    juce::String replaceName;
+    if(record!=nullptr && !record->isReadOnly()) {
+        f={record->name,record->author,record->category,record->tags.joinIntoString(", "),record->description};
+        replaceName=record->name;
+    } else {
+        f.name=record!=nullptr || current.name=="UNTITLED" ? juce::String() : current.name;
+        f.author=library_->library.state().author;
+        if(record!=nullptr) { f.category=record->category; }
+    }
+    saveDialog_->setFields(f,replaceName);
+    globalOverlay_.show(*saveDialog_,{0,0,520,430});
+    saveDialog_->nameField().grabKeyboardFocus();
+}
+juce::Result OrigamiAudioProcessorEditor::savePreset(const mct::origami::ui::PresetSaveDialog::Fields& f,bool replace) {
+    auto& library=library_->library;
+    mct::origami::content::ContentRecord meta;
+    meta.type=mct::origami::content::ContentType::Preset;
+    const auto current=processor_.getUiCurrentPreset();
+    if(replace) if(const auto* r=library.find(current.id); r!=nullptr && !r->isReadOnly()) meta.id=r->id;
+    meta.name=f.name; meta.author=f.author; meta.category=f.category; meta.description=f.description;
+    meta.tags.addTokens(f.tags,",",""); meta.tags.trim(); meta.tags.removeEmptyStrings(); meta.tags.removeDuplicates(true);
+    // An indexed summary (computed now, cheaply): the browser never decodes presets.
+    const auto state=processor_.getUiInstrumentState();
+    meta.oscillators=0; for(const auto& m:state.oscillators) meta.oscillators+=m.id!=0;
+    meta.macros=0; for(std::size_t i=0;i<mct::origami::maxMacros;++i) meta.macros+=mct::origami::macroActive(state.modulation,i+1);
+    meta.nodes=0; for(const auto& op:state.modulation.operators) meta.nodes+=op.id!=0;
+    meta.fxModules=0;
+    for(const auto bus:processor_.getUiFxWorkspace().buses())
+        for(const auto& node:processor_.getUiFxWorkspace().document(bus).graph().nodes()) meta.fxModules+=node.kind==mct::origami::fx::FxNodeKind::Effect;
+    meta.stateVersion=static_cast<int>(mct::origami::encodeInstrumentState(state)[7]);
+    // The saved state carries the new identity, so a session reopens on it.
+    juce::MemoryBlock bytes;
+    processor_.getStateInformation(bytes);
+    mct::origami::content::ContentRecord saved;
+    const auto result=library.savePreset(meta,bytes,saved);
+    if(result.failed()) return result;
+    processor_.setUiCurrentPreset(saved.id,saved.name);
+    library.state().author=f.author;
+    library.markUsed(meta.type,saved.id);
+    header_.setPresetName(saved.name);
+    if(browserOpen_) browser_->refresh();
+    return juce::Result::ok();
+}
+bool OrigamiAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray& files) {
+    for(const auto& f:files) { const juce::File file(f); if(file.hasFileExtension(".wav;.aif;.aiff")) return true; }
+    return false;
+}
+void OrigamiAudioProcessorEditor::filesDropped(const juce::StringArray& files,int x,int y) {
+    // A Finder drop onto an oscillator imports (same pipeline) into it.
+    unsigned target=0;
+    for(auto* c=getComponentAt(x,y);c!=nullptr && c!=this;c=c->getParentComponent())
+        if(auto* card=dynamic_cast<mct::origami::ui::OscillatorCard*>(c)) { target=card->id(); break; }
+    for(const auto& f:files) {
+        const juce::File file(f);
+        if(!file.hasFileExtension(".wav;.aif;.aiff")) continue;
+        const auto result=importWavetableFile(target,file);
+        if(result.failed()) juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,"IMPORT WAVETABLE",file.getFileName()+": "+result.getErrorMessage());
+        break; // one table per oscillator
+    }
+}
+
+mct::origami::dsp::Wavetable OrigamiAudioProcessorEditor::WavetableEditorSurface::compiledWavetable() const {
+    return OrigamiAudioProcessor::compileWavetable(documentData());
 }

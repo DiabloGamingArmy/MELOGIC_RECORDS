@@ -28,6 +28,9 @@
 #include "core/fx/FxWorkspace.h"
 #include "core/nodes/ControlGraph.h"
 #include "ui/VisualizationSettings.h"
+#include "content/ContentLibrary.h"
+#include <map>
+#include <memory>
 
 // mct-origami-audio-reengineer-p04-ui-telemetry-decimation
 
@@ -85,6 +88,28 @@ public:
     bool removeUiOscillator(mct::origami::OscillatorModuleId) noexcept;
     bool setUiOscillatorState(mct::origami::OscillatorModuleId,const mct::origami::OscillatorModuleState&) noexcept;
     bool installUiOscillatorWavetable(mct::origami::OscillatorModuleId,mct::origami::dsp::Wavetable);
+    // mct-origami-content-browser: each oscillator's canonical wavetable (the
+    // source frames behind its engine table). Library loads, imports and the
+    // wavetable editor all set it here; it is saved with the state, so a
+    // patch stays self-contained. Null data = the factory BASIC SHAPES.
+    struct UiWavetableSource {
+        std::shared_ptr<const mct::origami::content::WavetableData> data;
+        juce::String contentId; // library id, empty for an edited (unsaved) table
+    };
+    bool setUiOscillatorWavetable(mct::origami::OscillatorModuleId,mct::origami::content::WavetableData,const juce::String& contentId);
+    UiWavetableSource getUiOscillatorWavetable(mct::origami::OscillatorModuleId) const;
+    static mct::origami::dsp::Wavetable compileWavetable(const mct::origami::content::WavetableData&);
+    // The loaded preset (library identity + name): UI / session metadata,
+    // never DSP state. Loading runs the ordinary validated state restore.
+    struct UiPresetIdentity { juce::String id,name; };
+    UiPresetIdentity getUiCurrentPreset() const;
+    void setUiCurrentPreset(const juce::String& id,const juce::String& name);
+    bool loadUiPresetState(const juce::MemoryBlock&,const juce::String& id,const juce::String& name);
+    bool loadUiInitPreset();
+    const juce::MemoryBlock& initPresetState() const noexcept { return initState_; }
+    // Restores dropped because a preset loaded while sound was playing were
+    // faded first (diagnostics / tests).
+    std::uint64_t fadedRestores() const noexcept { return fadedRestores_.load(std::memory_order_relaxed); }
     mct::origami::OscillatorModuleState getUiOscillatorState(mct::origami::OscillatorModuleId) const noexcept;
     bool setUiOscillatorEnabled(mct::origami::OscillatorModuleId,bool) noexcept;
     bool getUiOscillatorEnabled(mct::origami::OscillatorModuleId) const noexcept;
@@ -315,6 +340,19 @@ private:
     static constexpr std::uint32_t controlLayoutMagic=0x4E434C31u; // 'NCL1' (N03: CONTROL view metadata)
     static constexpr std::uint32_t fxStateMagic=0x46584732u; // 'FXG2' (P02/P03: MAIN graph only)
     static constexpr std::uint32_t fxWorkspaceMagic=0x46585731u; // 'FXW1' (P04: all bus graphs + Global FX)
+    // mct-origami-content-browser: [content bytes][length]['CNT1']: the
+    // preset identity and every oscillator's custom wavetable frames.
+    static constexpr std::uint32_t contentMagic=0x434E5431u;
+    std::map<mct::origami::OscillatorModuleId,UiWavetableSource> wavetableSources_; // under stateLock_
+    UiPresetIdentity currentPreset_{mct::origami::content::ContentLibrary::initPresetId,"INIT"}; // under stateLock_
+    juce::MemoryBlock initState_;
+    bool restoreState(const void*,int);
+    std::vector<std::uint8_t> encodeContentTrailer() const;
+    // Audio thread: a restore that arrives while the output is sounding is
+    // applied one block later, after a short fade-out of that block.
+    mct::origami::InstrumentState deferredRestore_{};
+    bool restoreDeferred_=false;
+    std::atomic<std::uint64_t> fadedRestores_{0};
 
     // UI telemetry is intentionally control-rate, not render-span-rate.
     // Countdown is audio-thread-owned; publication remains lock-free atomics.

@@ -18,6 +18,8 @@
 //   origami_perf_bench --memory        fixed footprints of the realtime objects
 #include "plugin/PluginProcessor.h"
 #include "core/preset/StateCodec.h"
+#include "plugin/content/ContentLibrary.h"
+#include <atomic>
 #include "tests/NodesScenarios.h"
 #include <algorithm>
 #include <chrono>
@@ -371,6 +373,69 @@ std::vector<Scenario> matrix() {
 }
 }
 
+// mct-origami-content-browser: the audio callback while content work runs on
+// another thread (as the UI thread would): 10k-record search / filter / sort,
+// wavetable import / export, preset loads, wavetable loads. Typical patch,
+// 16 voices, 256-sample blocks at 48 kHz.
+void browseStress() {
+    using namespace mct::origami::content;
+    const auto base=juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("origami-browse-stress");
+    base.deleteRecursively(); base.createDirectory();
+    Snapshot snap; LibraryState st;
+    const char* words[]{"bass","lead","pad","pluck","keys","metallic","vocal","dark","bright","wide"};
+    for(int i=0;i<10000;++i) {
+        ContentRecord r; r.id="p"+juce::String(i); r.name=juce::String(words[i%10])+" "+juce::String(words[(i/10)%10])+" "+juce::String(i);
+        r.author="Author "+juce::String(i%40); r.category=words[i%5]; r.tags={words[(i*7)%10]}; r.created=r.modified=1700000000000+i; r.buildSearchText();
+        snap.records.push_back(r);
+    }
+    WavetableData table; table.name="Stress";
+    for(int i=0;i<64*2048;++i) table.samples.push_back(0.6f*std::sin(float(i)*0.011f));
+    const auto source=base.getChildFile("source.wav");
+    writeWavetableWav(source,table);
+    const auto typical=[](OrigamiAudioProcessor& p){ oscillators(p,2,4); chain(p,false); routes(p,8,false); };
+    const char* names[]{"idle UI thread","search / filter / sort 10k records","wavetable import (64 frames)","wavetable export (64 frames)","preset loads","wavetable loads into OSC 1"};
+    for(int mode=0;mode<6;++mode) {
+        auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
+        p.setPlayConfigDetails(0,2,48000.0,256); p.prepareToPlay(48000.0,256);
+        typical(p);
+        juce::MemoryBlock presetA,presetB; p.getStateInformation(presetA);
+        p.setUiParameter(ParameterId::OscLevel,0.3f); p.getStateInformation(presetB);
+        ContentLibrary library(base.getChildFile("lib"+juce::String(mode)));
+        std::atomic<bool> stop{false}; std::atomic<unsigned> ops{0};
+        std::thread ui([&] {
+            int k=0;
+            while(!stop.load()) {
+                Query q;
+                switch(mode) {
+                    case 0: std::this_thread::sleep_for(std::chrono::milliseconds(5)); break;
+                    case 1: q.text=juce::String(words[k%10]).substring(0,1+k%4); q.sort=Sort(k%3); runQuery(snap,q,st); q.facetKind="category"; q.facetValue=words[k%5]; runQuery(snap,q,st); facetsFor(snap,ContentType::Preset); break;
+                    case 2: { ContentRecord r; bool dup; library.importWavetable(source,r,dup); if(r.file.existsAsFile()) library.remove(r.id); break; }
+                    case 3: writeWavetableWav(base.getChildFile("export.wav"),table); break;
+                    case 4: p.loadUiPresetState(k%2 ? presetA : presetB,"x","X"); std::this_thread::sleep_for(std::chrono::milliseconds(20)); break;
+                    case 5: p.setUiOscillatorWavetable(firstOscillator(p),table,{}); std::this_thread::sleep_for(std::chrono::milliseconds(10)); break;
+                }
+                ++k; ops.fetch_add(1);
+            }
+        });
+        juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi,none;
+        for(int v=0;v<16;++v) midi.addEvent(juce::MidiMessage::noteOn(1,40+(v*5)%48,0.75f),0);
+        audio.clear(); p.processBlock(audio,midi);
+        std::vector<double> times;
+        const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while(std::chrono::steady_clock::now()<end) {
+            audio.clear();
+            const auto t0=std::chrono::steady_clock::now();
+            p.processBlock(audio,none);
+            times.push_back(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
+            if(mode==4 && times.size()%200==0) { midi.clear(); for(int v=0;v<16;++v) midi.addEvent(juce::MidiMessage::noteOn(1,40+(v*5)%48,0.75f),0); audio.clear(); p.processBlock(audio,midi); }
+        }
+        stop.store(true); ui.join();
+        std::printf("%-40s median %7.1f us  p99 %7.1f us  worst %7.1f us  (%u UI operations)\n",names[mode],percentile(times,.5),percentile(times,.99),
+                    *std::max_element(times.begin(),times.end()),ops.load());
+    }
+    base.deleteRecursively();
+}
+
 // B40 memory budget: the realtime objects' fixed footprints.
 void memoryReport() {
     const auto kb=[](std::size_t b){ return double(b)/1024.0; };
@@ -394,6 +459,12 @@ void memoryReport() {
 
 int main(int argc,char** argv) {
     if(argc>=2 && std::strcmp(argv[1],"--memory")==0) { juce::ScopedJuceInitialiser_GUI gui; memoryReport(); return 0; }
+    if(argc>=2 && std::strcmp(argv[1],"--browse-stress")==0) {
+#if defined(__APPLE__)
+        pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE,0);
+#endif
+        juce::ScopedJuceInitialiser_GUI gui; dsp::prepareSpectralCompiler(); browseStress(); return 0;
+    }
 #if defined(__APPLE__)
     // Audio threads run on performance cores; so does the measurement (a
     // default-QoS thread may be scheduled on efficiency cores mid-run).

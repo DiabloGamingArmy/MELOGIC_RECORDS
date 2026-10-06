@@ -93,6 +93,11 @@ public:
     void syncFromModel();
     void setDisplayOrdinal(unsigned ordinal);
     std::function<void(unsigned)> onWavetableEditorRequested;
+    // mct-origami-content-browser: the wavetable selector's actions, handled
+    // by the editor through the one content library / import pipeline.
+    enum class WavetableAction { Browse=1, Import=2, Export=3, Previous=4, Next=5 };
+    std::function<void(unsigned,WavetableAction)> onWavetableAction;
+    void setWavetableName(const juce::String&);
     // mct-origami-ui-legibility-cleanup: the one header layout shared by
     // resized() and paint: OSC N | MODE [..] | PHASE [..] | ROUTE [..] | PWR | -.
     // Every width is measured from its text; nothing is a reserved slot.
@@ -276,18 +281,6 @@ private:
         bool hovered_=false;
     };
     WavetableEditAffordance wavetableEditAffordance_;
-    struct ImportedWavetableAsset {
-        juce::String key;
-        juce::String name;
-        juce::File sourceFile;
-        std::size_t frameLength=2048;
-        std::vector<float> monoSamples;
-        std::size_t frameCount() const noexcept { return frameLength ? monoSamples.size()/frameLength : 0; }
-    };
-    std::unique_ptr<juce::FileChooser> wavetableFileChooser_;
-    std::unique_ptr<ImportedWavetableAsset> importedWavetable_;
-    void beginWavetableImport();
-    void finishWavetableImport(const juce::File&);
     bool engineBacked_=false;
     int waveformIndex_=0;
 
@@ -339,6 +332,8 @@ public:
     int count() const { return static_cast<int>(cards_.size()); }
     const juce::Viewport& viewport() const { return viewport_; }
     std::function<void(unsigned)> onWavetableEditorRequested;
+    std::function<void(unsigned,OscillatorCard::WavetableAction)> onWavetableAction;
+    std::function<juce::String(unsigned)> wavetableName; // the oscillator's table, for its selector
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     void timerCallback() override {

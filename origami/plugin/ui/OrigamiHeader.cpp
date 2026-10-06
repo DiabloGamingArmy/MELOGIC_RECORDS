@@ -12,7 +12,17 @@ OrigamiHeader::OrigamiHeader() {
     logo_=juce::ImageCache::getFromMemory(BinaryData::oragami_header_png,
                                          BinaryData::oragami_header_pngSize);
     wordmark_={};
-    for(auto* button:{&previous_,&next_,&preset_,&browse_,&save_,&settings_}) {addAndMakeVisible(button);button->setEnabled(false);button->setTooltip("Preset and utility controls are reserved for a later release.");}
+    for(auto* button:{&previous_,&next_,&preset_,&browse_,&save_,&settings_}) addAndMakeVisible(button);
+    // mct-origami-content-browser: the preset controls are live.
+    preset_.setName("PRESET NAME"); previous_.setName("PRESET PREVIOUS"); next_.setName("PRESET NEXT"); save_.setName("PRESET SAVE"); browse_.setName("PRESET BROWSE");
+    preset_.setTooltip("Browse presets"); browse_.setTooltip("Browse presets");
+    previous_.setTooltip("Previous preset"); next_.setTooltip("Next preset");
+    save_.setTooltip("Save the current sound as a user preset");
+    preset_.onClick=[this]{ if(onPresetBrowserRequested) onPresetBrowserRequested(); };
+    browse_.onClick=[this]{ if(onPresetBrowserRequested) onPresetBrowserRequested(); };
+    previous_.onClick=[this]{ if(onPresetStep) onPresetStep(-1); };
+    next_.onClick=[this]{ if(onPresetStep) onPresetStep(1); };
+    save_.onClick=[this]{ if(onSaveRequested) onSaveRequested(); };
     // The "..." utility menu: global tools reachable from every page.
     settings_.setEnabled(true);
     settings_.setName("Origami utility menu");
@@ -29,11 +39,16 @@ OrigamiHeader::OrigamiHeader() {
 std::vector<NativeChoiceItem> OrigamiHeader::utilityMenuItems() const {
     NativeChoiceItem capture{captureKeyboardItem,"CAPTURE KEYBOARD INPUT",true,{},preferences_->captureKeyboardInput()};
     capture.tooltip="Off: keys go to the host (e.g. Logic Musical Typing). On: Origami shortcuts (NODES A, Tab, F, Delete, Cmd+Z...).";
-    return {{globalFxItem,"Global FX...",true,"FX"},capture};
+    return {{initPresetItem,"INIT PRESET",true,{},false,"Return to the factory INIT sound",{}},{globalFxItem,"Global FX...",true,"FX"},capture};
 }
 void OrigamiHeader::chooseUtility(int item) {
     if(item==globalFxItem && onGlobalFxRequested) onGlobalFxRequested();
+    if(item==initPresetItem && onInitRequested) onInitRequested();
     if(item==captureKeyboardItem) preferences_->setCaptureKeyboardInput(!preferences_->captureKeyboardInput());
+}
+void OrigamiHeader::setPresetName(const juce::String& name) {
+    const auto label=name.isNotEmpty() ? name : juce::String("UNTITLED");
+    if(preset_.getButtonText()!=label) preset_.setButtonText(label);
 }
 void OrigamiHeader::selectSynth() {
     for(std::size_t i=0;i<modes_.size();++i)
