@@ -942,18 +942,24 @@ bool OrigamiAudioProcessor::syncUiMacrosFromHost() noexcept {
 }
 juce::String OrigamiAudioProcessor::macroDisplayName(unsigned macroId) const {
     std::array<char,mct::origami::ModulationState::macroNameCapacity> name{};
+    bool active=false;
     if(macroId>=1 && macroId<=hostMacroNames_.size()) {
         const juce::SpinLock::ScopedLockType lock(macroNameLock_);
         name=hostMacroNames_[macroId-1];
+        active=((hostMacroMask_>>(macroId-1))&1u)!=0;
     }
+    // Every slot is always a host parameter (its ID never moves); a slot with
+    // no macro says so, so the DAW's parameter list shows which are in use.
+    if(!active) return "Macro "+juce::String(macroId)+" (inactive)";
     return name[0]!='\0' ? juce::String(name.data()) : "Macro "+juce::String(macroId);
 }
 void OrigamiAudioProcessor::publishMacroNamesToHost(const mct::origami::ModulationState& modulation) noexcept {
     bool changed=false;
     {
         const juce::SpinLock::ScopedLockType lock(macroNameLock_);
-        changed=hostMacroNames_!=modulation.macroNames;
+        changed=hostMacroNames_!=modulation.macroNames || hostMacroMask_!=modulation.macroMask;
         hostMacroNames_=modulation.macroNames;
+        hostMacroMask_=modulation.macroMask;
     }
     // Same immutable IDs; only the display names change (hosts that cache
     // names may refresh them on this notification).

@@ -194,6 +194,7 @@ private:
     // Names for the host (read from any host thread under this lock).
     juce::SpinLock macroNameLock_;
     std::array<std::array<char,mct::origami::ModulationState::macroNameCapacity>,mct::origami::maxMacros> hostMacroNames_{};
+    std::uint16_t hostMacroMask_=mct::origami::defaultMacroMask; // which slots are macros the user has
     void setMacroParametersFromModel(const mct::origami::ModulationState&) noexcept;
     void publishMacroNamesToHost(const mct::origami::ModulationState&) noexcept;
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
