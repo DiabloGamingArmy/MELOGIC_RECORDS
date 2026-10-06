@@ -4027,6 +4027,19 @@ void contentBrowserAudit() {
     }
     check(finite,"rapid wavetable switching while holding a note stays finite");
 
+    // Visual review aid: ORIGAMI_SNAPSHOT=<dir> writes the browser's two modes as PNGs.
+    if(const char* shots=std::getenv("ORIGAMI_SNAPSHOT")) {
+        const auto snap=[&](const char* name) {
+            editor->setSize(1440,900);
+            auto image=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.0f);
+            juce::FileOutputStream out(juce::File(shots).getChildFile(name));
+            out.setPosition(0); out.truncate();
+            juce::PNGImageFormat().writeImageToStream(image,out);
+        };
+        editor->openContentBrowser(ContentType::Preset); snap("browser-presets.png");
+        editor->openContentBrowser(ContentType::Wavetable,osc1); browser.selectId(metalId); snap("browser-wavetables.png");
+        editor->closeContentBrowser(); editor->showPresetSaveDialog(); snap("save-dialog.png");
+    }
     // ---- keyboard: CAPTURE KEYBOARD INPUT off -> browser keys go to the host.
     preferences->setCaptureKeyboardInput(false);
     editor->openContentBrowser(ContentType::Preset);
@@ -4049,6 +4062,47 @@ void contentBrowserAudit() {
     check(deliver(browser,juce::KeyPress(juce::KeyPress::escapeKey)) && !editor->contentBrowserOpen(),"Escape closes the browser");
     preferences->setCaptureKeyboardInput(previousCapture);
     dir.deleteRecursively();
+
+    // ---- 10 000 records: open latency, search latency, virtualized painting.
+    const auto big=juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("origami-big-"+juce::String(juce::Time::currentTimeMillis()));
+    big.createDirectory();
+    {
+        juce::Array<juce::var> list;
+        for(int i=0;i<10000;++i) {
+            content::ContentRecord r; r.id="user.preset.big"+juce::String(i); r.name="Preset "+juce::String(i); r.author="Author "+juce::String(i%50);
+            r.category=i%2 ? "Bass" : "Lead"; r.tags={i%3 ? "dark" : "bright"}; r.created=r.modified=1700000000000+i;
+            auto v=content::recordToMetadata(r); v.getDynamicObject()->setProperty("file",big.getChildFile("Presets/P"+juce::String(i)+".origami").getFullPathName());
+            list.add(v);
+        }
+        auto* root=new juce::DynamicObject(); root->setProperty("schema",1); root->setProperty("records",list);
+        big.getChildFile("Index.json").replaceWithText(juce::JSON::toString(juce::var(root)));
+    }
+    {
+        auto t=std::chrono::steady_clock::now();
+        content::ContentLibrary bigLibrary(big);
+        const double load=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t).count();
+        ui::ContentBrowser::Host host; host.loadedPresetId=[]{ return juce::String("user.preset.big9000"); };
+        ui::ContentBrowser bigBrowser(bigLibrary,host);
+        bigBrowser.setBounds(0,0,1200,560);
+        t=std::chrono::steady_clock::now();
+        bigBrowser.open(ContentType::Preset);
+        const double open=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t).count();
+        const auto openedOn=bigBrowser.selectedRecord()!=nullptr ? bigBrowser.selectedRecord()->id : juce::String();
+        t=std::chrono::steady_clock::now();
+        bigBrowser.setSearchText("preset 99");
+        const double search=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t).count();
+        juce::Image canvas(juce::Image::RGB,1200,560,true);
+        t=std::chrono::steady_clock::now();
+        bigBrowser.setSearchText({});
+        { juce::Graphics g(canvas); bigBrowser.paintEntireComponent(g,false); }
+        const double paint=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t).count();
+        juce::Component* listComponent=nullptr; walk(bigBrowser,[&](juce::Component& c){ if(c.getName()=="CONTENT LIST") listComponent=&c; });
+        std::cerr<<"[content] 10000 records: cached index "<<load<<" ms, browser open "<<open<<" ms, search keystroke "<<search<<" ms, clear search + full paint "<<paint<<" ms\n";
+        check(bigBrowser.results().size()==10001 && openedOn=="user.preset.big9000","10 000 records (+ INIT): reopening selects the loaded preset");
+        check(open<500.0 && search<100.0,"10 000 records stay interactive");
+        check(listComponent!=nullptr && listComponent->getNumChildComponents()<=1,"the list is virtualized (no row components)");
+    }
+    big.deleteRecursively();
 }
 
 // mct-origami-nested-modulation-manual-qa: CAPTURE KEYBOARD INPUT (default
