@@ -5,6 +5,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "ui/OrigamiHeader.h"
+#include "ui/UserPreferences.h"
 #include "ui/OscillatorRack.h"
 #include "ui/SignalPanels.h"
 #include "ui/ModulationPanel.h"
@@ -343,6 +344,7 @@ private:
                                  viewportBounds.getHeight());
             }
             bool keyPressed(const juce::KeyPress& key) override {
+                if(!mct::origami::ui::captureKeyboardInput()) return false; // CAPTURE KEYBOARD INPUT OFF
                 if(key==juce::KeyPress::leftKey && document_.selectedFrame>0) {
                     select(static_cast<unsigned>(document_.selectedFrame-1)); return true;
                 }
@@ -1967,6 +1969,10 @@ private:
 
         bool keyPressed(const juce::KeyPress& key) override {
             const auto mods=key.getModifiers();
+            // CAPTURE KEYBOARD INPUT OFF: only Escape (cancel / close this
+            // editor) is Origami's; every other key goes to the host.
+            const bool capture=mct::origami::ui::captureKeyboardInput();
+            if(!capture && key!=juce::KeyPress::escapeKey) return false;
             if(mods.isCommandDown() && key.getTextCharacter()=='a') { waveformCanvas_.selectAll(); return true; }
             if(mods.isCommandDown() && key.getTextCharacter()=='z') {
                 if(mods.isShiftDown()) redo(); else undo();

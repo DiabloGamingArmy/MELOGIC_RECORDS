@@ -18,13 +18,22 @@ OrigamiHeader::OrigamiHeader() {
     settings_.setName("Origami utility menu");
     settings_.onClick=[this] {
         auto safe=juce::Component::SafePointer<OrigamiHeader>(this);
-        showNativeChoiceMenu(settings_,"UTILITIES",{{1,"Global FX...",true,"FX"}},0,[safe](int choice) {
-            if(safe!=nullptr && choice==1 && safe->onGlobalFxRequested) safe->onGlobalFxRequested();
+        showNativeChoiceMenu(settings_,"UTILITIES",utilityMenuItems(),0,[safe](int choice) {
+            if(safe!=nullptr) safe->chooseUtility(choice);
         });
     };
     const juce::StringArray labels{"SYNTH","MIXER","NODES","MATRIX","GLOBAL"};
     for(int i=0;i<5;++i) {auto& button=modes_[static_cast<std::size_t>(i)];button.setButtonText(labels[i]);button.setToggleState(i==0,juce::dontSendNotification);button.setEnabled(i==0 || i==2 || i==3 || i==4);button.setTooltip(i==0?"Synthesizer":i==2?"Effect routing":i==3?"Modulation routing":i==4?"Global visualization settings":"Not implemented");addAndMakeVisible(button);
         button.onClick=[this,i] {for(std::size_t j=0;j<modes_.size();++j) modes_[j].setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);if(onModeSelected) onModeSelected(i);};}
+}
+std::vector<NativeChoiceItem> OrigamiHeader::utilityMenuItems() const {
+    NativeChoiceItem capture{captureKeyboardItem,"CAPTURE KEYBOARD INPUT",true,{},preferences_->captureKeyboardInput()};
+    capture.tooltip="Off: keys go to the host (e.g. Logic Musical Typing). On: Origami shortcuts (NODES A, Tab, F, Delete, Cmd+Z...).";
+    return {{globalFxItem,"Global FX...",true,"FX"},capture};
+}
+void OrigamiHeader::chooseUtility(int item) {
+    if(item==globalFxItem && onGlobalFxRequested) onGlobalFxRequested();
+    if(item==captureKeyboardItem) preferences_->setCaptureKeyboardInput(!preferences_->captureKeyboardInput());
 }
 void OrigamiHeader::selectSynth() {
     for(std::size_t i=0;i<modes_.size();++i)

@@ -34,6 +34,7 @@
 #include "SourceEntity.h"
 #include "ModulationUiTelemetry.h"
 #include "NativeChoiceMenu.h"
+#include "UserPreferences.h"
 #include <algorithm>
 #include <cmath>
 
@@ -3004,6 +3005,7 @@ void MacroPanel::removeRoute(std::uint32_t routeId) {
 void MacroPanel::mouseDown(const juce::MouseEvent&) { grabKeyboardFocus(); }
 
 bool MacroPanel::keyPressed(const juce::KeyPress& key) {
+    if(!captureKeyboardInput()) return false; // CAPTURE KEYBOARD INPUT OFF: the host's Cmd+Z
     const auto mods=key.getModifiers();
     if((mods.isCommandDown() || mods.isCtrlDown()) && (key.getKeyCode()=='Z' || key.getKeyCode()=='z')) {
         return mods.isShiftDown() ? redo() : undo();

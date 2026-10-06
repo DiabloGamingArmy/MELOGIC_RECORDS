@@ -3824,6 +3824,73 @@ void nodesMenuHierarchyAudit() {
     check(disabled && reason.contains("one sequencer"),"a second SEQUENCER stays disabled in the tree, with its reason");
 }
 
+// mct-origami-nested-modulation-manual-qa: CAPTURE KEYBOARD INPUT (default
+// OFF). OFF: no Origami shortcut consumes a key (it returns through the
+// window to the host); text fields the user opened still type; Escape is
+// used only to close / cancel an Origami popup. ON: shortcuts as before.
+void captureKeyboardInputAudit() {
+    using namespace mct::origami;
+    juce::SharedResourcePointer<ui::UserPreferences> preferences;
+    const bool previous=preferences->captureKeyboardInput();
+    { ui::UserPreferences fresh; check(!fresh.captureKeyboardInput(),"CAPTURE KEYBOARD INPUT defaults to OFF"); }
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::OrigamiHeader* header=nullptr; ui::FxPage* page=nullptr; ui::MacroPanel* macros=nullptr;
+    walk(*editor,[&](juce::Component& c){
+        if(auto* x=dynamic_cast<ui::OrigamiHeader*>(&c)) header=x;
+        if(auto* x=dynamic_cast<ui::FxPage*>(&c)) page=x;
+        if(auto* x=dynamic_cast<ui::MacroPanel*>(&c)) macros=x; });
+    check(header && page && macros,"keyboard audit: header, NODES, macros");
+    if(!header || !page || !macros) return;
+    // The utility menu item: top level, checkable, the shared preference.
+    preferences->setCaptureKeyboardInput(false);
+    const auto item=[&]{ for(const auto& i:header->utilityMenuItems()) if(i.id==ui::OrigamiHeader::captureKeyboardItem) return i; return ui::NativeChoiceItem{}; };
+    check(item().text=="CAPTURE KEYBOARD INPUT" && item().group.isEmpty() && !item().checked,"\"...\" menu: CAPTURE KEYBOARD INPUT, unchecked");
+    header->chooseUtility(ui::OrigamiHeader::captureKeyboardItem);
+    check(preferences->captureKeyboardInput() && item().checked,"choosing it turns capture on (checked)");
+    juce::MemoryBlock on,off; p.getStateInformation(on);
+    header->chooseUtility(ui::OrigamiHeader::captureKeyboardItem);
+    p.getStateInformation(off);
+    check(!preferences->captureKeyboardInput() && on==off,"choosing again turns it off; never part of the patch state");
+
+    // A key arrives at the focused component and climbs its parents until one
+    // uses it (juce::ComponentPeer::handleKeyPress); unused, the window hands
+    // it to the host.
+    const auto deliver=[](juce::Component& focused,const juce::KeyPress& key) {
+        for(auto* c=&focused;c!=nullptr;c=c->getParentComponent()) if(c->keyPressed(key)) return true;
+        return false;
+    };
+    const auto cmd=[](char c){ return juce::KeyPress(c,juce::ModifierKeys::commandModifier,0); };
+    auto& canvas=page->canvas();
+    auto& palette=page->nodePalette();
+    bool consumed=false;
+    for(const auto& key:{juce::KeyPress('a',{},'a'),juce::KeyPress('s',{},'s'),juce::KeyPress('d',{},'d'),juce::KeyPress('f',{},'f'),
+                         juce::KeyPress('1',{},'1'),juce::KeyPress(juce::KeyPress::tabKey),juce::KeyPress(juce::KeyPress::backspaceKey),
+                         juce::KeyPress(juce::KeyPress::deleteKey),cmd('z'),cmd('c'),cmd('v'),cmd('a'),cmd('d'),cmd('0')})
+        consumed|=deliver(canvas,key) || deliver(*page,key) || deliver(*macros,key) || deliver(*editor,key);
+    check(!consumed && !palette.isOpen(),"OFF: letters, numbers, NODES hotkeys and Cmd shortcuts all go to the host");
+    check(!deliver(canvas,juce::KeyPress(juce::KeyPress::escapeKey)),"OFF: Escape with nothing to close goes to the host");
+    page->showNodePalette(fx::FxPoint{700.0f,900.0f});
+    check(palette.isOpen() && deliver(canvas,juce::KeyPress(juce::KeyPress::escapeKey)) && !palette.isOpen(),"Escape still closes an open Origami popup");
+    // Text the user chose to type into always takes the keys.
+    auto* title=macros->titleLabel(1);
+    title->showEditor();
+    auto* field=title->getCurrentTextEditor();
+    check(field!=nullptr && field->keyPressed(juce::KeyPress('a',{},'a')) && field->getText().containsChar('a'),"OFF: a macro name being edited still types");
+    if(field!=nullptr) { field->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)); static_cast<juce::Component*>(field)->handleCommandMessage(0x10003003); }
+
+    // ON: the shortcuts work as before.
+    preferences->setCaptureKeyboardInput(true);
+    check(deliver(canvas,juce::KeyPress('a',{},'a')) && palette.isOpen(),"ON: A opens the NODES quick-add palette");
+    check(deliver(canvas,juce::KeyPress(juce::KeyPress::escapeKey)) && !palette.isOpen(),"ON: Escape closes it");
+    check(!deliver(canvas,juce::KeyPress(juce::KeyPress::escapeKey)),"ON: Escape with nothing to close still goes to the host");
+    preferences->setCaptureKeyboardInput(previous);
+}
+
 // mct-origami-nested-modulation-manual-qa: DAW macros (F), macro names (G),
 // Matrix labels / availability (K) and SYNTH X / Y drops (L).
 void nestedModulationUiAudit() {
@@ -4004,6 +4071,8 @@ void nestedModulationUiAudit() {
     check(title && title->getText().equalsIgnoreCase("Wobble"),"the card title shows the macro's name");
     if(!title) return;
     const auto edit=[&](const juce::String& text,int how) {
+        title=macros->titleLabel(1); // a card rebuilt by delete / undo is a new component
+        if(title==nullptr) return false;
         title->showEditor();
         auto* ed=title->getCurrentTextEditor();
         if(ed==nullptr) return false;
@@ -5022,6 +5091,7 @@ void run() {
     nodesMenuHierarchyAudit();
     synthDynamicMacrosAudit();
     nestedModulationUiAudit();
+    captureKeyboardInputAudit();
     lfoEditorControlsAudit();
     typographyAudit();
     macroGridAndOscHeaderAudit();
@@ -5275,5 +5345,10 @@ void run() {
     check(observedWaveform,"oscillator viewport telemetry contains audio-rendered samples");
 }
 }
-int main(){juce::ScopedJuceInitialiser_GUI gui;try{run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+int main(){juce::ScopedJuceInitialiser_GUI gui;
+// Preferences stay in memory (the user's file is never touched). The
+// shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
+ui::UserPreferences::useVolatileStorageForTesting();
+juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
+try{run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

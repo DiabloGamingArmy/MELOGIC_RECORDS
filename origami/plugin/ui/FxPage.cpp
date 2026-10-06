@@ -3,6 +3,7 @@
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #include "FxPage.h"
+#include "UserPreferences.h"
 #include "SourceEntity.h"
 #include "core/fx/FxFilter.h"
 #include <cmath>
@@ -3490,13 +3491,22 @@ void FxPage::timerCallback() {
 bool FxPage::keyPressed(const juce::KeyPress& key) {
     const auto mods=key.getModifiers();
     const bool command=mods.isCommandDown() || mods.isCtrlDown();
+    // mct-origami-nested-modulation-manual-qa: Escape is used only when it
+    // closes or cancels something of Origami's (palette, overlay, a wire being
+    // drawn; with CAPTURE KEYBOARD INPUT also a multi-selection). Otherwise
+    // it stays with the host.
     if(key==juce::KeyPress::escapeKey) {
         if(palette_.isOpen()) { palette_.dismiss(); return true; }
-        if(overlay_.isShowing()) overlay_.dismiss();
-        canvas_.cancelWire();
-        if(controlMulti_.size()>1) setControlNodeSelection({});
-        return true;
+        bool used=false;
+        if(overlay_.isShowing()) { overlay_.dismiss(); used=true; }
+        if(canvas_.wireSource()) { canvas_.cancelWire(); used=true; }
+        if(captureKeyboardInput() && controlMulti_.size()>1) { setControlNodeSelection({}); used=true; }
+        return used;
     }
+    // CAPTURE KEYBOARD INPUT OFF (default): no NODES shortcut takes a key.
+    // Returning false hands it back through the window to the host (Logic's
+    // Musical Typing), rather than receiving it and doing nothing.
+    if(!captureKeyboardInput()) return false;
     const auto ch=juce::CharacterFunctions::toLowerCase(key.getTextCharacter()!=0 ? key.getTextCharacter() : juce::juce_wchar(key.getKeyCode()));
     // N07 shortcuts (the palette's search field has focus while it is open,
     // so these never steal typing).
