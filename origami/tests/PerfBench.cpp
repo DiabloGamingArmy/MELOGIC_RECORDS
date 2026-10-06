@@ -157,6 +157,48 @@ void busFx(OrigamiAudioProcessor& p,bool heavy) {
     for(auto t:chainFx) p.getUiFxDocument().edit([t](fx::FxGraph& g){ return g.insertEffectBeforeOutput(t)!=0; });
 }
 
+// mct-origami-nested-modulation-manual-qa
+void crossOscStereo(OrigamiAudioProcessor& p) {
+    oscillators(p,2,1);
+    p.setUiParameter(ParameterId::OscLevel,0.0f); // OSC 1 silent, still the PD source
+    const auto o1=firstOscillator(p);
+    auto m1=p.getUiOscillatorState(o1);
+    m1.processCount=1; m1.nextProcessId=2; m1.processes[0]={1,dsp::OscProcessType::RandAmp,0.5f,0x1234u,true};
+    p.setUiOscillatorState(o1,m1);
+    OscillatorModuleId o2=0; for(const auto& o:p.getUiInstrumentState().oscillators) if(o.id && o.id!=o1) { o2=o.id; break; }
+    auto m2=p.getUiOscillatorState(o2);
+    m2.routeCount=1; m2.nextRouteId=2; m2.routes[0]={1,o1,OscRouteType::PhaseMod,0.6f,true}; m2.level=0.8f;
+    p.setUiOscillatorState(o2,m2);
+    auto mod=p.getUiInstrumentState().modulation;
+    mod.lfo1.mode=LfoMode::Loop; mod.lfo1.rateHz=5.0f; mod.lfo1.stereo=1.0f; // 180 degrees
+    std::size_t slot=0; while(slot<mod.routes.size() && mod.routes[slot].id) ++slot;
+    mod.routes[slot]={mod.nextRouteId++,true,ModSource::Lfo1,{ModDestination::ProcessAmount,o1,1},0.9f,true};
+    if(!p.setUiModulationState(mod)) std::fprintf(stderr,"warning: cross-osc stereo rejected\n");
+}
+// 0: MACRO 1 -> MACRO 2 (MACRO 2 -> OSC 1 LEVEL); 1: MACRO 1 -> LFO 1 RATE;
+// 2: LFO 3 -> LFO 1 RATE; 3: LFO 4 -> the depth of the first four routes.
+void nested(OrigamiAudioProcessor& p,int kind) {
+    auto mod=p.getUiInstrumentState().modulation;
+    const auto id=firstOscillator(p);
+    std::size_t slot=0; while(slot<mod.routes.size() && mod.routes[slot].id) ++slot;
+    const auto add=[&](ModSource s,ModAddress d,float amount,bool bipolar) {
+        if(slot>=mod.routes.size()) return;
+        ModRoute r{mod.nextRouteId,true,s,d,amount,bipolar};
+        if(routeDuplicates(mod,r) || routeClosesCycle(mod,r)) return;
+        mod.routes[slot++]=r; ++mod.nextRouteId;
+    };
+    mod.macros[0]=0.4f; mod.lfo3.mode=LfoMode::Free; mod.lfo3.rateHz=0.7f; mod.lfo4.mode=LfoMode::Free; mod.lfo4.rateHz=0.3f;
+    if(kind==0) { add(macroSource(1),macroValueAddress(2),0.5f,false); add(macroSource(2),{ModDestination::Level,id,0},0.3f,false); }
+    if(kind==1) add(macroSource(1),lfoRateAddress(0),0.3f,false);
+    if(kind==2) add(ModSource::Lfo3,lfoRateAddress(0),0.2f,true);
+    if(kind==3) {
+        std::vector<std::uint32_t> targets;
+        for(const auto& r:mod.routes) if(r.id && routeComplete(r) && !isNestedDestination(r.destination.parameter) && targets.size()<4) targets.push_back(r.id);
+        for(const auto t:targets) add(ModSource::Lfo4,routeDepthAddress(t),0.25f,true);
+    }
+    if(!p.setUiModulationState(mod)) std::fprintf(stderr,"warning: nested scenario %d rejected\n",kind);
+}
+
 // ---- measurement -------------------------------------------------------------
 struct Result {
     double median=0,p95=0,p99=0,worst=0,budgetUs=0;
@@ -308,6 +350,23 @@ std::vector<Scenario> matrix() {
         p.setUiModulationState(mod); }});
     m.push_back({"heavy everything, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){
         oscillators(p,4,4); chain(p,true); routes(p,32,true,0.5f); busFx(p,true); }});
+    // mct-origami-nested-modulation-manual-qa: the manual cross-oscillator
+    // stereo case (silent OSC 1 RAND AMP at STEREO 180 phase-modulating OSC 2)
+    // and nested modulation (Macro -> Macro, Macro / LFO -> LFO RATE, LFO ->
+    // route DEPTH), on top of the typical patch.
+    m.push_back({"cross-osc stereo PD, 8 voices",48000,256,8,crossOscStereo});
+    m.push_back({"nested: MACRO -> MACRO, typical",48000,256,8,[typical](OrigamiAudioProcessor& p){ typical(p); nested(p,0); }});
+    m.push_back({"nested: MACRO -> LFO RATE, typical",48000,256,8,[typical](OrigamiAudioProcessor& p){ typical(p); nested(p,1); }});
+    m.push_back({"nested: LFO -> LFO RATE, typical",48000,256,8,[typical](OrigamiAudioProcessor& p){ typical(p); nested(p,2); }});
+    m.push_back({"nested: LFO -> 4 route depths, typical",48000,256,8,[typical](OrigamiAudioProcessor& p){ typical(p); nested(p,3); }});
+    const auto nestedAll=[typical](OrigamiAudioProcessor& p){ typical(p); for(int k=0;k<4;++k) nested(p,k); };
+    for(int b:{32,64,256,1024}) m.push_back({"nested all @ block "+std::to_string(b),48000,b,8,nestedAll});
+    for(int b:{64,256}) {
+        m.push_back({"typical @ 96 kHz block "+std::to_string(b),96000,b,8,typical});
+        m.push_back({"nested all @ 96 kHz block "+std::to_string(b),96000,b,8,nestedAll});
+    }
+    m.push_back({"32 routes + nested all, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){
+        oscillators(p,1); routes(p,32,true); for(int k=0;k<4;++k) nested(p,k); }});
     return m;
 }
 }
