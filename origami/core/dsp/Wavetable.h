@@ -216,21 +216,26 @@ public:
     // Stereo modulation of the READ side (WT position, OSC CHAIN amounts,
     // PM / PSK): one phase advance, a second read at the same phase into
     // `right`. LEFT is bit-identical to next() / nextSimple().
+    // frequencyRight > 0 (stereo FM): RIGHT advances its own phase at that
+    // frequency, seeded from LEFT's phase the first time; otherwise RIGHT
+    // reads at LEFT's phase and any separate RIGHT phase is dropped.
     float nextStereo(const Wavetable&,double frequency,double sampleRate,
                      float position,const OscProcessPlan&,double phaseOffsetCycles,double phaseSkew,
                      float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
-                     std::array<SpectralReadHint,2>& rightHints,float& right) noexcept;
+                     std::array<SpectralReadHint,2>& rightHints,float& right,double frequencyRight=0.0) noexcept;
     float nextStereoSimple(const Wavetable&,double frequency,double sampleRate,float position,float positionRight,
                            std::array<SpectralReadHint,2>& rightHints,float& right) noexcept;
     double phase() const noexcept { return phase_; }
+    // The next separate RIGHT phase (stereo FM) starts again from LEFT's.
+    void restartRightPhase() noexcept { rightPhaseLive_=false; }
 private:
     void preparePitch(const Wavetable&,double frequency,double sampleRate) noexcept;
     template<bool Simple> float readAt(const Wavetable&,float position,const OscProcessPlan&,double,double,
-                                       std::array<SpectralReadHint,2>&) noexcept;
+                                       std::array<SpectralReadHint,2>&,double phase,std::size_t band) noexcept;
     template<bool Simple> float nextImpl(const Wavetable&,double,double,float,
         const OscProcessPlan&,double,double) noexcept;
     template<bool Simple> float nextStereoImpl(const Wavetable&,double,double,float,const OscProcessPlan&,double,double,
-        float,const OscProcessPlan&,double,double,std::array<SpectralReadHint,2>&,float&) noexcept;
+        float,const OscProcessPlan&,double,double,std::array<SpectralReadHint,2>&,float&,double frequencyRight) noexcept;
     double phase_ = 0;
     // Pitch metadata is independent of phase and chain amounts. Exact keys
     // keep FM, glide and sample-rate changes audio-rate without rescanning
@@ -240,6 +245,8 @@ private:
     double pitchFrequency_=0,pitchSampleRate_=0,increment_=0;
     std::size_t bandIndex_=0;
     std::array<SpectralReadHint,2> spectralHints_{};
+    double phaseRight_ = 0;      // cold: stereo FM only
+    bool rightPhaseLive_=false;
 };
 double midiFrequency(int note) noexcept;
 }

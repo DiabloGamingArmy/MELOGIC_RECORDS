@@ -649,8 +649,12 @@ private:
 //                      route amount. The oscillator's only state is its phase,
 //                      so RIGHT is a second read at the same phase (frame,
 //                      phase warp, spectral table, PM / PSK offset, post-route
-//                      shaping). FM route amounts are read from LEFT (they
-//                      change the phase increment: oscillator state).
+//                      shaping). mct-origami-nested-modulation-manual-qa: FM
+//                      route amounts too (a different RIGHT frequency runs
+//                      RIGHT on its own phase), and a module whose RIGHT
+//                      differs feeds every cross-oscillator route channel by
+//                      channel (RIGHT taps): PD, FM, PSK, RM, AM, XF, WF,
+//                      XOR and RECT consume the source's RIGHT on RIGHT.
 //  B RequiresStereoDsp OCTAVE / SEMITONE / FINE (one oscillator phase per
 //                      module), FX parameters (one value per effect node),
 //                      MASTER GAIN (per voice, or after FX at block rate

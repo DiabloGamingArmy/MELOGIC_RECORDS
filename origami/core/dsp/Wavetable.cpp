@@ -432,7 +432,7 @@ Wavetable Wavetable::builtIns() {
     assignWavetableGeneration(table);
     return table;
 }
-void WavetableOscillator::reset(double phase) noexcept { phase_ = std::isfinite(phase) ? phase - std::floor(phase) : 0; }
+void WavetableOscillator::reset(double phase) noexcept { phase_ = std::isfinite(phase) ? phase - std::floor(phase) : 0; rightPhaseLive_=false; }
 
 const char* oscProcessName(OscProcessType type) noexcept {
     switch(type) {
@@ -778,14 +778,14 @@ void WavetableOscillator::preparePitch(const Wavetable& table,double frequency,d
 // so a second read at the same phase (stereo RIGHT) is exact.
 template<bool Simple>
 float WavetableOscillator::readAt(const Wavetable& table,float position,const OscProcessPlan& plan,
-                                  double phaseOffsetCycles,double phaseSkew,std::array<SpectralReadHint,2>& hints) noexcept {
-    const auto bandIndex=bandIndex_;
+                                  double phaseOffsetCycles,double phaseSkew,std::array<SpectralReadHint,2>& hints,
+                                  double phase,std::size_t bandIndex) noexcept {
     const float framePosition=std::clamp(position,0.f,1.f)*static_cast<float>(table.frames.size()-1);
     const auto first=static_cast<std::size_t>(framePosition),second=std::min(first+1,table.frames.size()-1);
-    double readPhase=phase_;
+    double readPhase=phase;
     bool spectral=false;
     if constexpr(!Simple) {
-        readPhase=phase_+(std::isfinite(phaseOffsetCycles)?phaseOffsetCycles:0.0);readPhase-=std::floor(readPhase);
+        readPhase=phase+(std::isfinite(phaseOffsetCycles)?phaseOffsetCycles:0.0);readPhase-=std::floor(readPhase);
         if(std::isfinite(phaseSkew)&&std::abs(phaseSkew)>1.0e-12){
             const double midpoint=std::clamp(0.5+phaseSkew,0.06,0.94);
             readPhase=readPhase<midpoint?0.5*(readPhase/midpoint):0.5+0.5*((readPhase-midpoint)/(1.0-midpoint));}
@@ -823,7 +823,7 @@ float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,doub
     if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
     preparePitch(table,frequency,sampleRate);
     const double increment=increment_;
-    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_);
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_,phase_,bandIndex_);
     phase_+=increment;if(phase_>=1)phase_-=1;
     return frequency>=sampleRate*.5?0:output;
 }
@@ -832,29 +832,46 @@ template<bool Simple>
 float WavetableOscillator::nextStereoImpl(const Wavetable& table,double frequency,double sampleRate,
         float position,const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew,
         float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
-        std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
+        std::array<SpectralReadHint,2>& rightHints,float& right,double frequencyRight) noexcept {
     if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position)) { right=0.0f; return 0; }
     preparePitch(table,frequency,sampleRate);
     const double increment=increment_;
-    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_);
-    const float outputRight=readAt<Simple>(table,std::isfinite(positionRight)?positionRight:position,planRight,
-                                           phaseOffsetRight,phaseSkewRight,rightHints);
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_,phase_,bandIndex_);
+    const float rightPosition=std::isfinite(positionRight)?positionRight:position;
+    float outputRight=0.0f;
+    bool rightAboveNyquist=frequency>=sampleRate*.5;
+    if(!Simple && frequencyRight>0.0 && std::isfinite(frequencyRight)) {
+        // mct-origami-nested-modulation-manual-qa: stereo FM. RIGHT has its
+        // own phase (seeded from LEFT's the first time) and its own band.
+        if(!rightPhaseLive_) { phaseRight_=phase_; rightPhaseLive_=true; }
+        const double available=sampleRate*.45/frequencyRight;
+        const auto& bands=table.frames[0].bands;
+        std::size_t band=bandIndex_<bands.size() ? bandIndex_ : 0;
+        while(band>0 && bands[band].maximumHarmonic>available) --band;
+        while(band+1<bands.size() && bands[band+1].maximumHarmonic<=available) ++band;
+        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints,phaseRight_,band);
+        phaseRight_+=std::clamp(frequencyRight/sampleRate,0.0,.499);if(phaseRight_>=1)phaseRight_-=1;
+        rightAboveNyquist=frequencyRight>=sampleRate*.5;
+    } else {
+        rightPhaseLive_=false;
+        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints,phase_,bandIndex_);
+    }
     phase_+=increment;if(phase_>=1)phase_-=1;
     const bool aboveNyquist=frequency>=sampleRate*.5;
-    right=aboveNyquist?0.0f:outputRight;
+    right=rightAboveNyquist?0.0f:outputRight;
     return aboveNyquist?0:output;
 }
 float WavetableOscillator::nextStereo(const Wavetable& table,double frequency,double sampleRate,
         float position,const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew,
         float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
-        std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
+        std::array<SpectralReadHint,2>& rightHints,float& right,double frequencyRight) noexcept {
     return nextStereoImpl<false>(table,frequency,sampleRate,position,plan,phaseOffsetCycles,phaseSkew,
-                                 positionRight,planRight,phaseOffsetRight,phaseSkewRight,rightHints,right);
+                                 positionRight,planRight,phaseOffsetRight,phaseSkewRight,rightHints,right,frequencyRight);
 }
 float WavetableOscillator::nextStereoSimple(const Wavetable& table,double frequency,double sampleRate,
         float position,float positionRight,std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
     static constexpr OscProcessPlan empty{};
-    return nextStereoImpl<true>(table,frequency,sampleRate,position,empty,0.0,0.0,positionRight,empty,0.0,0.0,rightHints,right);
+    return nextStereoImpl<true>(table,frequency,sampleRate,position,empty,0.0,0.0,positionRight,empty,0.0,0.0,rightHints,right,0.0);
 }
 
 double midiFrequency(int note) noexcept { return 440.0 * std::exp2((std::clamp(note, 0, 127) - 69) / 12.0); }

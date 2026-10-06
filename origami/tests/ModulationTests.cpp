@@ -924,7 +924,9 @@ void oscChainStereo() {
             {"WAVE FOLD (post route)",withRoute(OscRouteType::WaveFold),true},
             {"PM (pre route)",withRoute(OscRouteType::PhaseMod),true},
             {"PSK (pre route)",withRoute(OscRouteType::PhaseSkew),true},
-            {"FM (pre route, scalar)",withRoute(OscRouteType::FrequencyMod),false}};
+            // mct-origami-nested-modulation-manual-qa: FM is stereo too (RIGHT
+            // runs its own phase while its frequency differs).
+            {"FM (pre route)",withRoute(OscRouteType::FrequencyMod),true}};
         for(const auto& c:cases) {
             auto st=base; c.setup(st);
             auto mono=st; const auto m0=renderChain(*e,mono,256,total);
@@ -937,8 +939,85 @@ void oscChainStereo() {
                 check(match>=0.99,(std::string(c.name)+": RIGHT = LFO at +180 deg (match "+std::to_string(match)+")").c_str());
                 bool differs=false; for(std::size_t i=0;i<a.left.size();++i) differs|=std::abs(a.left[i]-a.right[i])>1e-3f;
                 check(differs,(std::string(c.name)+": channels differ at 180 deg").c_str());
-            } else check(a.right==a.left,(std::string(c.name)+": scalar (FM changes the phase increment): RIGHT follows LEFT").c_str());
+            } else check(a.right==a.left,(std::string(c.name)+": scalar: RIGHT follows LEFT").c_str());
         }
+    }
+}
+
+// ---- mct-origami-nested-modulation-manual-qa: cross-oscillator stereo -------
+// Gino's manual case: OSC 1 carries a stereo RAND AMP (LFO 1, STEREO) but is
+// silent (LEVEL 0); OSC 2 is audible and phase-distorted by OSC 1. The L / R
+// difference inside OSC 1 must reach OSC 2 through the cross-oscillator tap:
+// downstream RIGHT equals the whole patch rendered with the LFO at +angle.
+void crossOscillatorStereo() {
+    check(dsp::prepareSpectralCompiler(),"spectral worker running");
+    constexpr std::size_t total=9600;
+    auto e=std::make_unique<OrigamiEngine>(); check(e->prepare(48000,1024,2),"cross-osc engine");
+    const auto osc2=e->addOscillatorModule();
+    const auto osc3=e->addOscillatorModule();
+    check(osc2!=0 && osc3!=0,"OSC 2 / OSC 3 exist");
+    check(e->setParameter(ParameterId::OscLevel,0.0f),"OSC 1 LEVEL 0 (still a cross-mod source)");
+    auto base=e->instrumentState();
+    base.parameters[static_cast<std::size_t>(ParameterId::OscLevel)]=0.0f;
+    auto& o1=base.oscillators[0];
+    o1.processCount=1; o1.nextProcessId=2; o1.processes[0]={1,dsp::OscProcessType::RandAmp,0.5f,0x1234u,true};
+    std::size_t s2=0,s3=0; for(std::size_t i=0;i<base.oscillators.size();++i) { if(base.oscillators[i].id==osc2) s2=i; if(base.oscillators[i].id==osc3) s3=i; }
+    base.oscillators[s3].enabled=false;
+    base.modulation.lfo1.mode=LfoMode::Loop; base.modulation.lfo1.rateHz=5.0f;
+    base.modulation.nextRouteId=2;
+    base.modulation.routes[0]={1,true,ModSource::Lfo1,{ModDestination::ProcessAmount,o1.id,1},0.9f,true};
+    const auto withRoute=[&](InstrumentState st,OscRouteType type,float amount) {
+        auto& o=st.oscillators[s2]; o.routeCount=1; o.nextRouteId=2; o.routes[0]={1,o1.id,type,amount,true}; o.level=0.8f;
+        return st;
+    };
+    const auto differs=[](const ChainRender& r) { for(std::size_t i=0;i<r.left.size();++i) if(std::abs(r.left[i]-r.right[i])>1e-3f) return true; return false; };
+    // The exact manual case: PD from a silent stereo RAND AMP oscillator.
+    const auto pd=withRoute(base,OscRouteType::PhaseMod,0.6f);
+    auto mono=pd; check(settleSpectral(*e,mono,total),"spectral settles (mono)");
+    const auto m0=renderChain(*e,mono,256,total);
+    check(m0.left==m0.right,"cross-osc PD, STEREO 0 deg: L == R");
+    for(int angle:{90,180}) {
+        auto s=pd; s.modulation.lfo1.stereo=float(angle)/180.0f;
+        auto ref=pd; ref.modulation.lfo1.phase=float(angle)/360.0f;
+        check(settleSpectral(*e,s,total) && settleSpectral(*e,ref,total),"spectral settles (stereo)");
+        const auto a=renderChain(*e,s,256,total),again=renderChain(*e,s,256,total),rr=renderChain(*e,ref,256,total);
+        const std::string label=" ("+std::to_string(angle)+" deg)";
+        check(a.left==again.left && a.right==again.right,("cross-osc PD stereo is deterministic"+label).c_str());
+        check(a.left==m0.left,("cross-osc PD: LEFT unchanged by STEREO"+label).c_str());
+        check(differs(a),("cross-osc PD: OSC 2 output L != R (the stereo source survives)"+label).c_str());
+        const double match=matchFraction(a.right,rr.left,2e-3f);
+        check(match>=0.97,("cross-osc PD: RIGHT = the patch with LFO 1 at +"+std::to_string(angle)+" deg (match "+std::to_string(match)+")").c_str());
+        const auto b64=renderChain(*e,s,64,total),b1024=renderChain(*e,s,1024,total);
+        check(b64.left==a.left && b64.right==a.right && b1024.left==a.left && b1024.right==a.right,("cross-osc PD stereo: block-size independent"+label).c_str());
+    }
+    // Every other cross-oscillator route, from a stereo phase-warp source
+    // (no spectral cache: exact references).
+    auto warp=base;
+    warp.oscillators[0].processes[0]={1,dsp::OscProcessType::BendPlus,0.4f,7u,true};
+    struct RouteCase { const char* name; OscRouteType type; };
+    for(const auto& c:std::array<RouteCase,9>{{{"PD",OscRouteType::PhaseMod},{"FM",OscRouteType::FrequencyMod},{"PSK",OscRouteType::PhaseSkew},
+            {"RING MOD",OscRouteType::RingMod},{"AMP MOD",OscRouteType::AmpMod},{"CROSSFADE",OscRouteType::Crossfade},
+            {"WAVE FOLD",OscRouteType::WaveFold},{"XOR",OscRouteType::LogicXor},{"RECTIFY",OscRouteType::RectifyMod}}}) {
+        const auto st=withRoute(warp,c.type,0.7f);
+        const auto r0=renderChain(*e,st,256,total);
+        auto s=st; s.modulation.lfo1.stereo=1.0f;
+        auto ref=st; ref.modulation.lfo1.phase=0.5f;
+        const auto a=renderChain(*e,s,256,total),rr=renderChain(*e,ref,256,total);
+        check(r0.left==r0.right && a.left==r0.left,(std::string("cross-osc ")+c.name+": STEREO 0 mono, LEFT unchanged").c_str());
+        check(differs(a),(std::string("cross-osc ")+c.name+": OSC 2 output L != R at 180 deg").c_str());
+        const double match=matchFraction(a.right,rr.left,1e-3f);
+        check(match>=0.99,(std::string("cross-osc ")+c.name+": RIGHT = the patch with LFO 1 at +180 deg (match "+std::to_string(match)+")").c_str());
+    }
+    // A chain of taps: OSC 1 (stereo) -> PD -> OSC 2 (silent) -> RM -> OSC 3.
+    {
+        auto st=withRoute(warp,OscRouteType::PhaseMod,0.6f);
+        st.oscillators[s2].level=0.0f;
+        auto& o3=st.oscillators[s3]; o3.enabled=true; o3.level=0.8f; o3.routeCount=1; o3.nextRouteId=2; o3.routes[0]={1,osc2,OscRouteType::RingMod,0.8f,true};
+        auto s=st; s.modulation.lfo1.stereo=1.0f;
+        auto ref=st; ref.modulation.lfo1.phase=0.5f;
+        const auto a=renderChain(*e,s,256,total),rr=renderChain(*e,ref,256,total);
+        const double match=matchFraction(a.right,rr.left,1e-3f);
+        check(differs(a) && match>=0.99,("cross-osc chain OSC 1 -> OSC 2 -> OSC 3: stereo survives two taps (match "+std::to_string(match)+")").c_str());
     }
 }
 
@@ -991,11 +1070,12 @@ int main() {
         lfoFunctionProcessing();
         lfoStereoModulation();
         oscChainStereo();
+        crossOscillatorStereo();
         if(std::getenv("ORIGAMI_LFO_BENCH")) lfoFunctionBenchmark();
-        std::cout<<"PASS: "<<checks<<" modulation foundation checks\\n";
+        std::cout<<"PASS: "<<checks<<" modulation foundation checks\n";
         return 0;
     } catch(const std::exception& e) {
-        std::cerr<<"FAIL: "<<e.what()<<'\\n';
+        std::cerr<<"FAIL: "<<e.what()<<'\n';
         return 1;
     }
 }
