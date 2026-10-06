@@ -762,10 +762,12 @@ void WavetableOscillator::preparePitch(const Wavetable& table,double frequency,d
         // The band is the highest one whose harmonic limit fits (band 0 when
         // none does). Limits strictly increase (Wavetable::valid), so walking
         // from the previous band reaches the same index as a scan from 0, in
-        // zero or one step for vibrato / glide / FM / pitch bend.
-        auto band=bands.empty() ? std::size_t{0} : std::min(bandIndex_,bands.size()-1);
-        while(band+1<bands.size() && bands[band+1].maximumHarmonic<=available) ++band;
+        // zero or one step for vibrato / glide / FM / pitch bend. Kept inline
+        // and register-light: the static-pitch read stays a leaf function
+        // (a call or spill here costs a stack frame on every read).
+        std::size_t band=bandIndex_<bands.size() ? bandIndex_ : 0;
         while(band>0 && bands[band].maximumHarmonic>available) --band;
+        while(band+1<bands.size() && bands[band+1].maximumHarmonic<=available) ++band;
         bandIndex_=band;
         pitchTable_=&table;pitchGeneration_=table.generation;
         pitchFrequency_=frequency;pitchSampleRate_=sampleRate;

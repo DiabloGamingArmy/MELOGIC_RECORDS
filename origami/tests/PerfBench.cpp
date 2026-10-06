@@ -42,6 +42,9 @@ struct Scenario {
     int block=256;
     int voices=8;
     std::function<void(OrigamiAudioProcessor&)> setup;
+    // A UI-thread edit before each measured callback (outside the timed
+    // region): the callback then pays only for consuming it.
+    std::function<void(OrigamiAudioProcessor&,std::size_t)> perBlock{};
 };
 
 // ---- patch building blocks -------------------------------------------------
@@ -200,6 +203,7 @@ Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
     do {
         for(std::size_t b=0;b<blocks;++b) {
             audio.clear();
+            if(s.perBlock) s.perBlock(p,b);
             const auto t0=std::chrono::steady_clock::now();
             p.processBlock(audio,none);
             const auto t1=std::chrono::steady_clock::now();
@@ -244,6 +248,15 @@ std::vector<Scenario> matrix() {
     m.push_back({"typical, idle FX heavy (no notes)",48000,256,0,[](OrigamiAudioProcessor& p){ oscillators(p,1); busFx(p,true); }});
     for(int b:{32,64,128,256,512,1024}) m.push_back({"typical @ block "+std::to_string(b),48000,b,8,typical});
     for(double sr:{44100.0,96000.0}) m.push_back({"typical @ "+std::to_string(int(sr/1000))+" kHz",sr,256,8,typical});
+    // Value edits while playing (B44): an oscillator knob republishes the
+    // module snapshot; a route amount republishes the modulation state.
+    m.push_back({"knob drag: osc LEVEL, typical",48000,256,8,typical,[](OrigamiAudioProcessor& p,std::size_t b){
+        const auto id=firstOscillator(p); auto st=p.getUiOscillatorState(id);
+        st.level=0.5f+0.25f*std::sin(0.05f*float(b)); p.setUiOscillatorState(id,st); }});
+    m.push_back({"knob drag: route amount, typical",48000,256,8,typical,[](OrigamiAudioProcessor& p,std::size_t b){
+        auto mod=p.getUiInstrumentState().modulation;
+        for(auto& r:mod.routes) if(r.id) { r.amount=0.2f+0.1f*std::sin(0.05f*float(b)); break; }
+        p.setUiModulationState(mod); }});
     m.push_back({"heavy everything, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){
         oscillators(p,4,4); chain(p,true); routes(p,32,true,0.5f); busFx(p,true); }});
     return m;
