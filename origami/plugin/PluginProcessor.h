@@ -201,14 +201,10 @@ private:
     std::atomic<int> pendingUiPitch_{-1},pendingUiMod_{-1};
     mct::origami::OrigamiEngine engine_;
 
-    // Wavetable editor publication is non-blocking with respect to processBlock.
-    // The UI publishes a complete immutable table generation; the audio thread
-    // consumes it only at the next host-block boundary, before rendering.
-    struct PendingOscillatorWavetable {
-        mct::origami::OscillatorModuleId id=0;
-        mct::origami::dsp::Wavetable table{};
-    };
-    mct::origami::LatestStateMailbox<PendingOscillatorWavetable> wavetableMailbox_;
+    // Wavetable editor publication is non-blocking with respect to processBlock:
+    // OrigamiEngine::publishWavetableForOscillator (validated and allocated on
+    // the UI thread, swapped in by the audio thread at the next host-block
+    // boundary, the replaced table freed back on the UI thread).
 
     // Deep Audit P03: host/UI model state is canonical outside the renderer.
     // getStateInformation() serializes this snapshot without interrogating or

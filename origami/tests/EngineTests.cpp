@@ -23,15 +23,15 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
-namespace { std::atomic<bool> guardAllocations {false}; std::atomic<unsigned> allocations {0}; }
+namespace { std::atomic<bool> guardAllocations {false}; std::atomic<unsigned> allocations {0},frees {0}; }
 #ifndef ORIGAMI_SANITIZED
 // ASan owns allocation interception; count realtime allocations in normal builds.
 void* operator new(std::size_t size) { if(guardAllocations.load()) ++allocations; if(void* p=std::malloc(size?size:1)) return p; throw std::bad_alloc(); }
 void* operator new[](std::size_t size) { return ::operator new(size); }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+void operator delete(void* p) noexcept { if(p && guardAllocations.load()) ++frees; std::free(p); }
+void operator delete[](void* p) noexcept { ::operator delete(p); }
+void operator delete(void* p, std::size_t) noexcept { ::operator delete(p); }
+void operator delete[](void* p, std::size_t) noexcept { ::operator delete(p); }
 #endif
 using namespace mct::origami;
 namespace {
@@ -854,6 +854,91 @@ void performanceSourceCurveAudit() {
           "50 percent bipolar LFO depth reaches oscillator level full scale");
 }
 
+
+// mct-origami-dsp-performance-stereo-chain: editor wavetable commits while
+// voices play. The audio thread adopts by swap: it never allocates or frees
+// (the old mailbox copied the table and freed the previous one in the
+// callback), the result equals an exclusive install, back-to-back commits to
+// two oscillators are both kept, and removing a module whose table is live
+// frees nothing under the audio thread.
+void wavetableHandoffAudit() {
+    const auto authored=[](float gain) {
+        auto table=dsp::Wavetable::builtIns();
+        for(auto& frame:table.frames) for(auto& band:frame.bands) for(auto& v:band.samples) v*=gain;
+        return table;
+    };
+    // Preallocated output: the guarded sections measure the engine only.
+    const auto play=[](OrigamiEngine& e,std::vector<float>& out) {
+        for(std::size_t i=0;i<out.size();i+=256) { float* ptr=out.data()+i; check(e.process(&ptr,1,std::min<std::size_t>(256,out.size()-i)),"handoff render block"); }
+    };
+    std::vector<float> adopted(1024),expected(1024),scratch(1024);
+    auto referenceOwner=std::make_unique<OrigamiEngine>(),actualOwner=std::make_unique<OrigamiEngine>();
+    auto& reference=*referenceOwner;auto& actual=*actualOwner;
+    prepare(reference);prepare(actual);
+    const auto second=actual.addOscillatorModule();
+    check(second!=0 && second==reference.addOscillatorModule(),"second oscillator for the handoff audit");
+    for(auto* e:{&reference,&actual}) {
+        for(int note:{48,55,60,67}) check(e->noteOn(note,.8f),"handoff audit notes");
+        render(*e,512,256);
+    }
+    // Two commits before one callback: both oscillators must receive theirs.
+    check(actual.publishWavetableForOscillator(1,authored(-.9f)),"OSC 1 table publishes");
+    check(actual.publishWavetableForOscillator(second,authored(.5f)),"OSC 2 table publishes");
+    check(!actual.publishWavetableForOscillator(99,authored(1.f)),"unknown module rejected before publication");
+    auto broken=authored(1.f);broken.frames[0].bands[0].samples[3]=std::numeric_limits<float>::quiet_NaN();
+    check(!actual.publishWavetableForOscillator(1,std::move(broken)),"invalid table rejected before publication");
+    check(reference.installWavetableForOscillator(1,authored(-.9f)) &&
+          reference.installWavetableForOscillator(second,authored(.5f)),"exclusive reference installs");
+    check(actual.wavetableHandoffPending(),"tables wait for the callback boundary");
+#ifndef ORIGAMI_SANITIZED
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+#endif
+    play(actual,adopted);
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(allocations.load()==0 && frees.load()==0,"adopting editor tables allocates and frees nothing in the callback");
+#endif
+    check(!actual.wavetableHandoffPending(),"both tables adopted at the boundary");
+    play(reference,expected);
+    bool same=adopted.size()==expected.size();
+    for(std::size_t i=0;same && i<adopted.size();++i) same=adopted[i]==expected[i];
+    check(same,"published tables render exactly like an exclusive install (both oscillators)");
+    // Replace a live table, then remove the module whose table is playing.
+    check(actual.publishWavetableForOscillator(second,authored(.25f)),"replacement publishes");
+#ifndef ORIGAMI_SANITIZED
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+#endif
+    play(actual,scratch);
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(allocations.load()==0 && frees.load()==0,"replacing a live table frees nothing in the callback");
+    frees.store(0);guardAllocations.store(true);
+#endif
+    actual.collectRetiredWavetables(); // non-audio thread: the replaced tables are freed here
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(frees.load()>0,"replaced tables are freed by the non-audio collector");
+#endif
+    check(actual.removeOscillatorModule(second),"remove the module with a live table");
+#ifndef ORIGAMI_SANITIZED
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+#endif
+    play(actual,scratch);
+    const auto& afterRemove=scratch;
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(allocations.load()==0 && frees.load()==0,"removing a module with a live table frees nothing in the callback");
+#endif
+    check(std::all_of(afterRemove.begin(),afterRemove.end(),[](float v){return std::isfinite(v);}),"playback stays finite after removal");
+    // The released slot is reused by the next commit (its stale storage is
+    // swapped out and freed off-thread).
+    const auto third=actual.addOscillatorModule();
+    check(actual.publishWavetableForOscillator(third,authored(.7f)),"new module table publishes");
+    render(actual,256,256);
+    check(!actual.wavetableHandoffPending(),"released slot accepts a new table");
+    actual.collectRetiredWavetables();
+}
+
 int main() {
     // OrigamiEngine/Voice are intentionally large fixed-storage realtime
     // objects. Keep every engine-heavy regression off the process stack so the
@@ -876,6 +961,7 @@ int main() {
         std::cerr<<"spectral playback\n";spectralCachePlayback();
         std::cerr<<"spectral concurrent eviction\n";spectralCacheConcurrentEviction();
         std::cerr<<"realtime thread policy\n";realtimeThreadPolicyAudit();
+        std::cerr<<"wavetable handoff\n";wavetableHandoffAudit();
         std::cerr<<"registry and patches\n";registryAndPatches();
         std::cerr<<"envelope timing\n";envelopeTiming();
         std::cerr<<"pitch and blocks\n";pitchAndBlocks();

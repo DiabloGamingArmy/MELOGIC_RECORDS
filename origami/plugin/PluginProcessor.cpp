@@ -498,13 +498,8 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     continuityCallbacks_.fetch_add(1,std::memory_order_relaxed);
     const auto callbackStartTicks=juce::Time::getHighResolutionTicks();
 
-    // Wavetable editor commits cross into DSP only at a callback boundary.
-    // Moving the consumed generation here transfers vector ownership without
-    // a JUCE callback lock and never mutates a table while voices render it.
-    PendingOscillatorWavetable pendingWavetable;
-    if(wavetableMailbox_.consume(pendingWavetable) && pendingWavetable.id!=0)
-        engine_.installWavetableForOscillator(
-            pendingWavetable.id,std::move(pendingWavetable.table));
+    // Wavetable editor commits cross into DSP inside the engine's block
+    // boundary (beginHostBlock): a pointer swap, no copy, no free here.
     juce::ScopedNoDenormals noDenormals;
     jassert(buffer.getNumChannels() >= 2);
     const int total = buffer.getNumSamples();
@@ -877,6 +872,9 @@ void OrigamiAudioProcessor::setUiVisualizationMask(std::uint32_t mask) noexcept 
 mct::origami::RuntimeVisualizationSnapshot
 OrigamiAudioProcessor::getUiRuntimeVisualizationSnapshot() noexcept {
     visualizationMailbox_.consume(uiVisualizationSnapshot_);
+    // The editor polls this every frame: free wavetables the audio thread
+    // replaced (never freed on the audio thread).
+    engine_.collectRetiredWavetables();
     return uiVisualizationSnapshot_;
 }
 bool OrigamiAudioProcessor::setUiMacro(unsigned index,float value) noexcept {
@@ -1010,13 +1008,13 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
 }
 bool OrigamiAudioProcessor::installUiOscillatorWavetable(
     mct::origami::OscillatorModuleId id,mct::origami::dsp::Wavetable table) {
-    if(id==0 || !table.valid()) return false;
-    // Publish a complete table generation without ever blocking processBlock.
-    // The audio thread consumes it at the next host-block boundary.
-    PendingOscillatorWavetable pending;
-    pending.id=id;
-    pending.table=std::move(table);
-    wavetableMailbox_.publish(pending);
+    if(id==0) return false;
+    // Serialized with the other UI-side module edits (never with processBlock).
+    const juce::ScopedLock lock(stateLock_);
+    // Publish a complete table generation without ever blocking processBlock:
+    // validated (one full scan) and stamped here, adopted by the audio thread
+    // at the next host-block boundary.
+    if(!engine_.publishWavetableForOscillator(id,std::move(table))) return false;
     // The oscillator viewport must re-read the committed table; rejected
     // tables above return before advancing the oscillator revision.
     uiOscillatorRevision_.fetch_add(1,std::memory_order_release);

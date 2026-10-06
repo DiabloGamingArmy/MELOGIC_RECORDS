@@ -46,6 +46,19 @@ public:
     // Install an editor-authored table for one oscillator module. Caller must
     // serialize this non-realtime mutation against processBlock.
     bool installWavetableForOscillator(OscillatorModuleId id,dsp::Wavetable table);
+    // mct-origami-dsp-performance-stereo-chain: realtime-safe editor table
+    // handoff while processing runs. Any non-audio thread may publish (it
+    // validates, stamps and allocates). The audio thread adopts every published
+    // table at the next host-block boundary by SWAPPING it into the module's
+    // slot: nothing is allocated, copied or freed on the audio thread. The
+    // replaced table travels back in the same holder and is freed by the next
+    // non-audio call (publish / collect) or the destructor.
+    bool publishWavetableForOscillator(OscillatorModuleId id,dsp::Wavetable table);
+    void collectRetiredWavetables() noexcept;
+    bool wavetableHandoffPending() const noexcept { return wavetableIncoming_.load(std::memory_order_acquire)!=nullptr; }
+    ~OrigamiEngine();
+    OrigamiEngine(const OrigamiEngine&)=delete;
+    OrigamiEngine& operator=(const OrigamiEngine&)=delete;
     bool applyPatchState(const ParameterValues& values) noexcept; // exclusive, resets voices
     InstrumentState instrumentState() const noexcept; // serialize writers externally
     bool restoreInstrumentState(const InstrumentState&) noexcept; // exclusive, transactional
@@ -190,10 +203,23 @@ private:
     BusSlotMap hostBusSlots_{};
     std::array<std::size_t, voiceCount> tailRemaining_{};
     dsp::Wavetable wavetable_;
+    // id != 0 <=> `table` is a validated table owned by that module. A removed
+    // module's slot is released by the audio thread (id = 0) with its storage
+    // kept: the next adopted table swaps it out to be freed off-thread.
     struct OscillatorWavetableSlot {
         OscillatorModuleId id=0;
         dsp::Wavetable table;
     };
+    struct WavetableHandoff {
+        OscillatorModuleId id=0;
+        dsp::Wavetable table;
+        WavetableHandoff* next=nullptr;
+    };
+    // Two lock-free stacks: the producer pushes / takes all, the audio thread
+    // takes all / pushes. Push-only + take-all has no ABA hazard.
+    std::atomic<WavetableHandoff*> wavetableIncoming_{nullptr},wavetableRetired_{nullptr};
+    bool adoptWavetableHandoffs(WavetableHandoff* list) noexcept;
+    OscillatorWavetableSlot* wavetableSlotFor(OscillatorModuleId id) noexcept;
     std::array<OscillatorWavetableSlot,OscillatorModuleBank::capacity> oscillatorWavetables_{};
     std::array<const dsp::Wavetable*,OscillatorModuleBank::capacity> hostWavetables_{};
     void rebuildHostWavetables() noexcept;

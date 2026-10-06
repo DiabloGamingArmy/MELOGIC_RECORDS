@@ -17,6 +17,7 @@
 #include "core/dsp/Filter.h"
 #include "core/dsp/Envelope.h"
 #include <array>
+#include <type_traits>
 #include <atomic>
 #include <algorithm>
 #include <cmath>
@@ -613,6 +614,10 @@ private:
 };
 
 template<class T> class LatestStateMailbox {
+    // mct-origami-dsp-performance-stereo-chain: consume() copies on the audio
+    // thread, so a payload must never own heap storage (a vector / string copy
+    // allocates there; the replaced value would be freed there).
+    static_assert(std::is_trivially_copyable_v<T>,"LatestStateMailbox payloads cross to the audio thread by copy: no heap-owning types");
 public:
     void publish(const T& state) noexcept {
         slots_[back_]=state;
