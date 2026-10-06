@@ -25,12 +25,18 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
-namespace { std::atomic<bool> guardAllocations {false}; std::atomic<unsigned> allocations {0},frees {0}; }
+namespace {
+std::atomic<bool> guardAllocations {false}; std::atomic<unsigned> allocations {0},frees {0};
+// Per-thread accounting for concurrent tests: only a thread that set this
+// flag (the simulated audio thread) is counted.
+thread_local bool audioThread=false;
+std::atomic<unsigned> audioAllocations {0},audioFrees {0};
+}
 #ifndef ORIGAMI_SANITIZED
 // ASan owns allocation interception; count realtime allocations in normal builds.
-void* operator new(std::size_t size) { if(guardAllocations.load()) ++allocations; if(void* p=std::malloc(size?size:1)) return p; throw std::bad_alloc(); }
+void* operator new(std::size_t size) { if(guardAllocations.load()) ++allocations; if(audioThread) ++audioAllocations; if(void* p=std::malloc(size?size:1)) return p; throw std::bad_alloc(); }
 void* operator new[](std::size_t size) { return ::operator new(size); }
-void operator delete(void* p) noexcept { if(p && guardAllocations.load()) ++frees; std::free(p); }
+void operator delete(void* p) noexcept { if(p && guardAllocations.load()) ++frees; if(p && audioThread) ++audioFrees; std::free(p); }
 void operator delete[](void* p) noexcept { ::operator delete(p); }
 void operator delete(void* p, std::size_t) noexcept { ::operator delete(p); }
 void operator delete[](void* p, std::size_t) noexcept { ::operator delete(p); }
@@ -899,6 +905,60 @@ void performanceSourceCurveAudit() {
 }
 
 
+// mct-origami-dsp-performance-stereo-chain: the handoff under real
+// concurrency. One thread renders continuously (the audio thread) while the
+// main thread publishes tables to two oscillators, collects replaced ones,
+// and removes / re-adds a module whose table is live. The audio thread must
+// never allocate or free, playback must stay finite, and every holder must
+// be reclaimed (the engine destructor frees anything still in flight).
+void wavetableHandoffConcurrencyAudit() {
+    const auto authored=[](float gain) {
+        auto table=dsp::Wavetable::builtIns();
+        for(auto& frame:table.frames) for(auto& band:frame.bands) for(auto& v:band.samples) v*=gain;
+        return table;
+    };
+    std::vector<dsp::Wavetable> tables; for(float g:{.9f,-.7f,.5f,-.3f}) tables.push_back(authored(g));
+    auto owner=std::make_unique<OrigamiEngine>(); auto& engine=*owner;
+    prepare(engine,48000,2);
+    const auto second=engine.addOscillatorModule();
+    for(int note:{45,52,57,64}) check(engine.noteOn(note,.8f),"concurrency audit notes");
+    std::atomic<bool> stop{false},finite{true};
+    std::atomic<unsigned> blocks{0};
+    std::thread audio([&] {
+        std::vector<float> l(256),r(256); float* io[2]{l.data(),r.data()};
+        audioThread=true;
+        while(!stop.load(std::memory_order_acquire)) {
+            engine.process(io,2,256);
+            for(int i=0;i<256;++i) if(!std::isfinite(l[std::size_t(i)]) || !std::isfinite(r[std::size_t(i)])) finite.store(false);
+            blocks.fetch_add(1,std::memory_order_relaxed);
+        }
+        audioThread=false;
+    });
+    // Same-thread rule of the plugin: UI-side engine edits are serialized
+    // (stateLock_), never with process().
+    OscillatorModuleId third=engine.addOscillatorModule();
+    unsigned published=0;
+    for(int round=0;round<240;++round) {
+        auto a=tables[std::size_t(round)%tables.size()],b=tables[std::size_t(round+1)%tables.size()];
+        published+=engine.publishWavetableForOscillator(second,std::move(a)) ? 1u : 0u;
+        if(third) published+=engine.publishWavetableForOscillator(third,std::move(b)) ? 1u : 0u;
+        if(round%16==7 && third) { engine.removeOscillatorModule(third); third=0; }
+        else if(round%16==11 && !third) third=engine.addOscillatorModule();
+        engine.collectRetiredWavetables();
+        const auto target=blocks.load()+1;
+        while(blocks.load()<target) std::this_thread::yield(); // let at least one callback adopt
+    }
+    stop.store(true,std::memory_order_release);
+    audio.join();
+    engine.collectRetiredWavetables();
+#ifndef ORIGAMI_SANITIZED
+    check(audioAllocations.load()==0 && audioFrees.load()==0,"concurrent table commits / module removal: the audio thread never allocates or frees");
+#endif
+    check(finite.load(),"concurrent table commits keep playback finite");
+    check(published>240,"tables were published throughout");
+    check(blocks.load()>=240,"the audio thread rendered throughout");
+}
+
 // mct-origami-dsp-performance-stereo-chain: every optimised path renders the
 // pre-optimisation output bit for bit (hashes captured on 378ad97), at block
 // sizes 32 / 256 / 1000, deterministically.
@@ -1024,6 +1084,7 @@ int main() {
         std::cerr<<"spectral concurrent eviction\n";spectralCacheConcurrentEviction();
         std::cerr<<"realtime thread policy\n";realtimeThreadPolicyAudit();
         std::cerr<<"wavetable handoff\n";wavetableHandoffAudit();
+        std::cerr<<"wavetable handoff concurrency\n";wavetableHandoffConcurrencyAudit();
         std::cerr<<"optimised-path golden renders\n";optimizedPathGoldenAudit();
         std::cerr<<"registry and patches\n";registryAndPatches();
         std::cerr<<"envelope timing\n";envelopeTiming();
