@@ -291,6 +291,10 @@ void OrigamiLookAndFeel::drawLinearSlider(juce::Graphics& g,int x,int y,int widt
     g.setColour(Palette::inset());g.fillRoundedRectangle(b,2.5f);
     g.setColour(Palette::borderSoft());g.drawRoundedRectangle(b,2.5f,1.0f);
     if(slider.getName().startsWith("OSC TUNING")) return;
+    // Number-only fields (BEND UP / DOWN): the value text sits on this bar, so
+    // no marker or centre line may cross it (with a signed -48..+48 range the
+    // marker sat in the middle of the digits).
+    if(slider.getProperties()["mct.origami.numberOnly"]) return;
     if(slider.getName()=="ENV GRID BPM") return;
     if(style==juce::Slider::LinearBarVertical || style==juce::Slider::LinearVertical) {
         const float lo=juce::jmin(minSliderPos,maxSliderPos),hi=juce::jmax(minSliderPos,maxSliderPos);

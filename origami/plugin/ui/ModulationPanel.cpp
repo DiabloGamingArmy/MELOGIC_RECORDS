@@ -2573,6 +2573,7 @@ public:
     // + one row of route rings); the reclaimed height goes to the knob and
     // its value readout.
     static constexpr int assignHeight=38;
+    static constexpr int removeWidth=22; // the remove (X) target at the right of ASSIGN
     Card(MacroPanel& owner,std::size_t id)
         // The SYNTH modulator row (same "MOD SOURCE TAB" look: title on top, rings below).
         :owner_(owner),id_(id),row_(macroSource(id),"ASSIGN","MOD SOURCE TAB MACRO "+juce::String(int(id))) {
@@ -2654,16 +2655,20 @@ public:
         // Padding lives inside the cell; the cell itself draws no frame.
         auto b=getLocalBounds().reduced(cellPadding,cellPadding-2);
         auto header=b.removeFromTop(20);
-        remove_.setBounds(header.removeFromRight(18).withSizeKeepingCentre(18,18));
-        title_.setBounds(header.withTrimmedRight(2));
+        // mct-origami-manual-qa-ui-wavetable-fixes: the title owns the whole
+        // header (long custom names); remove (X) sits at the right end of the
+        // ASSIGN strip, inside its existing height.
+        title_.setBounds(header);
+        auto strip=getLocalBounds().removeFromBottom(assignHeight).reduced(1,0).withTrimmedBottom(1);
+        remove_.setBounds(strip.removeFromRight(removeWidth).withSizeKeepingCentre(removeWidth,std::min(strip.getHeight(),24)));
         if(confirming_) {
             // Narrow card: full-width buttons, stacked (never truncated labels).
             confirm_.setBounds(b.removeFromBottom(24).reduced(1,1));
             cancel_.setBounds(b.removeFromBottom(24).reduced(1,1));
             return;
         }
-        // ASSIGN spans the cell's full width (a hairline separates it).
-        row_.setBounds(getLocalBounds().removeFromBottom(assignHeight).reduced(1,0).withTrimmedBottom(1));
+        // ASSIGN spans the cell's width up to the remove button (a hairline separates it).
+        row_.setBounds(strip);
         b.setBottom(row_.getY()-2);
         valueArea_=b.removeFromBottom(14);
         knob_.setBounds(b.withSizeKeepingCentre(std::min(62,b.getWidth()-8),std::min(60,b.getHeight())));
