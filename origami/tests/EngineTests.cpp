@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -460,6 +461,48 @@ void audioRateFastMathAudit() {
                 dsp::fastPow01(x,exponent)-std::pow(x,exponent)));
     }
     check(powWorst<2.0e-6,"fast audio curve-power accuracy");
+
+    // mct-origami-dsp-performance-stereo-chain: the bit-level exp2 / log2
+    // splits must reproduce the previous std::ldexp / std::frexp versions
+    // bit for bit (a sound-preserving optimisation, not a new approximation).
+    {
+        const auto referenceExp2=[](double x) {
+            if(!std::isfinite(x)) return 1.0;
+            x=std::clamp(x,-126.0,126.0);
+            const int whole=static_cast<int>(std::floor(x));
+            const double y=(x-static_cast<double>(whole))*0.69314718055994530942;
+            const double p=1.0+y*(1.0+y*(0.5+y*(1.0/6.0+y*(1.0/24.0+
+                y*(1.0/120.0+y*(1.0/720.0+y*(1.0/5040.0+y*(1.0/40320.0))))))));
+            return std::ldexp(p,whole);
+        };
+        const auto referenceLog2=[](double x) {
+            if(!(x>0.0) || !std::isfinite(x)) return -126.0;
+            int exponent=0; double mantissa=std::frexp(x,&exponent);
+            mantissa*=2.0; --exponent;
+            const double z=(mantissa-1.0)/(mantissa+1.0),z2=z*z;
+            double term=z,sum=term;
+            term*=z2;sum+=term/3.0; term*=z2;sum+=term/5.0; term*=z2;sum+=term/7.0;
+            term*=z2;sum+=term/9.0; term*=z2;sum+=term/11.0; term*=z2;sum+=term/13.0;
+            return static_cast<double>(exponent)+2.0*sum*1.4426950408889634074;
+        };
+        const auto same=[](double a,double b) { return std::memcmp(&a,&b,sizeof a)==0; };
+        std::uint64_t state=0x9e3779b97f4a7c15ull;
+        const auto next=[&] { state^=state<<13; state^=state>>7; state^=state<<17; return state; };
+        bool exp2Same=true,log2Same=true;
+        for(int i=-260000;i<=260000;++i) exp2Same=exp2Same && same(dsp::fastExp2Audio(i/2000.0),referenceExp2(i/2000.0));
+        for(int i=0;i<200000;++i) {
+            const double r=static_cast<double>(next()>>11)*0x1p-53;
+            exp2Same=exp2Same && same(dsp::fastExp2Audio(-140.0+280.0*r),referenceExp2(-140.0+280.0*r));
+            std::uint64_t bits=next(); double x; std::memcpy(&x,&bits,sizeof x); x=std::abs(x); // every exponent, subnormals included
+            log2Same=log2Same && same(dsp::fastLog2Positive(x),referenceLog2(x));
+            log2Same=log2Same && same(dsp::fastLog2Positive(r),referenceLog2(r));
+        }
+        for(double x:{std::numeric_limits<double>::denorm_min(),std::numeric_limits<double>::min(),1.0,0.5,
+                      std::numeric_limits<double>::max(),0.0,-1.0,std::numeric_limits<double>::infinity()})
+            log2Same=log2Same && same(dsp::fastLog2Positive(x),referenceLog2(x));
+        check(exp2Same,"bit-level exp2 split is bit-identical to the ldexp version");
+        check(log2Same,"bit-level log2 split is bit-identical to the frexp version (normal and subnormal)");
+    }
 
     double foldWorst=0.0;
     for(int i=-8000;i<=8000;++i) {

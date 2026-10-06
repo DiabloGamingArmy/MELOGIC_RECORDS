@@ -497,13 +497,17 @@ const char* oscProcessCategory(OscProcessType type) noexcept {
     return "";
 }
 
+// The largest double below 1 (== std::nextafter(1.0, 0.0)) as a constant: the
+// libm call was not folded and ran once per process stage per read.
+constexpr double belowOne=0x1.fffffffffffffp-1;
+static_assert(belowOne<1.0 && 1.0-belowOne==0x1p-53,"largest double below one");
 double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) noexcept {
-    const auto wrap01=[](double x) noexcept { x-=std::floor(x); return std::clamp(x,0.0,std::nextafter(1.0,0.0)); };
+    const auto wrap01=[](double x) noexcept { x-=std::floor(x); return std::clamp(x,0.0,belowOne); };
     const auto mix=[](double a,double b,double t) noexcept { return a+(b-a)*t; };
     const auto triangle=[](double x) noexcept { x-=std::floor(x/2.0)*2.0; return 1.0-std::abs(x-1.0); };
     const auto quantize=[](double x,int steps) noexcept { return std::floor(x*steps)/static_cast<double>(steps); };
 
-    const double p=std::clamp(phase,0.0,std::nextafter(1.0,0.0));
+    const double p=std::clamp(phase,0.0,belowOne);
     const double amount=std::clamp(static_cast<double>(rawAmount),
                                    static_cast<double>(oscProcessAmountMinimum(type)),1.0);
     if(std::abs(amount)<=std::numeric_limits<double>::epsilon() || type==OscProcessType::Off)
@@ -529,7 +533,7 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             const double shaped=p<0.5
                 ? 0.5*fastPow01(p*2.0,exponent)
                 : 1.0-0.5*fastPow01((1.0-p)*2.0,exponent);
-            return std::clamp(shaped,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(shaped,0.0,belowOne);
         }
         case OscProcessType::Sync: {
             const double cycles=1.0+amount*7.0;
@@ -538,7 +542,7 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
         }
         case OscProcessType::Mirror: {
             const double mirrored=1.0-std::abs(p*2.0-1.0);
-            return std::clamp(p+(mirrored-p)*amount,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(p+(mirrored-p)*amount,0.0,belowOne);
         }
         case OscProcessType::Asym: {
             // Bipolar: negative moves the split left; positive moves it right.
@@ -548,41 +552,41 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
         }
         case OscProcessType::SCurve: {
             const double s=p*p*(3.0-2.0*p);
-            return std::clamp(mix(p,s,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,s,amount),0.0,belowOne);
         }
         case OscProcessType::Pinch: {
             const double x=p*2.0-1.0;
             const double y=std::copysign(fastPow01(std::abs(x),1.0+amount*5.0),x);
-            return std::clamp(y*0.5+0.5,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(y*0.5+0.5,0.0,belowOne);
         }
         case OscProcessType::Expand: {
             const double x=p*2.0-1.0;
             const double y=std::copysign(fastPow01(std::abs(x),1.0/(1.0+amount*4.0)),x);
-            return std::clamp(y*0.5+0.5,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(y*0.5+0.5,0.0,belowOne);
         }
         case OscProcessType::CenterPull:
-            return std::clamp(0.5+(p-0.5)*(1.0-amount*0.88),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(0.5+(p-0.5)*(1.0-amount*0.88),0.0,belowOne);
         case OscProcessType::EdgePull: {
             const double k=1.0-amount*0.88;
-            return std::clamp(p<0.5 ? p*k : 1.0-(1.0-p)*k,0.0,std::nextafter(1.0,0.0));
+            return std::clamp(p<0.5 ? p*k : 1.0-(1.0-p)*k,0.0,belowOne);
         }
         case OscProcessType::Sync2:return wrap01(p*(1.0+amount));
         case OscProcessType::Sync3:return wrap01(p*(1.0+amount*2.0));
         case OscProcessType::Sync4:return wrap01(p*(1.0+amount*3.0));
         case OscProcessType::Sync16:return wrap01(p*(1.0+amount*15.0));
-        case OscProcessType::Fold:return std::clamp(triangle(p*(1.0+amount*5.0)),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Fold:return std::clamp(triangle(p*(1.0+amount*5.0)),0.0,belowOne);
         case OscProcessType::SoftFold: {
             const double f=triangle(p*(1.0+amount*4.0));
-            return std::clamp(0.5-0.5*std::cos(f*pi),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(0.5-0.5*std::cos(f*pi),0.0,belowOne);
         }
         case OscProcessType::ReflectLeft:
-            return std::clamp(mix(p,p<0.5?p:1.0-p,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,p<0.5?p:1.0-p,amount),0.0,belowOne);
         case OscProcessType::ReflectRight:
-            return std::clamp(mix(p,p<0.5?1.0-p:p,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,p<0.5?1.0-p:p,amount),0.0,belowOne);
         case OscProcessType::AlternateReflect: {
             const int s=std::min(3,static_cast<int>(p*4.0)); const double local=p*4.0-s;
             const double target=(s+(s%2?1.0-local:local))/4.0;
-            return std::clamp(mix(p,target,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,target,amount),0.0,belowOne);
         }
         case OscProcessType::PhaseShift:
             // +/- 180 degrees; 0 is the physical top/center of the amount knob.
@@ -593,22 +597,22 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             return wrap01(p+std::sin(4.0*pi*p)*amount*0.10);
         case OscProcessType::Twist:
             return wrap01(p+(std::sin(2.0*pi*p)*0.10+std::sin(6.0*pi*p)*0.055)*amount);
-        case OscProcessType::ZigZag:return std::clamp(mix(p,triangle(p*3.0),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::ZigZag:return std::clamp(mix(p,triangle(p*3.0),amount),0.0,belowOne);
         case OscProcessType::Staircase: {
             const int steps=2+static_cast<int>(std::round(amount*14.0));
-            return std::clamp(mix(p,quantize(p,steps),amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,quantize(p,steps),amount),0.0,belowOne);
         }
-        case OscProcessType::Reverse:return std::clamp(mix(p,1.0-p,amount),0.0,std::nextafter(1.0,0.0));
-        case OscProcessType::Quantize4:return std::clamp(mix(p,quantize(p,4),amount),0.0,std::nextafter(1.0,0.0));
-        case OscProcessType::Quantize8:return std::clamp(mix(p,quantize(p,8),amount),0.0,std::nextafter(1.0,0.0));
-        case OscProcessType::Quantize16:return std::clamp(mix(p,quantize(p,16),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Reverse:return std::clamp(mix(p,1.0-p,amount),0.0,belowOne);
+        case OscProcessType::Quantize4:return std::clamp(mix(p,quantize(p,4),amount),0.0,belowOne);
+        case OscProcessType::Quantize8:return std::clamp(mix(p,quantize(p,8),amount),0.0,belowOne);
+        case OscProcessType::Quantize16:return std::clamp(mix(p,quantize(p,16),amount),0.0,belowOne);
         case OscProcessType::Scramble2:return wrap01(mix(p,wrap01(p+0.5),amount));
         case OscProcessType::Scramble4: {
             static constexpr int perm[4]={2,0,3,1};
             const int s=std::min(3,static_cast<int>(p*4.0)); const double local=p*4.0-s;
-            return std::clamp(mix(p,(perm[s]+local)/4.0,amount),0.0,std::nextafter(1.0,0.0));
+            return std::clamp(mix(p,(perm[s]+local)/4.0,amount),0.0,belowOne);
         }
-        case OscProcessType::Chaos:return std::clamp(mix(p,4.0*p*(1.0-p),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Chaos:return std::clamp(mix(p,4.0*p*(1.0-p),amount),0.0,belowOne);
         case OscProcessType::Window: {
             // Positive expands outward; negative compresses inward.
             const double scale=amount>=0.0
@@ -785,9 +789,15 @@ float WavetableOscillator::readAt(const Wavetable& table,float position,const Os
         if(!spectral) for(std::size_t i=0;i<count;++i)
             readPhase=processOscillatorPhase(readPhase,plan.stages[i].type,plan.stages[i].amount);
     }
-    const double tablePosition=readPhase*static_cast<double>(table.tableLength);
-    const auto index=static_cast<std::size_t>(tablePosition)%table.tableLength,nextIndex=(index+1)%table.tableLength;
-    const float fraction=static_cast<float>(tablePosition-static_cast<double>(static_cast<std::size_t>(tablePosition)));
+    const std::size_t length=table.tableLength;
+    const double tablePosition=readPhase*static_cast<double>(length);
+    const auto whole=static_cast<std::size_t>(tablePosition);
+    // Power-of-two tables (every built-in and spectral table) wrap with a
+    // mask: the same indices without two integer divisions per read.
+    const bool powerOfTwo=(length&(length-1))==0;
+    const auto index=powerOfTwo ? whole&(length-1) : whole%length;
+    const auto nextIndex=powerOfTwo ? (index+1)&(length-1) : (index+1)%length;
+    const float fraction=static_cast<float>(tablePosition-static_cast<double>(whole));
     auto read=[&](std::size_t frame,std::size_t hintIndex){
         if(spectral)return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,hints[hintIndex]);
         const auto& samples=table.frames[frame].bands[bandIndex].samples;

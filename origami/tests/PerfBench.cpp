@@ -173,6 +173,14 @@ Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
         if(dsp::spectralCompilerStats().fallbackReads==before) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+    // The warm-up's first-touch spectral misses depend on worker timing and
+    // FX tails (reverb / delay) would carry them into the measurement. Restart
+    // the processor (same tables, so the global spectral cache stays warm) and
+    // replay the identical note-on: the measured output is then deterministic
+    // whenever the measurement itself has no misses.
+    p.releaseResources();
+    p.prepareToPlay(s.sampleRate,s.block);
+    for(int i=0;i<warmBlocks;++i) { audio.clear(); p.processBlock(audio,i==0 ? midi : none); }
     Result r; r.budgetUs=1.0e6*double(s.block)/s.sampleRate;
     const auto blocks=static_cast<std::size_t>(std::max(200.0,measureSeconds*s.sampleRate/s.block));
     std::vector<double> times; times.reserve(blocks);

@@ -2,8 +2,20 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 
 namespace mct::origami::dsp {
+
+// mct-origami-dsp-performance-stereo-chain: exact bit-level replacements for
+// the libm calls the helpers below made per sample (std::ldexp / std::frexp
+// are never inlined). Results are bit-identical: a multiply by an exact power
+// of two is exact while the result stays normal, and the frexp split of a
+// normal double is a field extraction.
+inline double exactPow2(int exponent) noexcept { // exponent in [-1022, 1023]
+    const std::uint64_t bits=static_cast<std::uint64_t>(exponent+1023)<<52;
+    double value; std::memcpy(&value,&bits,sizeof value); return value;
+}
 
 inline double fastExp2Audio(double x) noexcept {
     if(!std::isfinite(x)) return 1.0;
@@ -16,13 +28,24 @@ inline double fastExp2Audio(double x) noexcept {
     // compared with oscillator/filter interpolation error.
     const double p=1.0+y*(1.0+y*(0.5+y*(1.0/6.0+y*(1.0/24.0+
         y*(1.0/120.0+y*(1.0/720.0+y*(1.0/5040.0+y*(1.0/40320.0))))))));
-    return std::ldexp(p,whole);
+    // p is in [1, 2) and |whole| <= 126: p * 2^whole is exact and normal, so
+    // this equals std::ldexp(p, whole) bit for bit.
+    return p*exactPow2(whole);
 }
 
 inline double fastLog2Positive(double x) noexcept {
     if(!(x>0.0) || !std::isfinite(x)) return -126.0;
     int exponent=0;
-    double mantissa=std::frexp(x,&exponent); // [0.5,1)
+    double mantissa;
+    std::uint64_t bits; std::memcpy(&bits,&x,sizeof bits);
+    const auto field=static_cast<int>((bits>>52)&0x7ffu);
+    if(field!=0) { // normal: exactly std::frexp's split
+        exponent=field-1022;
+        bits=(bits&0x000fffffffffffffull)|(std::uint64_t{1022}<<52);
+        std::memcpy(&mantissa,&bits,sizeof mantissa); // [0.5,1)
+    } else {
+        mantissa=std::frexp(x,&exponent); // subnormal input
+    }
     mantissa*=2.0;
     --exponent;
     // atanh-series log around 1. z is bounded to [0,1/3).
