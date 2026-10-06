@@ -547,8 +547,9 @@ void ContentLibrary::writeIndex() const {
 void ContentLibrary::loadIndex() {
     std::vector<ContentRecord> records;
     const auto file=base_.getChildFile("Index.json");
-    if(file.existsAsFile())
-        if(const auto* list=juce::JSON::parse(file.loadFileAsString()).getProperty("records",{}).getArray())
+    const auto parsed=file.existsAsFile() ? juce::JSON::parse(file.loadFileAsString()) : juce::var();
+    const auto recordsVar=parsed.getProperty("records",{});
+    if(const auto* list=recordsVar.getArray())
             for(const auto& v:*list) {
                 const auto type=v.getProperty("type",{}).toString()=="wavetable" ? ContentType::Wavetable : ContentType::Preset;
                 ContentRecord r;
