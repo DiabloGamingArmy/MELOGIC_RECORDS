@@ -3824,6 +3824,269 @@ void nodesMenuHierarchyAudit() {
     check(disabled && reason.contains("one sequencer"),"a second SEQUENCER stays disabled in the tree, with its reason");
 }
 
+// mct-origami-manual-qa-ui-wavetable-fixes: BEND fields, MAIN IN meters, macro X.
+void manualQaUiAudit() {
+    using namespace mct::origami;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+
+    // ---- 1 / 2: BEND UP / DOWN are number fields: nothing is drawn across the digits.
+    juce::Slider *up=nullptr,*down=nullptr;
+    walk(*editor,[&](juce::Component& c){
+        if(c.getName()=="Pitch bend up range") up=dynamic_cast<juce::Slider*>(&c);
+        if(c.getName()=="Pitch bend down range") down=dynamic_cast<juce::Slider*>(&c); });
+    check(up && down,"BEND UP / DOWN fields");
+    for(auto* s:{up,down}) {
+        for(double v:{48.0,12.0,2.0,0.0,-2.0,-12.0,-48.0}) {
+            juce::Image img(juce::Image::ARGB,s->getWidth(),s->getHeight(),true);
+            juce::Graphics g(img);
+            const float pos=float(s->getPositionOfValue(v));
+            s->getLookAndFeel().drawLinearSlider(g,0,0,s->getWidth(),s->getHeight(),pos,0.0f,float(s->getHeight()),s->getSliderStyle(),*s);
+            // Only the field's well (fill + border) may be painted: no marker, no centre line.
+            bool clean=true;
+            for(int y=3;y<img.getHeight()-3 && clean;++y) for(int x=3;x<img.getWidth()-3 && clean;++x)
+                clean=img.getPixelAt(x,y).getPixelARGB().getNativeARGB()==img.getPixelAt(img.getWidth()/2,img.getHeight()-4).getPixelARGB().getNativeARGB()
+                      || img.getPixelAt(x,y).getBrightness()<=ui::Palette::borderSoft().getBrightness()+0.01f;
+            check(clean,"BEND field: no marker or line crosses the value text (-48..+48)");
+        }
+    }
+    check(up->getTextFromValue(2.0)=="+2" && up->getTextFromValue(48.0)=="+48" && up->getTextFromValue(0.0)=="0" && up->getTextFromValue(-12.0)=="-12"
+          && down->getTextFromValue(-2.0)=="-2" && down->getTextFromValue(-48.0)=="-48" && down->getTextFromValue(12.0)=="+12","signed BEND labels");
+    check(std::abs(up->getValue()-2.0)<1e-9 && std::abs(down->getValue()+2.0)<1e-9,"defaults UP +2 / DOWN -2");
+
+    // ---- 3-8: MAIN IN meters follow the real signal entering the MAIN graph.
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi,none;
+    const auto block=[&](juce::MidiBuffer& m){ audio.clear(); p.processBlock(audio,m); m.clear(); };
+    p.consumeUiFxInputPeaks(mainBusId);
+    block(none);
+    auto in=p.consumeUiFxInputPeaks(mainBusId);
+    check(in.first==0.0f && in.second==0.0f,"silence: MAIN IN reads zero");
+    p.setUiParameter(ParameterId::OscPan,-1.0f); // hard left: an asymmetric stereo voice sum
+    midi.addEvent(juce::MidiMessage::noteOn(1,60,0.9f),0);
+    block(midi);
+    for(int i=0;i<4;++i) block(none);
+    in=p.consumeUiFxInputPeaks(mainBusId);
+    std::cerr<<"[qa] MAIN IN peaks hard-left: L "<<in.first<<" R "<<in.second<<"\n";
+    check(in.first>1.0e-3f,"MAIN IN L follows the left input");
+    check(in.first>in.second*2.0f,"asymmetric stereo input -> asymmetric meters");
+    p.setUiParameter(ParameterId::OscPan,1.0f);
+    for(int i=0;i<8;++i) block(none);
+    p.consumeUiFxInputPeaks(mainBusId); // drop the pan transition
+    for(int i=0;i<4;++i) block(none);
+    in=p.consumeUiFxInputPeaks(mainBusId);
+    std::cerr<<"[qa] MAIN IN peaks hard-right: L "<<in.first<<" R "<<in.second<<"\n";
+    check(in.second>1.0e-3f && in.second>in.first*2.0f,"MAIN IN R follows the right input");
+    // The meters measure exactly what the graph receives: the neutral graph is a
+    // pass-through, so the output peak equals the input peak.
+    block(none);
+    const auto inPeak=p.consumeUiFxInputPeaks(mainBusId);
+    check(std::abs(std::max(inPeak.first,inPeak.second)-audio.getMagnitude(0,256)-0.0f)<1.0e-6f || audio.getMagnitude(1,0,256)==std::max(inPeak.first,inPeak.second),
+          "MAIN IN meters the signal the graph receives (neutral graph: input peak == output peak)");
+    ui::FxPage* page=nullptr; walk(*editor,[&](juce::Component& c){ if(auto* x=dynamic_cast<ui::FxPage*>(&c)) page=x; });
+    check(page!=nullptr,"NODES page");
+    const auto mainIn=page->graph().sourceNode();
+    block(none); page->meterTickForTesting();
+    const auto shown=page->inputMeterLevels(mainIn);
+    check(shown.second>1.0e-3f,"the MAIN IN node displays the live level");
+    juce::MidiBuffer off; off.addEvent(juce::MidiMessage::allNotesOff(1),0); block(off);
+    for(int i=0;i<400;++i) { block(none); page->meterTickForTesting(); }
+    check(page->inputMeterLevels(mainIn).first==0.0f && page->inputMeterLevels(mainIn).second==0.0f,"silence decays the MAIN IN meters to zero");
+    midi.addEvent(juce::MidiMessage::noteOn(1,64,0.9f),0); block(midi);
+#ifndef ORIGAMI_SANITIZED
+    pluginAllocations.store(0,std::memory_order_relaxed);
+    pluginGuardAllocations.store(true,std::memory_order_release);
+#endif
+    for(int i=0;i<16;++i) { audio.clear(); p.processBlock(audio,none); }
+#ifndef ORIGAMI_SANITIZED
+    pluginGuardAllocations.store(false,std::memory_order_release);
+    check(pluginAllocations.load()==0,"MAIN IN telemetry allocates nothing on the audio thread");
+#endif
+    if(const char* shots=std::getenv("ORIGAMI_SNAPSHOT")) { // visual review aid
+        const auto shot=[&](const juce::String& name,int w,int h) {
+            editor->setSize(w,h);
+            auto image=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.0f);
+            juce::FileOutputStream out(juce::File(shots).getChildFile(name)); out.setPosition(0); out.truncate();
+            juce::PNGImageFormat().writeImageToStream(image,out);
+        };
+        p.setUiMacroName(0,"Twenty Three Char Name!"); editor->refreshModulationViews();
+        shot("qa-synth-min.png",ui::EditorLayout::minWidth,ui::EditorLayout::minHeight);
+        shot("qa-synth-default.png",ui::EditorLayout::defaultWidth,ui::EditorLayout::defaultHeight);
+        shot("qa-synth-large.png",ui::EditorLayout::maxWidth,ui::EditorLayout::maxHeight);
+        walk(*editor,[&](juce::Component& c){ if(auto* h=dynamic_cast<ui::OrigamiHeader*>(&c)) h->selectMode(2); });
+        editor->setSize(ui::EditorLayout::defaultWidth,ui::EditorLayout::defaultHeight);
+        juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1,48,0.9f),0); block(m);
+        p.setUiParameter(ParameterId::OscPan,-0.6f);
+        for(int i=0;i<8;++i) { block(none); page->meterTickForTesting(); }
+        shot("qa-nodes.png",ui::EditorLayout::defaultWidth,ui::EditorLayout::defaultHeight);
+        p.setUiMacroName(0,"");
+    }
+    p.setUiParameter(ParameterId::OscPan,0.0f);
+
+    // ---- 9-12: macro remove (X) at the right of ASSIGN; the title gets the header.
+    ui::MacroPanel* macros=nullptr; walk(*editor,[&](juce::Component& c){ if(auto* x=dynamic_cast<ui::MacroPanel*>(&c)) macros=x; });
+    check(macros!=nullptr,"macro panel");
+    auto* card=macros->card(0);
+    juce::Component* remove=nullptr; walk(*card,[&](juce::Component& c){ if(c.getName()=="Remove macro 1") remove=&c; });
+    auto* title=macros->titleLabel(1);
+    const auto* strip=macros->assignment(1);
+    check(remove && title && strip,"macro card parts");
+    check(remove->getBottom()<=card->getHeight() && remove->getY()>=strip->getY()-1 && remove->getBottom()<=strip->getBottom()+1
+          && remove->getX()>=strip->getRight(),"the X sits at the right end of the ASSIGN strip");
+    check(remove->getWidth()>=20 && remove->getHeight()>=20 && strip->getHeight()<=40,"a usable X target without a taller strip");
+    check(title->getRight()>=card->getWidth()-8 && title->getWidth()>=card->getWidth()-16,"the title owns the header's full width");
+    check(p.setUiMacroName(0,"Twenty Three Char Name!") && p.getUiMacroName(0).length()==23,"a 23-character name");
+    editor->refreshModulationViews(); macros->syncFromModel();
+    const auto font=juce::Font(juce::FontOptions(ui::Type::label));
+    check(juce::GlyphArrangement::getStringWidth(font,title->getText())<=float(title->getWidth()) || title->getText().length()==23,"long names use the reclaimed width");
+    const auto routesBefore=[&]{ int n=0; for(const auto& r:p.getUiInstrumentState().modulation.routes) n+=r.id!=0; return n; }();
+    check(macros->removeMacro(1) && !macroActive(p.getUiInstrumentState().modulation,1) && p.macroParameter(0)->getParameterID()=="macro.1"
+          && macros->undo() && macroActive(p.getUiInstrumentState().modulation,1),"remove / undo unchanged; host id macro.1 unchanged");
+    juce::ignoreUnused(routesBefore);
+}
+
+// mct-origami-manual-qa-ui-wavetable-fixes: the wavetable editor's X commits
+// the edited table to the oscillator (canonical source, viewport, DSP,
+// saved state) without touching the library.
+void wavetableEditorCommitAudit() {
+    using namespace mct::origami;
+    using Command=ui::FrameTools::Command;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer none;
+    const auto block=[&](juce::MidiBuffer& m){ audio.clear(); p.processBlock(audio,m); m.clear(); };
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    auto& surface=editor->wavetableEditorForTesting();
+    const auto ids=[&]{ std::vector<unsigned> v; for(const auto& m:p.getUiInstrumentState().oscillators) if(m.id) v.push_back(m.id); return v; }();
+    const auto osc1=ids[0],osc2=ids[1];
+    ui::OscillatorCard* card1=nullptr;
+    walk(*editor,[&](juce::Component& c){ if(auto* x=dynamic_cast<ui::OscillatorCard*>(&c)) if(x->id()==osc1) card1=x; });
+    check(card1!=nullptr,"OSC 1 card");
+    const auto snapshot=[&]{ editor->resized(); card1->repaint(); return card1->createComponentSnapshot(card1->getLocalBounds(),true,1.0f); };
+    const auto differs=[](const juce::Image& a,const juce::Image& b) {
+        if(a.getBounds()!=b.getBounds()) return true;
+        for(int y=0;y<a.getHeight();y+=2) for(int x=0;x<a.getWidth();x+=2) if(a.getPixelAt(x,y)!=b.getPixelAt(x,y)) return true;
+        return false;
+    };
+    const auto render=[&](int note) {
+        juce::AudioBuffer<float> a(2,512); juce::MidiBuffer m; m.addEvent(juce::MidiMessage::noteOn(1,note,0.8f),0);
+        std::vector<float> out;
+        for(int i=0;i<6;++i) { a.clear(); p.processBlock(a,m); m.clear(); out.insert(out.end(),a.getReadPointer(0),a.getReadPointer(0)+512); }
+        juce::MidiBuffer off; off.addEvent(juce::MidiMessage::allNotesOff(1),0);
+        for(int i=0;i<40;++i) { a.clear(); p.processBlock(a,off); off.clear(); }
+        return out;
+    };
+    for(int i=0;i<4;++i) block(none);
+
+    // 13 / 14: MORPH (to 256 frames) -> X -> the oscillator's canonical table.
+    const auto basicRender=render(60);
+    editor->openWavetableEditorForOscillator(osc1);
+    check(editor->wavetableEditorOpen() && surface.documentForTesting().frames.size()==4,"the editor opens on OSC 1's table (BASIC SHAPES)");
+    surface.selectFramesForTesting({0u},0u);
+    surface.runFrameCommandForTesting(Command::Morph);
+    const auto morphed=surface.documentData();
+    check(morphed.frames()==256,"MORPH (to target) densifies to 256 frames in the editor");
+    editor->closeWavetableEditorWithX();
+    auto source=p.getUiOscillatorWavetable(osc1);
+    check(!editor->wavetableEditorOpen() && source.data && source.data->frames()==256 && source.data->samples==morphed.samples,"X commits MORPH: the canonical table is the edited one");
+    check(source.contentId.isEmpty() && source.data->name=="BASIC SHAPES (EDITED)","an edited table is the oscillator's own: no library identity, named (EDITED)");
+    check(card1->wavetableData && card1->wavetableData(osc1)==source.data,"the viewport reads the committed table");
+    for(int i=0;i<4;++i) block(none);
+
+    // 19: draw -> X: viewport and DSP follow (WT POSITION 0 shows frame 0).
+    p.setUiParameter(ParameterId::Waveform,0.0f);
+    for(int i=0;i<4;++i) block(none);
+    const auto viewBefore=snapshot();
+    editor->openWavetableEditorForOscillator(osc1);
+    check(surface.documentForTesting().frames.size()==256,"reopening edits the committed 256-frame table");
+    for(std::size_t i=0;i<2048;++i) surface.drawSampleForTesting(0,i,i<1024 ? 0.95f : -0.95f); // frame 1 -> a square
+    editor->closeWavetableEditorWithX();
+    source=p.getUiOscillatorWavetable(osc1);
+    check(source.data && source.data->samples[10]==0.95f && source.data->samples[1500]==-0.95f,"X commits a drawn frame");
+    for(int i=0;i<4;++i) block(none);
+    const auto viewAfter=snapshot();
+    check(differs(viewBefore,viewAfter),"the OSC 1 viewport shows the committed edit immediately");
+    const auto drawnRender=render(60);
+    check(drawnRender!=basicRender,"the DSP renders the committed table");
+
+    // 20: insert / delete / move -> X.
+    editor->openWavetableEditorForOscillator(osc1);
+    surface.selectFramesForTesting({0u},0u);
+    surface.runFrameCommandForTesting(Command::Delete);       // 255 frames, frame 0 was the square
+    surface.selectFramesForTesting({0u},0u);
+    surface.runFrameCommandForTesting(Command::Duplicate);    // 256 frames
+    surface.selectFramesForTesting({1u},1u);
+    surface.runFrameCommandForTesting(Command::Right);        // move frame 1 to 2
+    const auto structural=surface.documentData();
+    editor->closeWavetableEditorWithX();
+    check(p.getUiOscillatorWavetable(osc1).data->samples==structural.samples && structural.frames()==256
+          && structural.samples[10]!=0.95f,"delete / insert / move frames commit on X");
+
+    // 22: two oscillators keep separate commits.
+    editor->openWavetableEditorForOscillator(osc2);
+    check(surface.documentForTesting().frames.size()==4,"OSC 2 opens on its own table, not OSC 1's");
+    surface.drawSampleForTesting(0,100,-0.5f);
+    editor->closeWavetableEditorWithX();
+    check(p.getUiOscillatorWavetable(osc2).data && p.getUiOscillatorWavetable(osc2).data->frames()==4 && p.getUiOscillatorWavetable(osc2).data->samples[100]==-0.5f
+          && p.getUiOscillatorWavetable(osc1).data->samples==structural.samples,"two oscillators commit separate edits");
+
+    // 16: save -> reload keeps the edits.
+    juce::MemoryBlock session; p.getStateInformation(session);
+    {
+        auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256);
+        q->setStateInformation(session.getData(),int(session.getSize()));
+        check(q->getUiOscillatorWavetable(osc1).data && q->getUiOscillatorWavetable(osc1).data->samples==structural.samples
+              && q->getUiOscillatorWavetable(osc2).data && q->getUiOscillatorWavetable(osc2).data->samples[100]==-0.5f,"edit -> X -> save -> reload preserves both edits");
+    }
+
+    // 17 / 18: the library is never written by an editor commit.
+    auto& library=editor->contentLibrary();
+    check(library.find(content::ContentLibrary::basicShapesId)->format=="builtin" && content::basicShapes().frames()==4,"the factory BASIC SHAPES resource is untouched");
+    const auto dir=juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("origami-wte-"+juce::String(juce::Time::currentTimeMillis()));
+    dir.createDirectory();
+    content::WavetableData user; user.name="User Table"; for(int i=0;i<2*2048;++i) user.samples.push_back(0.5f*std::sin(float(i)*0.02f));
+    check(content::writeWavetableWav(dir.getChildFile("User Table.wav"),user) && editor->importWavetableFile(osc2,dir.getChildFile("User Table.wav")).wasOk(),"a library table on OSC 2");
+    const auto userId=p.getUiOscillatorWavetable(osc2).contentId;
+    juce::MemoryBlock fileBefore; library.find(userId)->file.loadFileAsData(fileBefore);
+    editor->openWavetableEditorForOscillator(osc2);
+    editor->closeWavetableEditorWithX();
+    check(p.getUiOscillatorWavetable(osc2).contentId==userId,"closing without an edit keeps the library identity");
+    editor->openWavetableEditorForOscillator(osc2);
+    surface.drawSampleForTesting(1,7,0.25f);
+    editor->closeWavetableEditorWithX();
+    juce::MemoryBlock fileAfter; library.find(userId)->file.loadFileAsData(fileAfter);
+    check(fileAfter==fileBefore && p.getUiOscillatorWavetable(osc2).contentId.isEmpty() && p.getUiOscillatorWavetable(osc2).data->samples[2048+7]==0.25f,
+          "editing a library table commits to the oscillator only (file untouched, now custom)");
+    dir.deleteRecursively();
+
+    // 21 / 23: rapid commits while a note is held; the audio thread allocates nothing.
+    juce::MidiBuffer held; held.ensureSize(4096); held.addEvent(juce::MidiMessage::noteOn(1,57,0.8f),0);
+    block(held);
+    bool finite=true;
+    for(int k=0;k<12;++k) {
+        editor->openWavetableEditorForOscillator(osc1);
+        surface.drawSampleForTesting(std::size_t(k%4),std::size_t(k*37),k%2 ? 0.6f : -0.6f);
+        editor->closeWavetableEditorWithX();
+#ifndef ORIGAMI_SANITIZED
+        pluginAllocations.store(0,std::memory_order_relaxed);
+        pluginGuardAllocations.store(true,std::memory_order_release);
+#endif
+        for(int i=0;i<3;++i) { audio.clear(); p.processBlock(audio,none); for(int n=0;n<256;++n) finite&=std::isfinite(audio.getSample(0,n)); }
+#ifndef ORIGAMI_SANITIZED
+        pluginGuardAllocations.store(false,std::memory_order_release);
+        check(pluginAllocations.load()==0,"commit handoff: the audio thread allocates nothing");
+#endif
+    }
+    check(finite,"rapid editor commits during a held note stay finite");
+    check(p.getUiOscillatorWavetable(osc1).data->samples[size_t(11%4)*2048+11*37]==0.6f,"the last commit is the canonical table");
+}
+
 // mct-origami-content-browser: presets / wavetables through the editor, the
 // processor and the audio thread.
 void contentBrowserAudit() {
@@ -5386,6 +5649,8 @@ void run() {
     nestedModulationUiAudit();
     captureKeyboardInputAudit();
     contentBrowserAudit();
+    wavetableEditorCommitAudit();
+    manualQaUiAudit();
     lfoEditorControlsAudit();
     typographyAudit();
     macroGridAndOscHeaderAudit();
