@@ -1072,6 +1072,41 @@ void manualEditDezipperAudit() {
     check(!A.e->dezipping(),"a structural edit applies at once (no glide)");
 }
 
+// mct-origami-nested-modulation-manual-qa: nested modulation renders without
+// allocating (prepared programs; nothing is traversed or built per sample).
+void nestedModulationRealtimeAudit() {
+    auto owner=std::make_unique<OrigamiEngine>(); auto& e=*owner;
+    check(e.prepare(48000,512,2),"nested realtime prepare");
+    const auto osc2=e.addOscillatorModule();
+    auto mod=e.instrumentState().modulation;
+    mod.lfo1.mode=LfoMode::Free; mod.lfo2.mode=LfoMode::Loop; mod.lfo3.mode=LfoMode::Free; mod.lfo3.stereo=0.5f;
+    const auto route=[](std::uint32_t id,ModSource src,ModAddress dst,float amount,bool bipolar=true) { ModRoute r; r.id=id; r.enabled=true; r.source=src; r.destination=dst; r.amount=amount; r.bipolar=bipolar; return r; };
+    mod.routes[0]=route(1,ModSource::Lfo1,{ModDestination::Level,osc2,0},0.3f);
+    mod.routes[1]=route(2,ModSource::Macro1,routeDepthAddress(1),0.4f,false);
+    mod.routes[2]=route(3,ModSource::Lfo3,lfoRateAddress(0),0.3f);
+    mod.routes[3]=route(4,ModSource::Macro2,macroValueAddress(1),0.5f,false);
+    mod.routes[4]=route(5,ModSource::Lfo2,{ModDestination::Cutoff,0,0},0.3f);
+    mod.routes[5]=route(6,ModSource::Env2,lfoRateAddress(1),0.4f,false);
+    mod.routes[6]=route(7,ModSource::Env3,routeDepthAddress(5),0.3f,false);
+    mod.routes[7]=route(8,ModSource::Velocity,macroValueAddress(2),0.2f,false);
+    mod.nextRouteId=9;
+    check(e.setModulationState(mod),"dense nested patch accepted");
+    e.reset();
+    for(int n:{48,55,60,64,67}) check(e.noteOn(n,.8f),"nested realtime notes");
+    std::vector<float> l(512),r(512); float* io[2]{l.data(),r.data()};
+    e.process(io,2,512);
+#ifndef ORIGAMI_SANITIZED
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+#endif
+    bool finite=true;
+    for(int b=0;b<64;++b) { e.process(io,2,512); for(int i=0;i<512;++i) finite=finite && std::isfinite(l[i]) && std::isfinite(r[i]); }
+#ifndef ORIGAMI_SANITIZED
+    guardAllocations.store(false);
+    check(allocations.load()==0 && frees.load()==0,"nested modulation (route depth, LFO / ENV -> LFO RATE, MACRO -> MACRO, per-voice programs) allocates nothing");
+#endif
+    check(finite,"nested modulation renders finite audio");
+}
+
 // mct-origami-dsp-performance-stereo-chain: every optimised path renders the
 // pre-optimisation output bit for bit (hashes captured on 378ad97), at block
 // sizes 32 / 256 / 1000, deterministically.
@@ -1204,6 +1239,7 @@ int main() {
         std::cerr<<"optimised-path golden renders\n";optimizedPathGoldenAudit();
         std::cerr<<"spectral transitions\n";spectralTransitionAudit();
         std::cerr<<"manual-edit dezipper\n";manualEditDezipperAudit();
+        std::cerr<<"nested modulation realtime\n";nestedModulationRealtimeAudit();
         std::cerr<<"registry and patches\n";registryAndPatches();
         std::cerr<<"envelope timing\n";envelopeTiming();
         std::cerr<<"pitch and blocks\n";pitchAndBlocks();

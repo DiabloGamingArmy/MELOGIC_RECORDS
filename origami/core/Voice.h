@@ -183,6 +183,9 @@ private:
     // for the rest of the note, so RIGHT never jumps back). Cold.
     std::array<float,maxOscillatorModules> previousOscillatorSamplesRight_{};
     std::uint16_t rightTapMask_=0,rightPhaseModules_=0;
+    template<bool Stereo> void runVoiceProgram(const CompiledModulation&,const ModulationState&,const ModulationFrame& global,
+        ModulationFrame& local,std::array<float,CompiledModulation::voiceSourceCount>& voiceSources,
+        StereoSourceValues& voiceStereo,float sourceLfoScale,bool observe) noexcept;
     float rightTap(std::size_t source) const noexcept {
         return ((rightTapMask_>>source)&1u) ? previousOscillatorSamplesRight_[source] : previousOscillatorSamples_[source];
     }

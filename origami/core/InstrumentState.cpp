@@ -5,6 +5,7 @@
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-v33.1.2-osc-blend-engine
 #include "InstrumentState.h"
+#include <cmath>
 namespace mct::origami {
 void applyLegacyOscillatorParameters(OscillatorModuleState& m,const ParameterValues& p) noexcept {
     auto v=[&](ParameterId id){return p[static_cast<std::size_t>(id)];};
@@ -20,8 +21,10 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
            (p.scale==ParameterScale::Choice && v!=std::round(v))) return false;
     }
     if(s.oscillators[0].id!=1 || !validModulation(s.modulation,s.oscillators)) return false;
-    if(!std::isfinite(s.performance.pitchBendRangeSemitones) || s.performance.pitchBendRangeSemitones<1.0f || s.performance.pitchBendRangeSemitones>48.0f) return false;
-    if(!std::isfinite(s.performance.pitchBendDownSemitones) || s.performance.pitchBendDownSemitones<1.0f || s.performance.pitchBendDownSemitones>48.0f) return false;
+    // Signed endpoints, any direction, |x| <= 48 st.
+    constexpr float maxBend=PerformanceState::maxBendSemitones;
+    if(!std::isfinite(s.performance.pitchBendRangeSemitones) || std::abs(s.performance.pitchBendRangeSemitones)>maxBend) return false;
+    if(!std::isfinite(s.performance.pitchBendDownSemitones) || std::abs(s.performance.pitchBendDownSemitones)>maxBend) return false;
     if(s.performance.voiceMode!=VoiceMode::Poly && s.performance.voiceMode!=VoiceMode::Mono) return false;
     if(s.performance.notePriority!=NotePriority::Last && s.performance.notePriority!=NotePriority::High && s.performance.notePriority!=NotePriority::Low) return false;
     if(!std::isfinite(s.performance.glideSeconds) || s.performance.glideSeconds<0.0f || s.performance.glideSeconds>5.0f) return false;

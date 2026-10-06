@@ -385,8 +385,10 @@ bool OrigamiEngine::setPitchBendRange(float semitones) noexcept {
     return setPitchBendRanges(semitones,semitones);
 }
 bool OrigamiEngine::setPitchBendRanges(float upSemitones,float downSemitones) noexcept {
+    // Signed endpoints (semitones at full up / full down), any direction.
+    constexpr float maxBend=PerformanceState::maxBendSemitones;
     if(!std::isfinite(upSemitones) || !std::isfinite(downSemitones) ||
-       upSemitones<1.0f || upSemitones>48.0f || downSemitones<1.0f || downSemitones>48.0f) return false;
+       std::abs(upSemitones)>maxBend || std::abs(downSemitones)>maxBend) return false;
     pitchBendRange_.store(upSemitones,std::memory_order_relaxed);
     pitchBendDownRange_.store(downSemitones,std::memory_order_relaxed);
     return true;
@@ -625,13 +627,25 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         modules[0].pan=value(ParameterId::OscPan);
         modules[0].level=value(ParameterId::OscLevel);
 
+        // mct-origami-nested-modulation-manual-qa: GLOBAL nested targets read
+        // the newest voice's per-voice sources of the previous sample.
+        if(compiledModulation_.needsNewestVoiceSources()) {
+            const Voice* newestVoice=nullptr;
+            for(const auto& voice:voices_)
+                if(voice.active() && (newestVoice==nullptr || voice.order()>newestVoice->order())) newestVoice=&voice;
+            newestVoiceValid_=newestVoice!=nullptr;
+            if(newestVoice!=nullptr) newestVoiceSources_=newestVoice->lastSources();
+        } else newestVoiceValid_=false;
         std::array<float,CompiledModulation::globalSourceCount> sources{};
         // mct-origami-stereo-modulation: a stereo plan asks each FREE LFO for
         // its RIGHT value too (LEFT is bit-identical either way).
         const bool stereoPlan=compiledModulation_.hasStereoPlan();
         auto& globalStereo=frame.stereo.globalLfo;
         globalStereo.mask=0;
-        for(std::size_t i=0;i<4;++i) {
+        // mct-origami-nested-modulation-manual-qa: with nested modulation the
+        // FREE LFOs run in the prepared dependency order (below).
+        const bool nested=compiledModulation_.hasNestedPlan();
+        if(!nested) for(std::size_t i=0;i<4;++i) {
             if(!compiledModulation_.usesGlobalSource(i)) continue;
             const auto& l=lfoSettings(audioModulation_,i);
             if(l.mode!=LfoMode::Free) { sources[i]=0.0f; continue; }
@@ -686,7 +700,46 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         beats_+=beatsPerSample;
         // N04 global CONTROL operators: once per sample, before the global
         // frame reads their outputs (compiled plan; never when unused).
-        if(compiledModulation_.hasOperators()) {
+        if(nested) {
+            // The prepared global program: FREE LFOs (at their effective
+            // rate), macros with incoming modulation (effective value; the
+            // stored base never moves), global NODES operators and route
+            // depths, each after everything it reads.
+            using Step=CompiledModulation::ProgramStep::Kind;
+            const auto* newest=newestVoiceValid_ ? &newestVoiceSources_ : nullptr;
+            for(std::size_t p=0;p<compiledModulation_.globalProgramSize();++p) {
+                const auto& step=compiledModulation_.globalProgramStep(p);
+                switch(step.kind) {
+                    case Step::Lfo: {
+                        const std::size_t i=step.index;
+                        const auto& l=lfoSettings(audioModulation_,i);
+                        if(l.mode!=LfoMode::Free) { sources[i]=0.0f; break; }
+                        const float rate=compiledModulation_.globalLfoRate(i,l.rateHz,sources,frame,newest);
+                        if(stereoPlan && l.stereo>0.0f) {
+                            float right=0.0f;
+                            sources[i]=globalLfos_[i].nextStereo(l,sampleRate_,rate,right)*currentLfoScaling_;
+                            globalStereo.lfo[i]=right*currentLfoScaling_;
+                            globalStereo.mask|=std::uint8_t(1u<<i);
+                        } else sources[i]=globalLfos_[i].next(l,sampleRate_,rate)*currentLfoScaling_;
+                        break;
+                    }
+                    case Step::Macro: {
+                        const std::size_t id=step.index;
+                        sources[CompiledModulation::macroSlot(id)]=compiledModulation_.macroValue(id,smoothedMacros_[id-1],sources,frame,newest);
+                        break;
+                    }
+                    case Step::Operator:
+                        compiledModulation_.evaluateGlobalOperator(step.index,frame,sources);
+                        if(compiledModulation_.hasSequencerNode()) sources[12]=frame.globalSources[12];
+                        break;
+                    case Step::Depth:
+                        compiledModulation_.globalRouteDepth(step.index,frame,sources,newest);
+                        break;
+                }
+            }
+            frame.globalSources=sources; // per-voice nested terms read the global sources here
+            for(std::size_t id=1;id<=maxMacros;++id) effectiveMacros_[id-1]=sources[CompiledModulation::macroSlot(id)];
+        } else if(compiledModulation_.hasOperators()) {
             compiledModulation_.evaluateGlobalOperators(frame,sources);
             if(compiledModulation_.hasSequencerNode()) sources[12]=frame.globalSources[12]; // SEQ = the node's VALUE
         }
@@ -774,7 +827,9 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             if(observe) observedInfo=voices_[v].info();
             const auto channel=std::min<std::size_t>(voices_[v].channel(),15);
             const float normalizedBend=pitchBendNormalized_[channel];
-            const float bend=normalizedBend*(normalizedBend>=0.0f ? bendUpRange : bendDownRange);
+            // mct-origami-nested-modulation-manual-qa: signed wheel ENDPOINTS:
+            // centre 0, full up = BEND UP, full down = BEND DOWN (default -2).
+            const float bend=normalizedBend>=0.0f ? normalizedBend*bendUpRange : (-normalizedBend)*bendDownRange;
             auto fresh=voices_[v].nextModules(hostWavetables_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
                                                 modWheel_[channel],aftertouch_[channel],oscillatorPlan_,sharedProcesses,observe);

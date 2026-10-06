@@ -234,6 +234,17 @@ public:
     bool dezipping() const noexcept { return dezipActive_!=0; }
 private:
     std::array<OscillatorModuleState,OscillatorModuleBank::capacity> dezipModules_{};
+    // mct-origami-nested-modulation-manual-qa: the newest voice's per-voice
+    // sources (previous sample) for GLOBAL nested targets, and the effective
+    // (modulated) macro values for the UI.
+    std::array<float,CompiledModulation::voiceSourceCount> newestVoiceSources_{};
+    bool newestVoiceValid_=false;
+    std::array<float,maxMacros> effectiveMacros_{};
+public:
+    // Effective macro value (base + incoming modulation), audio-thread value
+    // published for the UI via the visualization snapshot.
+    const std::array<float,maxMacros>& effectiveMacros() const noexcept { return effectiveMacros_; }
+private:
     struct DezipRamp { std::uint32_t remaining=0; std::array<float,dezipFieldCount> step{}; };
     std::array<DezipRamp,OscillatorModuleBank::capacity> dezipRamps_{};
     std::uint32_t dezipActive_=0;
@@ -254,7 +265,7 @@ private:
     std::array<float,16> modWheel_{},aftertouch_{};
     std::array<std::atomic<float>,17> modEnvelopeTargets_{};
     std::atomic<float> pitchBendRange_{2.0f};
-    std::atomic<float> pitchBendDownRange_{2.0f};
+    std::atomic<float> pitchBendDownRange_{-2.0f}; // signed endpoint (full wheel down)
     PerformanceState performance_{};
     BusState buses_{}; // non-realtime model; the renderer only reads BUS 1 sends
     std::array<float,CompiledModulation::globalSourceCount> lastGlobalSources_{};

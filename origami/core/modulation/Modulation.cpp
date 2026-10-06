@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <type_traits>
 namespace mct::origami {
 namespace {
 // Signed generator slots (LFOs, random, function, chaos, drift, sequencer):
@@ -68,7 +69,7 @@ struct Range {float lo,hi;};
 Range limits(ModDestination d) {
     switch(d) {
         case ModDestination::Cutoff:return {20,20000};
-        case ModDestination::MainTuning:return {-1,1};
+        case ModDestination::MainTuning:return {-48,48}; // mct-origami-nested-modulation-manual-qa: +/-4 octaves (was +/-1 st)
         case ModDestination::Transpose:return {-24,24};
         case ModDestination::PortaTime:return {0,5};
         case ModDestination::Swing:return {0,0.75f};
@@ -85,10 +86,14 @@ Range limits(ModDestination d) {
         case ModDestination::Route2Amount:
         case ModDestination::ProcessAmount:
         case ModDestination::RouteAmount:
+        case ModDestination::RouteDepth:  // a route's depth: -100 % .. +100 %
             return {-1,1};
-        default:return {0,1};
+        case ModDestination::LfoRate: return {lfoRateMinimumHz,lfoRateMaximumHz}; // log domain (like CUTOFF)
+        default:return {0,1};                                                     // incl. MACRO
     }
 }
+// Destinations whose normalized domain is logarithmic.
+constexpr bool logDestination(ModDestination d) noexcept { return d==ModDestination::Cutoff || d==ModDestination::LfoRate; }
 std::size_t slotFor(ModSource source,const ModulationState& state) {
     if(isOperatorSource(source))
         return CompiledModulation::sourceSlotCount+operatorOutputIndex(std::min(controlOperatorSlot(state,operatorIdOf(source)),
@@ -137,6 +142,140 @@ LfoSettings& lfoSettings(ModulationState& s,std::size_t i) noexcept {
     switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
 }
 
+// ---- mct-origami-nested-modulation-manual-qa: rate mapping, dependency graph
+float lfoRateToNormalized(float hz) noexcept {
+    const float r=std::isfinite(hz) ? std::clamp(hz,lfoRateMinimumHz,lfoRateMaximumHz) : 1.0f;
+    return static_cast<float>(std::log(static_cast<double>(r)/lfoRateMinimumHz)/std::log(static_cast<double>(lfoRateMaximumHz)/lfoRateMinimumHz));
+}
+float lfoRateFromNormalized(float normalized) noexcept {
+    const double n=std::isfinite(normalized) ? std::clamp(static_cast<double>(normalized),0.0,1.0) : 0.0;
+    return static_cast<float>(std::clamp(lfoRateMinimumHz*dsp::fastExp2Audio(n*std::log2(static_cast<double>(lfoRateMaximumHz)/lfoRateMinimumHz)),
+                                         static_cast<double>(lfoRateMinimumHz),static_cast<double>(lfoRateMaximumHz)));
+}
+namespace {
+// Graph nodes: LFO 1..4, MACRO 1..16, operator storage slots, route indices.
+constexpr std::size_t nodeLfo=0,nodeMacro=4,nodeOp=nodeMacro+maxMacros,
+                      nodeRoute=nodeOp+ModulationState::maxControlOperators,
+                      nodeCount=nodeRoute+ModulationState::capacity;
+using NodeSet=std::array<std::uint64_t,(nodeCount+63)/64>;
+using ModGraph=std::array<NodeSet,nodeCount>;
+std::size_t graphSourceNode(ModSource s,const ModulationState& state) noexcept {
+    const auto v=static_cast<std::uint32_t>(s);
+    if(v>=101 && v<=104) return nodeLfo+(v-101);
+    if(const auto id=macroIdOf(s)) return nodeMacro+(id-1);
+    if(isOperatorSource(s)) {
+        const auto slot=controlOperatorSlot(state,operatorIdOf(s));
+        if(slot<ModulationState::maxControlOperators) return nodeOp+slot;
+    }
+    return nodeCount; // a root source: nothing modulates it
+}
+std::size_t routeIndexOf(const ModulationState& state,std::uint32_t id) noexcept {
+    if(id==0) return ModulationState::capacity;
+    for(std::size_t i=0;i<state.routes.size();++i) if(state.routes[i].id==id) return i;
+    return ModulationState::capacity;
+}
+std::size_t graphTargetNode(const ModAddress& a,const ModulationState& state) noexcept {
+    switch(a.parameter) {
+        case ModDestination::LfoRate: if(a.itemId>=1 && a.itemId<=4) return nodeLfo+(a.itemId-1); break;
+        case ModDestination::MacroValue: if(a.itemId>=1 && a.itemId<=maxMacros) return nodeMacro+(a.itemId-1); break;
+        case ModDestination::RouteDepth: { const auto r=routeIndexOf(state,a.itemId); if(r<ModulationState::capacity) return nodeRoute+r; } break;
+        default: break;
+    }
+    return nodeCount;
+}
+void addEdge(ModGraph& g,std::size_t from,std::size_t to) noexcept {
+    if(from<nodeCount && to<nodeCount) g[from][to/64]|=std::uint64_t(1)<<(to%64);
+}
+// Every complete route (enabled or not: enabling must never create a cycle)
+// and every operator connection.
+ModGraph buildModGraph(const ModulationState& state) noexcept {
+    ModGraph g{};
+    for(std::size_t i=0;i<state.routes.size();++i) {
+        const auto& r=state.routes[i];
+        if(!r.id || !routeComplete(r)) continue;
+        addEdge(g,graphSourceNode(r.source,state),nodeRoute+i);
+        addEdge(g,nodeRoute+i,graphTargetNode(r.destination,state));
+    }
+    for(std::size_t k=0;k<state.operators.size();++k) {
+        const auto& op=state.operators[k];
+        if(!op.id) continue;
+        for(const auto& in:op.inputs) {
+            if(in.kind==ControlInput::Kind::Source) addEdge(g,graphSourceNode(in.source,state),nodeOp+k);
+            else if(in.kind==ControlInput::Kind::Operator) {
+                const auto from=controlOperatorSlot(state,in.op);
+                if(from<ModulationState::maxControlOperators) addEdge(g,nodeOp+from,nodeOp+k);
+            }
+        }
+    }
+    return g;
+}
+bool graphHasCycle(const ModGraph& g) noexcept {
+    // Iterative three-colour DFS (no recursion, bounded by the node count).
+    std::array<std::uint8_t,nodeCount> colour{}; // 0 new, 1 on stack, 2 done
+    std::array<std::size_t,nodeCount> stack{},next{};
+    for(std::size_t root=0;root<nodeCount;++root) {
+        if(colour[root]) continue;
+        std::size_t top=0; stack[top]=root; next[top]=0; colour[root]=1; ++top;
+        while(top) {
+            const auto n=stack[top-1];
+            auto& i=next[top-1];
+            bool pushed=false;
+            while(i<nodeCount) {
+                const auto to=i++;
+                if(!((g[n][to/64]>>(to%64))&1u)) continue;
+                if(colour[to]==1) return true;
+                if(colour[to]==0) { colour[to]=1; stack[top]=to; next[top]=0; ++top; pushed=true; break; }
+            }
+            if(!pushed) { colour[n]=2; --top; }
+        }
+    }
+    return false;
+}
+// Routes are stored compactly (holes only at the end): close a hole.
+void compactRoutes(ModulationState& state) noexcept {
+    std::size_t out=0;
+    for(std::size_t i=0;i<state.routes.size();++i) if(state.routes[i].id) state.routes[out++]=state.routes[i];
+    while(out<state.routes.size()) state.routes[out++]={};
+}
+}
+bool modulationGraphHasCycle(const ModulationState& state) noexcept { return graphHasCycle(buildModGraph(state)); }
+bool routeClosesCycle(const ModulationState& state,const ModRoute& candidate) noexcept {
+    if(!routeComplete(candidate)) return false;
+    auto probe=state;
+    std::size_t slot=routeIndexOf(probe,candidate.id);
+    if(slot>=probe.routes.size()) for(slot=0;slot<probe.routes.size() && probe.routes[slot].id;++slot) {}
+    if(slot>=probe.routes.size()) return false;
+    probe.routes[slot]=candidate;
+    if(probe.routes[slot].id==0) probe.routes[slot].id=probe.nextRouteId;
+    return modulationGraphHasCycle(probe);
+}
+std::size_t removeRouteCascade(ModulationState& state,std::uint32_t routeId) noexcept {
+    std::array<std::uint32_t,ModulationState::capacity> doomed{};
+    std::size_t count=0;
+    if(routeIndexOf(state,routeId)<state.routes.size()) doomed[count++]=routeId;
+    for(std::size_t k=0;k<count;++k)
+        for(const auto& r:state.routes)
+            if(r.id && r.destination.parameter==ModDestination::RouteDepth && r.destination.itemId==doomed[k] && count<doomed.size()) {
+                bool already=false; for(std::size_t j=0;j<count;++j) already|=doomed[j]==r.id;
+                if(!already) doomed[count++]=r.id;
+            }
+    for(std::size_t k=0;k<count;++k) { const auto i=routeIndexOf(state,doomed[k]); if(i<state.routes.size()) state.routes[i]={}; }
+    compactRoutes(state);
+    return count;
+}
+std::size_t pruneRoutesOfRemovedMacros(ModulationState& state) noexcept {
+    std::size_t removed=0;
+    for(bool again=true;again;) {
+        again=false;
+        for(const auto& r:state.routes) {
+            if(!r.id) continue;
+            const bool deadSource=isMacroSource(r.source) && !macroActive(state,macroIdOf(r.source));
+            const bool deadTarget=r.destination.parameter==ModDestination::MacroValue && !macroActive(state,r.destination.itemId);
+            if(deadSource || deadTarget) { removed+=removeRouteCascade(state,r.id); again=true; break; }
+        }
+    }
+    return removed;
+}
 bool isGlobalDestination(ModDestination d) noexcept {
     return d==ModDestination::Cutoff || d==ModDestination::Resonance || d==ModDestination::MasterGain ||
            d==ModDestination::MainTuning || d==ModDestination::Transpose ||
@@ -184,6 +323,15 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
     for(auto ratchet:s.sequencer.ratchets) if(ratchet<1u || ratchet>4u) return false;
     if(!range(s.sequencer.humanize,0.f,.35f)) return false;
     for(float v:s.macros) if(!range(v,0,1)) return false;
+    // Macro names: printable ASCII, NUL-terminated, NUL-padded (canonical).
+    for(const auto& name:s.macroNames) {
+        bool ended=false;
+        for(char c:name) {
+            if(c=='\0') { ended=true; continue; }
+            if(ended || static_cast<unsigned char>(c)<32u || static_cast<unsigned char>(c)>126u) return false;
+        }
+        if(!ended) return false;
+    }
     // N04 operators: unique ids below nextOperatorId, known types, bounded
     // parameters, inputs that reference canonical sources or existing
     // operators, and no cycles (the control graph is a DAG).
@@ -246,6 +394,18 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
             // FX graph existence is enforced by the host boundary, which prunes
             // routes whose node/parameter no longer exists.
             if(r.destination.oscillator==0 || fxAddressParameter(r.destination)==0) return false;
+        } else if(isNestedDestination(r.destination.parameter)) {
+            // mct-origami-nested-modulation-manual-qa: an existing LFO, an
+            // existing macro, or another existing complete route (by id).
+            if(r.destination.oscillator!=0) return false;
+            const auto item=r.destination.itemId;
+            if(r.destination.parameter==ModDestination::LfoRate && (item<1 || item>4)) return false;
+            if(r.destination.parameter==ModDestination::MacroValue && !macroActive(s,item)) return false;
+            if(r.destination.parameter==ModDestination::RouteDepth) {
+                if(item==r.id) return false;
+                const auto target=routeIndexOf(s,item);
+                if(target>=s.routes.size() || !routeComplete(s.routes[target])) return false;
+            }
         } else if(isGlobalDestination(r.destination.parameter)) {
             if(r.destination.oscillator!=0) return false;
         } else {
@@ -269,6 +429,9 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
             } else if(r.destination.itemId!=0) return false;
         }
     }
+    // Nested modulation must stay a DAG: no route may (transitively) feed the
+    // macro, LFO rate or route depth it depends on.
+    if(modulationGraphHasCycle(s)) return false;
     return true;
 }
 float modulationToNormalized(ModDestination d,float value) noexcept {
@@ -314,22 +477,24 @@ float Lfo::mseg(const LfoSettings& s,double phase) noexcept {
     return std::clamp(a.y+(b.y-a.y)*t,-1.0f,1.0f);
 }
 
-float Lfo::next(const LfoSettings& s,double sampleRate) noexcept {
+float Lfo::next(const LfoSettings& s,double sampleRate) noexcept { return next(s,sampleRate,s.rateHz); }
+float Lfo::next(const LfoSettings& s,double sampleRate,float rateHz) noexcept {
     // RIGHT's smoother restarts from LEFT whenever a stereo read resumes
     // (STEREO turned back up, or the plan switched back to stereo).
     smoothReadyRight_=false;
-    return lfoFunctionsNeutral(s) ? legacyNext<false>(s,sampleRate,nullptr) : processedNext<false>(s,sampleRate,nullptr);
+    return lfoFunctionsNeutral(s) ? legacyNext<false>(s,sampleRate,rateHz,nullptr) : processedNext<false>(s,sampleRate,rateHz,nullptr);
 }
 
-float Lfo::nextStereo(const LfoSettings& s,double sampleRate,float& right) noexcept {
+float Lfo::nextStereo(const LfoSettings& s,double sampleRate,float& right) noexcept { return nextStereo(s,sampleRate,s.rateHz,right); }
+float Lfo::nextStereo(const LfoSettings& s,double sampleRate,float rateHz,float& right) noexcept {
     // LEFT takes exactly the path next() takes (bit-identical); RIGHT is only
     // evaluated when STEREO is non-zero, alongside, from the same state.
-    if(!(s.stereo>0.0f)) { const float left=next(s,sampleRate); right=left; smoothReadyRight_=false; return left; }
-    return lfoFunctionsNeutral(s) ? legacyNext<true>(s,sampleRate,&right) : processedNext<true>(s,sampleRate,&right);
+    if(!(s.stereo>0.0f)) { const float left=next(s,sampleRate,rateHz); right=left; smoothReadyRight_=false; return left; }
+    return lfoFunctionsNeutral(s) ? legacyNext<true>(s,sampleRate,rateHz,&right) : processedNext<true>(s,sampleRate,rateHz,&right);
 }
 
 template<bool WithRight>
-float Lfo::legacyNext(const LfoSettings& s,double sampleRate,float* right) noexcept {
+float Lfo::legacyNext(const LfoSettings& s,double sampleRate,float rateHz,float* right) noexcept {
     // The accepted pre-FUNC LFO, unchanged (bit-identical output). The extra
     // bookkeeping (lifecycle samples, unwrapped cycles, read position) never
     // feeds this path's output; it lets FUNC take over mid-note seamlessly.
@@ -349,8 +514,8 @@ float Lfo::legacyNext(const LfoSettings& s,double sampleRate,float* right) noexc
     read_=phase_;
     const float out=mseg(s,phase_);
     if constexpr(WithRight) { double r=phase_+offset; r-=std::floor(r); *right=mseg(s,r); }
-    if(std::isfinite(sampleRate) && sampleRate>0 && std::isfinite(s.rateHz)) {
-        const double increment=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
+    if(std::isfinite(sampleRate) && sampleRate>0 && std::isfinite(rateHz)) {
+        const double increment=std::clamp(double(rateHz),.01,40.)/sampleRate;
         phase_+=increment;
         if(s.mode==LfoMode::Envelope) {
             phase_=std::min(1.0,phase_);
@@ -519,7 +684,7 @@ std::uint32_t Lfo::voiceStream(std::uint32_t voiceSeed,std::size_t i) noexcept {
 }
 
 template<bool WithRight>
-float Lfo::processedNext(const LfoSettings& s,double sampleRate,float* right) noexcept {
+float Lfo::processedNext(const LfoSettings& s,double sampleRate,float rateHz,float* right) noexcept {
     // FUNC pipeline (one sample):
     //  1 DELAY      lifecycle gate: neutral 0 output, accumulator frozen
     //  2 BASE       accumulator progress (ENVELOPE: one cycle, then hold)
@@ -589,7 +754,7 @@ float Lfo::processedNext(const LfoSettings& s,double sampleRate,float* right) no
         if constexpr(WithRight) yRight=-1.0f+2.0f*std::round((std::clamp(yRight,-1.0f,1.0f)+1.0f)*0.5f*steps)/steps;
     }
     if(s.smooth>0.0f && valid) {
-        const float rate=std::isfinite(s.rateHz) ? std::clamp(s.rateHz,.01f,40.0f) : 1.0f;
+        const float rate=std::isfinite(rateHz) ? std::clamp(rateHz,.01f,40.0f) : 1.0f;
         if(s.smooth!=smoothKey_ || rate!=smoothRate_ || static_cast<float>(sampleRate)!=smoothSampleRate_) {
             // Period-relative time constant (up to 1/4 cycle, at most 2 s);
             // squared so the knob's travel is spread musically.
@@ -613,8 +778,8 @@ float Lfo::processedNext(const LfoSettings& s,double sampleRate,float* right) no
         y*=gain; yRight*=gain;
     }
 
-    if(valid && std::isfinite(s.rateHz)) {
-        const double increment=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
+    if(valid && std::isfinite(rateHz)) {
+        const double increment=std::clamp(double(rateHz),.01,40.)/sampleRate;
         if(envelope) { cycles_=std::min(1.0,cycles_+increment); phase_=cycles_; }
         else { cycles_+=increment; phase_=cycles_-std::floor(cycles_); }
     }
@@ -944,6 +1109,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     ++counters_.compiles;
     const auto old=groups_;const auto oldCount=count_;
     count_=voiceCount_=0;fxCount_=0;fxVoice_=false;++generation_;
+    globalPlainCount_=globalDepthCount_=voiceDepthCount_=0;
     voiceFilter_=false;groups_={};globalSourceUsed_.fill(false);voiceSourceUsed_.fill(false);
     voiceProcessModules_.fill(false);
     voiceModuleMask_=0;
@@ -1045,15 +1211,27 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         // Only a CONTROL output drives parameters; a per-voice result never
         // drives a global destination (no voice-reduction policy exists).
         if(info==nullptr || port>=info->outputCount || controlOutputSignalOf(*info,port)!=ControlSignal::Control) return operatorOutputSlotCount;
-        if(opVoice_[from] && destinationIsGlobal(route.destination.parameter)) return operatorOutputSlotCount;
+        if(opVoice_[from] && (destinationIsGlobal(route.destination.parameter) || isNestedDestination(route.destination.parameter))) return operatorOutputSlotCount;
         bool compiled=false;
         for(std::size_t i=0;i<opCount_;++i) if(ops_[i].slot==from) { compiled=true; break; }
         return compiled ? operatorOutputIndex(from,port) : operatorOutputSlotCount;
     };
+    // mct-origami-nested-modulation-manual-qa: a route whose depth is
+    // modulated takes part even at amount 0 (its depth may move away from 0).
+    std::array<bool,ModulationState::capacity> depthModulated{};
+    for(const auto& q:state.routes)
+        if(q.id && q.enabled && routeComplete(q) && q.destination.parameter==ModDestination::RouteDepth) {
+            const auto r=routeIndexOf(state,q.destination.itemId);
+            if(r<depthModulated.size()) depthModulated[r]=true;
+        }
+    const auto routeLive=[&](std::size_t ri) {
+        const auto& route=state.routes[ri];
+        return route.id && route.enabled && routeComplete(route) && (route.amount!=0 || depthModulated[ri]);
+    };
     {
         std::array<bool,operatorOutputSlotCount> used{};
-        for(const auto& route:state.routes)
-            if(route.id && route.enabled && route.amount!=0 && routeComplete(route) && isOperatorSource(route.source))
+        for(std::size_t ri=0;ri<state.routes.size();++ri)
+            if(const auto& route=state.routes[ri]; routeLive(ri) && isOperatorSource(route.source))
                 if(const auto o=routeOutput(route); o<operatorOutputSlotCount) used[o]=true;
         for(std::size_t o=0;o<operatorOutputSlotCount && routedCount_<operatorSlotCount;++o)
             if(used[o]) {
@@ -1069,11 +1247,14 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         for(std::size_t r=0;r<routedCount_;++r) if(routedOutput_[r]==o) return sourceSlotCount+r;
         return totalSlotCount;
     };
-    for(const auto& route:state.routes) {
-        if(!route.id || !route.enabled || route.amount==0 || !routeComplete(route)) continue;
+    routeGroup_.fill(-1); depthGroup_.fill(-1); routeSlot_.fill(0);
+    for(std::size_t ri=0;ri<state.routes.size();++ri) {
+        const auto& route=state.routes[ri];
+        if(!routeLive(ri)) continue;
         if(isOperatorSource(route.source) && groupSlotFor(route)>=totalSlotCount) continue;
+        const bool nested=isNestedDestination(route.destination.parameter);
         std::size_t slot=0;
-        if(!isGlobalDestination(route.destination.parameter) && !isFxDestination(route.destination.parameter)) {
+        if(!nested && !isGlobalDestination(route.destination.parameter) && !isFxDestination(route.destination.parameter)) {
             while(slot<modules.size() && modules[slot].id!=route.destination.oscillator) ++slot;
             if(slot==modules.size()) continue;
         }
@@ -1082,6 +1263,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             groups_[i].address=route.destination;
             groups_[i].slot=slot;
             groups_[i].itemSlot=0;
+            groups_[i].nested=nested;
             const auto generic=limits(route.destination.parameter);
             groups_[i].minimum=generic.lo;
             groups_[i].maximum=generic.hi;
@@ -1108,6 +1290,23 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         groups_[i].bipolar[sourceSlot]=route.bipolar;
         if(sourceSlot<globalSourceCount) globalSourceUsed_[sourceSlot]=true;
         else if(sourceSlot<sourceSlotCount) voiceSourceUsed_[sourceSlot-globalSourceCount]=true;
+        routeGroup_[ri]=static_cast<std::int8_t>(i);
+        routeSlot_[ri]=static_cast<std::uint8_t>(sourceSlot);
+    }
+    // Route depths: the depth group of each modulated route, and the slots of
+    // the groups whose weight a depth replaces.
+    for(std::size_t i=0;i<count_;++i) {
+        if(groups_[i].address.parameter!=ModDestination::RouteDepth) continue;
+        const auto r=routeIndexOf(state,groups_[i].address.itemId);
+        if(r<depthGroup_.size() && routeGroup_[r]>=0) depthGroup_[r]=static_cast<std::int8_t>(i);
+    }
+    for(std::size_t r=0;r<depthGroup_.size();++r) {
+        if(depthGroup_[r]<0) continue;
+        auto& target=groups_[static_cast<std::size_t>(routeGroup_[r])];
+        if(target.depthCount<target.depthSlot.size()) {
+            target.depthSlot[target.depthCount]=routeSlot_[r];
+            target.depthRoute[target.depthCount++]=static_cast<std::uint8_t>(r);
+        } else depthGroup_[r]=-1; // beyond the per-destination depth capacity: plain weight
     }
     for(std::size_t i=0;i<count_;++i) {
         auto& g=groups_[i];g.weight=g.target;
@@ -1135,26 +1334,48 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                 }
             }
         }
+        // A depth-modulated slot is evaluated even while its weight is 0.
+        const auto depthSlot=[&g](std::size_t slot) { for(std::size_t d=0;d<g.depthCount;++d) if(g.depthSlot[d]==slot) return true; return false; };
         g.globalSlotCount=0;g.voiceSlotCount=0;
         for(std::size_t s=0;s<globalSourceCount;++s)
-            if(g.target[s]!=0.0f || g.weight[s]!=0.0f) g.globalSlots[g.globalSlotCount++]=static_cast<std::uint8_t>(s);
+            if(g.target[s]!=0.0f || g.weight[s]!=0.0f || depthSlot(s)) g.globalSlots[g.globalSlotCount++]=static_cast<std::uint8_t>(s);
         for(std::size_t s=0;s<voiceSourceCount;++s)
-            if(g.target[globalSourceCount+s]!=0.0f || g.weight[globalSourceCount+s]!=0.0f) g.voiceSlots[g.voiceSlotCount++]=static_cast<std::uint8_t>(s);
+            if(g.target[globalSourceCount+s]!=0.0f || g.weight[globalSourceCount+s]!=0.0f || depthSlot(globalSourceCount+s)) g.voiceSlots[g.voiceSlotCount++]=static_cast<std::uint8_t>(s);
         g.globalOpSlotCount=0;g.voiceOpSlotCount=0;
         for(std::size_t s=0;s<routedCount_;++s)
-            if(g.target[sourceSlotCount+s]!=0.0f || g.weight[sourceSlotCount+s]!=0.0f) {
+            if(g.target[sourceSlotCount+s]!=0.0f || g.weight[sourceSlotCount+s]!=0.0f || depthSlot(sourceSlotCount+s)) {
                 if(routedVoice_[s]) g.voiceOpSlots[g.voiceOpSlotCount++]=static_cast<std::uint8_t>(s);
                 else g.globalOpSlots[g.globalOpSlotCount++]=static_cast<std::uint8_t>(s);
             }
-        const bool voice=g.voiceSlotCount!=0 || g.voiceOpSlotCount!=0;
+    }
+    // A depth with per-voice terms makes its route's group per-voice (each
+    // voice's own depth); through depth-of-depth chains until stable.
+    for(bool changed=true;changed;) {
+        changed=false;
+        for(std::size_t i=0;i<count_;++i) {
+            auto& g=groups_[i];
+            if(g.voiceDepth) continue;
+            for(std::size_t d=0;d<g.depthCount;++d) {
+                const auto& depth=groups_[static_cast<std::size_t>(depthGroup_[g.depthRoute[d]])];
+                if(depth.voiceSlotCount!=0 || depth.voiceDepth) { g.voiceDepth=true; changed=true; break; }
+            }
+        }
+    }
+    for(std::size_t i=0;i<count_;++i) {
+        auto& g=groups_[i];
+        if(g.nested) continue; // evaluated by the nested programs
+        const bool voice=g.voiceSlotCount!=0 || g.voiceOpSlotCount!=0 || g.voiceDepth;
         if(isFxDestination(g.address.parameter)) {
             // Evaluated once per block by fxFrame(); never written into voices.
             fxGroups_[fxCount_++]=i;
             fxVoice_=fxVoice_ || voice;
             continue;
         }
+        if(g.depthCount) globalDepth_[globalDepthCount_++]=static_cast<std::uint8_t>(i);
+        else globalPlain_[globalPlainCount_++]=static_cast<std::uint8_t>(i);
         if(voice) {
-            voiceGroups_[voiceCount_++]=i;
+            if(g.depthCount) voiceDepthGroups_[voiceDepthCount_++]=static_cast<std::uint8_t>(i);
+            else voiceGroups_[voiceCount_++]=i;
             if(!isGlobalDestination(g.address.parameter)) voiceModuleMask_|=std::uint16_t(1u<<g.slot);
             if(g.address.parameter==ModDestination::ProcessAmount ||
                g.address.parameter==ModDestination::Process1Amount ||
@@ -1232,6 +1453,124 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         }
     }
     stereoPlan_=stereoGroupCount_!=0;
+    buildNestedPlan(state);
+}
+
+// mct-origami-nested-modulation-manual-qa: the evaluation order of nested
+// modulation, prepared off the hot path. Nodes: LFO 1..4, macros, compiled
+// operators, route depths. Each program is a topological order of its own
+// scope (a GLOBAL node reading a per-voice value reads the newest voice's
+// previous sample, so it orders only against global nodes); ties keep LFOs,
+// macros, operators (in their compiled order) and depths in that order.
+void CompiledModulation::buildNestedPlan(const ModulationState& state) noexcept {
+    nestedPlan_=voiceNestedPlan_=needsNewestVoice_=false;
+    globalProgramCount_=voiceProgramCount_=0;
+    lfoRateGroup_.fill(-1); macroGroup_.fill(-1);
+    for(std::size_t i=0;i<count_;++i) {
+        const auto& g=groups_[i];
+        if(!g.nested) continue;
+        const auto item=g.address.itemId;
+        if(g.address.parameter==ModDestination::LfoRate && item>=1 && item<=4) lfoRateGroup_[item-1]=static_cast<std::int8_t>(i);
+        else if(g.address.parameter==ModDestination::MacroValue && item>=1 && item<=maxMacros) macroGroup_[item-1]=static_cast<std::int8_t>(i);
+        nestedPlan_=true;
+    }
+    for(const auto d:depthGroup_) nestedPlan_=nestedPlan_ || d>=0;
+    if(!nestedPlan_) return;
+
+    constexpr std::size_t L=0,M=4,O=M+maxMacros,R=O+operatorSlotCount,N=R+ModulationState::capacity;
+    std::array<bool,N> present{},voice{};
+    std::array<std::array<std::uint64_t,(N+63)/64>,N> edge{};
+    const auto link=[&](std::size_t from,std::size_t to) { if(from<N && to<N && from!=to) edge[from][to/64]|=std::uint64_t(1)<<(to%64); };
+    const auto lfoVoice=[&](std::size_t i) { return lfoSettings(state,i).mode!=LfoMode::Free; };
+    const auto compiledOp=[&](std::size_t storageSlot)->std::size_t {
+        for(std::size_t c=0;c<opCount_;++c) if(ops_[c].slot==storageSlot) return c;
+        return operatorSlotCount;
+    };
+    // The node a source slot (or a ModSource) is produced by, if any.
+    const auto slotNode=[&](std::size_t slot)->std::size_t {
+        if(slot<4) return L+slot;
+        if(slot>=4 && slot<=7) return M+(slot-4);
+        if(slot>=13 && slot<globalSourceCount) return M+4+(slot-13);
+        if(slot>=globalSourceCount+3 && slot<=globalSourceCount+6) return L+(slot-globalSourceCount-3);
+        if(slot>=sourceSlotCount) { const auto c=compiledOp((slot-sourceSlotCount)/maxControlOutputs); if(c<operatorSlotCount) return O+c; }
+        return N;
+    };
+    const auto sourceNode=[&](ModSource s)->std::size_t {
+        if(isOperatorSource(s)) {
+            const auto slot=controlOperatorSlot(state,operatorIdOf(s));
+            const auto c=slot<operatorSlotCount ? compiledOp(slot) : operatorSlotCount;
+            return c<operatorSlotCount ? O+c : N;
+        }
+        return slotNode(slotFor(s,state));
+    };
+    // Members of each program.
+    for(std::size_t i=0;i<4;++i) {
+        if(lfoVoice(i)) { present[L+i]=true; voice[L+i]=true; }
+        else present[L+i]=usesGlobalSource(i);
+    }
+    for(std::size_t j=0;j<maxMacros;++j) present[M+j]=macroGroup_[j]>=0;
+    for(std::size_t c=0;c<opCount_;++c) { present[O+c]=true; voice[O+c]=ops_[c].voice; }
+    for(std::size_t r=0;r<depthGroup_.size();++r) present[R+r]=depthGroup_[r]>=0;
+    // Edges: what each nested target reads, and operator inputs.
+    for(std::size_t ri=0;ri<state.routes.size();++ri) {
+        if(routeGroup_[ri]<0) continue;
+        const auto& g=groups_[static_cast<std::size_t>(routeGroup_[ri])];
+        if(!g.nested) continue;
+        std::size_t target=N;
+        if(g.address.parameter==ModDestination::LfoRate) target=L+(g.address.itemId-1);
+        else if(g.address.parameter==ModDestination::MacroValue) target=M+(g.address.itemId-1);
+        else if(g.address.parameter==ModDestination::RouteDepth) { const auto r=routeIndexOf(state,g.address.itemId); if(r<depthGroup_.size()) target=R+r; }
+        link(sourceNode(state.routes[ri].source),target);
+        if(depthGroup_[ri]>=0) link(R+ri,target); // its own depth first
+    }
+    for(std::size_t r=0;r<depthGroup_.size();++r) {
+        if(depthGroup_[r]<0) continue;
+        const auto& g=groups_[static_cast<std::size_t>(depthGroup_[r])];
+        // A depth needing per-voice terms has a voice part (its global part is
+        // still computed globally).
+        if(g.voiceSlotCount!=0 || g.voiceDepth) voice[R+r]=true;
+    }
+    for(std::size_t c=0;c<opCount_;++c)
+        for(const auto in:ops_[c].input) if(in>=0) link(slotNode(static_cast<std::size_t>(in)),O+c);
+    // Kahn's algorithm per scope, smallest node first.
+    const auto order=[&](bool voiceScope,decltype(globalProgram_)& program,std::size_t& count) {
+        std::array<bool,N> done{};
+        for(std::size_t emitted=0;;) {
+            std::size_t pick=N;
+            for(std::size_t n=0;n<N && pick==N;++n) {
+                // A depth runs in the global program always (its global
+                // part), and in the voice program too when it has voice terms.
+                const bool member=present[n] && !done[n] && (n>=R && n<N ? (voiceScope ? voice[n] : true) : voice[n]==voiceScope);
+                if(!member) continue;
+                bool ready=true;
+                for(std::size_t m=0;m<N && ready;++m) {
+                    if(m==n || done[m] || !present[m] || !((edge[m][n/64]>>(n%64))&1u)) continue;
+                    const bool sameScope=(m>=R && m<N) ? (voiceScope ? voice[m] : true) : voice[m]==voiceScope;
+                    if(sameScope) ready=false; // a same-scope input not yet evaluated
+                }
+                if(ready) pick=n;
+            }
+            if(pick==N) break; // done (a cycle would leave nodes out: rejected by validation)
+            done[pick]=true;
+            ProgramStep step;
+            if(pick<M) { step.kind=ProgramStep::Kind::Lfo; step.index=static_cast<std::uint8_t>(pick-L); }
+            else if(pick<O) { step.kind=ProgramStep::Kind::Macro; step.index=static_cast<std::uint8_t>(pick-M+1); }
+            else if(pick<R) { step.kind=ProgramStep::Kind::Operator; step.index=static_cast<std::uint8_t>(pick-O); }
+            else { step.kind=ProgramStep::Kind::Depth; step.index=static_cast<std::uint8_t>(pick-R); }
+            if(count<program.size()) program[count++]=step;
+            ++emitted;
+        }
+    };
+    order(false,globalProgram_,globalProgramCount_);
+    order(true,voiceProgram_,voiceProgramCount_);
+    // The voice program is needed when a per-voice LFO's rate or a per-voice
+    // depth is modulated (otherwise voices keep their unchanged path).
+    for(std::size_t i=0;i<4;++i) voiceNestedPlan_=voiceNestedPlan_ || (lfoVoice(i) && lfoRateGroup_[i]>=0);
+    for(std::size_t r=0;r<depthGroup_.size();++r) voiceNestedPlan_=voiceNestedPlan_ || (depthGroup_[r]>=0 && voice[R+r]);
+    // Global nested targets with per-voice terms read the newest voice.
+    for(std::size_t i=0;i<4;++i) if(!lfoVoice(i) && lfoRateGroup_[i]>=0) needsNewestVoice_=needsNewestVoice_ || groups_[static_cast<std::size_t>(lfoRateGroup_[i])].voiceSlotCount!=0;
+    for(const auto m:macroGroup_) if(m>=0) needsNewestVoice_=needsNewestVoice_ || groups_[static_cast<std::size_t>(m)].voiceSlotCount!=0;
+    for(const auto d:depthGroup_) if(d>=0) needsNewestVoice_=needsNewestVoice_ || groups_[static_cast<std::size_t>(d)].voiceSlotCount!=0;
 }
 void CompiledModulation::advance(float alpha) noexcept {
     if(!smoothingActive_) return;
@@ -2304,15 +2643,152 @@ void CompiledModulation::finishStereo(ModulationFrame& f,bool voice) const noexc
     st.filter=filterTable_.make(st.cutoffSplit ? st.cutoff : f.cutoff,st.resonanceSplit ? st.resonance : f.resonance);
 }
 
+// ---- mct-origami-nested-modulation-manual-qa: nested evaluation ------------
+float CompiledModulation::effectiveWeight(const Group& g,std::size_t slot,const ModulationFrame& depths) const noexcept {
+    for(std::size_t d=0;d<g.depthCount;++d) if(g.depthSlot[d]==slot) return depths.routeDepth[g.depthRoute[d]];
+    const float w=g.weight[slot];
+    return std::isfinite(w) ? w : 0.0f;
+}
+float CompiledModulation::nestedGlobalTerms(const Group& g,const std::array<float,globalSourceCount>& sources,const ModulationFrame& f) const noexcept {
+    float n=0.0f;
+    for(std::size_t k=0;k<g.globalSlotCount;++k) {
+        const auto s=static_cast<std::size_t>(g.globalSlots[k]);
+        n+=effectiveWeight(g,s,f)*routeSourceValue(s,sources[s],g.bipolar[s]);
+    }
+    for(std::size_t k=0;k<g.globalOpSlotCount;++k) {
+        const auto s=static_cast<std::size_t>(g.globalOpSlots[k]);
+        n+=effectiveWeight(g,sourceSlotCount+s,f)*operatorRouteValue(s,f.operatorOutputs[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
+    }
+    return n;
+}
+float CompiledModulation::nestedNewestVoiceTerms(const Group& g,const std::array<float,voiceSourceCount>* newest,const ModulationFrame& f) const noexcept {
+    if(newest==nullptr) return 0.0f;
+    float n=0.0f;
+    for(std::size_t k=0;k<g.voiceSlotCount;++k) {
+        const auto s=static_cast<std::size_t>(g.voiceSlots[k]),slot=globalSourceCount+s;
+        n+=effectiveWeight(g,slot,f)*routeSourceValue(slot,(*newest)[s],g.bipolar[slot]);
+    }
+    return n;
+}
+float CompiledModulation::nestedVoiceTerms(const Group& g,const std::array<float,voiceSourceCount>& voice,const ModulationFrame& local) const noexcept {
+    float n=0.0f;
+    for(std::size_t k=0;k<g.voiceSlotCount;++k) {
+        const auto s=static_cast<std::size_t>(g.voiceSlots[k]),slot=globalSourceCount+s;
+        n+=effectiveWeight(g,slot,local)*routeSourceValue(slot,voice[s],g.bipolar[slot]);
+    }
+    for(std::size_t k=0;k<g.voiceOpSlotCount;++k) {
+        const auto s=static_cast<std::size_t>(g.voiceOpSlots[k]);
+        n+=effectiveWeight(g,sourceSlotCount+s,local)*operatorRouteValue(s,local.operatorOutputs[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
+    }
+    return n;
+}
+float CompiledModulation::globalLfoRate(std::size_t lfo,float baseHz,const std::array<float,globalSourceCount>& sources,
+                                        const ModulationFrame& f,const std::array<float,voiceSourceCount>* newestVoice) const noexcept {
+    if(lfo>=4 || lfoRateGroup_[lfo]<0) return baseHz;
+    const auto& g=groups_[static_cast<std::size_t>(lfoRateGroup_[lfo])];
+    return lfoRateFromNormalized(lfoRateToNormalized(baseHz)+nestedGlobalTerms(g,sources,f)+nestedNewestVoiceTerms(g,newestVoice,f));
+}
+float CompiledModulation::macroValue(std::size_t id,float base,const std::array<float,globalSourceCount>& sources,
+                                     const ModulationFrame& f,const std::array<float,voiceSourceCount>* newestVoice) const noexcept {
+    if(id<1 || id>maxMacros || macroGroup_[id-1]<0) return base;
+    const auto& g=groups_[static_cast<std::size_t>(macroGroup_[id-1])];
+    const float n=base+nestedGlobalTerms(g,sources,f)+nestedNewestVoiceTerms(g,newestVoice,f);
+    return std::isfinite(n) ? std::clamp(n,0.0f,1.0f) : base;
+}
+void CompiledModulation::globalRouteDepth(std::size_t route,ModulationFrame& f,const std::array<float,globalSourceCount>& sources,
+                                          const std::array<float,voiceSourceCount>* newestVoice) const noexcept {
+    if(route>=depthGroup_.size() || depthGroup_[route]<0) return;
+    const auto& g=groups_[static_cast<std::size_t>(depthGroup_[route])];
+    const float w=groups_[static_cast<std::size_t>(routeGroup_[route])].weight[routeSlot_[route]];
+    float n=(std::isfinite(w) ? w : 0.0f)*0.5f+0.5f+nestedGlobalTerms(g,sources,f);
+    if(!std::isfinite(n)) n=0.5f;
+    f.routeDepthNormalized[route]=n;
+    const float withNewest=n+nestedNewestVoiceTerms(g,newestVoice,f);
+    f.routeDepth[route]=std::isfinite(withNewest) ? std::clamp(withNewest,0.0f,1.0f)*2.0f-1.0f : 0.0f;
+}
+float CompiledModulation::voiceLfoRate(std::size_t lfo,float baseHz,const ModulationFrame& global,
+                                       const std::array<float,voiceSourceCount>& voice,const ModulationFrame& local) const noexcept {
+    if(lfo>=4 || lfoRateGroup_[lfo]<0) return baseHz;
+    const auto& g=groups_[static_cast<std::size_t>(lfoRateGroup_[lfo])];
+    // Global terms read the global frame (sources, global operators); the
+    // depths of its routes are this voice's.
+    float n=lfoRateToNormalized(baseHz)+nestedVoiceTerms(g,voice,local);
+    for(std::size_t k=0;k<g.globalSlotCount;++k) {
+        const auto s=static_cast<std::size_t>(g.globalSlots[k]);
+        n+=effectiveWeight(g,s,local)*routeSourceValue(s,global.globalSources[s],g.bipolar[s]);
+    }
+    for(std::size_t k=0;k<g.globalOpSlotCount;++k) {
+        const auto s=static_cast<std::size_t>(g.globalOpSlots[k]);
+        n+=effectiveWeight(g,sourceSlotCount+s,local)*operatorRouteValue(s,global.operatorOutputs[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
+    }
+    return lfoRateFromNormalized(n);
+}
+void CompiledModulation::voiceRouteDepth(std::size_t route,ModulationFrame& local,const std::array<float,voiceSourceCount>& voice) const noexcept {
+    if(route>=depthGroup_.size() || depthGroup_[route]<0) return;
+    const auto& g=groups_[static_cast<std::size_t>(depthGroup_[route])];
+    const float n=local.routeDepthNormalized[route]+nestedVoiceTerms(g,voice,local);
+    local.routeDepth[route]=std::isfinite(n) ? std::clamp(n,0.0f,1.0f)*2.0f-1.0f : 0.0f;
+}
+__attribute__((noinline)) float CompiledModulation::depthCorrectionGlobal(const Group& g,const std::array<float,globalSourceCount>& sources,const ModulationFrame& f) const noexcept {
+    float n=0.0f;
+    for(std::size_t d=0;d<g.depthCount;++d) {
+        const auto s=static_cast<std::size_t>(g.depthSlot[d]);
+        const float w=std::isfinite(g.weight[s]) ? g.weight[s] : 0.0f;
+        const float delta=f.routeDepth[g.depthRoute[d]]-w;
+        if(s<globalSourceCount) n+=delta*routeSourceValue(s,sources[s],g.bipolar[s]);
+        else if(s>=sourceSlotCount && !routedVoice_[s-sourceSlotCount])
+            n+=delta*operatorRouteValue(s-sourceSlotCount,f.operatorOutputs[routedOutput_[s-sourceSlotCount]],g.bipolar[s]);
+    }
+    return n;
+}
+__attribute__((noinline)) float CompiledModulation::depthCorrectionVoice(const Group& g,const std::array<float,voiceSourceCount>& voice,
+                                               const ModulationFrame& local,const ModulationFrame& global) const noexcept {
+    float n=0.0f;
+    for(std::size_t d=0;d<g.depthCount;++d) {
+        const auto s=static_cast<std::size_t>(g.depthSlot[d]);
+        const auto r=g.depthRoute[d];
+        const float w=std::isfinite(g.weight[s]) ? g.weight[s] : 0.0f;
+        const float depth=local.routeDepth[r];
+        if(s<globalSourceCount) n+=(depth-global.routeDepth[r])*routeSourceValue(s,global.globalSources[s],g.bipolar[s]);
+        else if(s<sourceSlotCount) n+=(depth-w)*routeSourceValue(s,voice[s-globalSourceCount],g.bipolar[s]);
+        else {
+            const auto c=s-sourceSlotCount;
+            if(routedVoice_[c]) n+=(depth-w)*operatorRouteValue(c,local.operatorOutputs[routedOutput_[c]],g.bipolar[s]);
+            else n+=(depth-global.routeDepth[r])*operatorRouteValue(c,global.operatorOutputs[routedOutput_[c]],g.bipolar[s]);
+        }
+    }
+    return n;
+}
+void CompiledModulation::evaluateGlobalOperator(std::size_t index,ModulationFrame& f,const std::array<float,globalSourceCount>& sources) noexcept {
+    if(index>=opCount_) return;
+    f.globalSources=sources;
+    const auto& c=ops_[index];
+    runOperator(c,nullptr,f,globalOpState_[c.slot],f);
+    if(stereoPlan_ && c.stereo) runOperatorRight(c,nullptr,nullptr,f,globalOpState_[c.slot],f);
+    const std::size_t base=operatorOutputIndex(c.slot,0);
+    if(c.op.type==ControlOpType::Sequencer) f.globalSources[12]=f.operatorOutputs[base];
+    if(eventFired(c,f.operatorOutputs,base)) ++globalEventCounts_[c.slot];
+}
+void CompiledModulation::evaluateVoiceOperator(std::size_t index,ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,
+                                               OperatorState& state,std::array<std::uint32_t,operatorSlotCount>* counts,
+                                               const ModulationFrame* global,const StereoSourceValues* voiceStereo) const noexcept {
+    if(index>=opCount_) return;
+    const ModulationFrame& globalOperators=global!=nullptr ? *global : f;
+    const auto& c=ops_[index];
+    runOperator(c,&sources,f,state[c.slot],globalOperators);
+    if(stereoPlan_ && c.stereo) runOperatorRight(c,&sources,voiceStereo,f,state[c.slot],globalOperators);
+    const std::size_t base=operatorOutputIndex(c.slot,0);
+    if(counts!=nullptr && eventFired(c,f.operatorOutputs,base)) ++(*counts)[c.slot];
+}
+
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {
     f.filterEnabled=filterEnabled_;
     // Stereo terms are evaluated only while some LFO / operator actually has a
     // right value (STEREO > 0); otherwise the frame is simply mono.
     const bool stereoNow=stereoPlan_ && (f.stereo.globalLfo.mask!=0 || f.stereo.operatorMask!=0);
     if(stereoPlan_) { f.stereo.levelMask=0; f.stereo.rightMask=0; f.stereo.cutoffSplit=f.stereo.resonanceSplit=false; f.stereo.active=stereoNow; }
-    for(std::size_t i=0;i<count_;++i) {
+    const auto group=[&](std::size_t i,auto withDepth) {
         const auto& g=groups_[i];
-        if(isFxDestination(g.address.parameter)) continue;
         const float base=std::clamp(read(f,g),g.minimum,g.maximum);
         float n=g.address.parameter==ModDestination::Cutoff
             ? std::log(base/g.minimum)/g.logSpan
@@ -2327,6 +2803,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
             const float w=g.weight[sourceSlotCount+s];
             n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,f.operatorOutputs[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
         }
+        if constexpr(decltype(withDepth)::value) n+=depthCorrectionGlobal(g,sources,f); // modulated route depths
         if(!std::isfinite(n)) n=0.0f;
         f.normalized[i]=std::clamp(n,-4.0f,4.0f);write(f,g,n);
         if(stereoNow && g.stereo) {
@@ -2337,15 +2814,17 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
             // (and their spectral transition state) continue every sample.
             if(d!=0.0f || ((readGroupsAll_>>i)&1u)!=0) writeRight(f,g,i,n+d);
         }
-    }
+    };
+    for(std::size_t k=0;k<globalPlainCount_;++k) group(globalPlain_[k],std::false_type{});
+    for(std::size_t k=0;k<globalDepthCount_;++k) group(globalDepth_[k],std::true_type{});
     if(f.filterEnabled) f.filter=globalFilter(rate,f.cutoff,f.resonance);
     if(stereoNow) finishStereo(f,false);
 }
 void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,double /*rate*/,
-                                    const StereoSourceValues* voiceStereo) const noexcept {
+                                    const StereoSourceValues* voiceStereo,const ModulationFrame* global) const noexcept {
     const bool stereoNow=stereoPlan_ && (f.stereo.active || f.stereo.operatorMask!=0 || (voiceStereo!=nullptr && voiceStereo->mask!=0));
-    for(std::size_t j=0;j<voiceCount_;++j) {
-        const auto i=voiceGroups_[j];const auto& g=groups_[i];
+    const auto group=[&](std::size_t i,auto withDepth) {
+        const auto& g=groups_[i];
         float n=std::isfinite(f.normalized[i])?f.normalized[i]:0.0f;
         for(std::size_t k=0;k<g.voiceSlotCount;++k) {
             const auto s=static_cast<std::size_t>(g.voiceSlots[k]);
@@ -2359,6 +2838,7 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
             const float w=g.weight[sourceSlotCount+s];
             n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,f.operatorOutputs[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
         }
+        if constexpr(decltype(withDepth)::value) if(global!=nullptr) n+=depthCorrectionVoice(g,sources,f,*global); // this voice's route depths
         if(!std::isfinite(n)) n=0.0f;write(f,g,n);
         if(stereoNow && g.stereo) {
             // The global pass's delta (global LFO / operator terms) plus this
@@ -2373,7 +2853,9 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
                 else if(g.address.parameter==ModDestination::Resonance) f.stereo.resonanceSplit=false;
             }
         }
-    }
+    };
+    for(std::size_t j=0;j<voiceCount_;++j) group(voiceGroups_[j],std::false_type{});
+    for(std::size_t j=0;j<voiceDepthCount_;++j) group(voiceDepthGroups_[j],std::true_type{});
     if(voiceFilter_) f.filter=filterTable_.make(f.cutoff,f.resonance);
     if(stereoNow) { f.stereo.active=true; finishStereo(f,true); }
 }
@@ -2405,6 +2887,32 @@ void CompiledModulation::fxFrame(FxModulationOutput& out,const std::array<float,
                 const float w=g.weight[sourceSlotCount+s];
                 n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,(*operators)[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
             }
+        // mct-origami-nested-modulation-manual-qa: modulated depths of FX
+        // routes, evaluated with the same block-rate sources.
+        for(std::size_t d=0;d<g.depthCount;++d) {
+            const auto s=static_cast<std::size_t>(g.depthSlot[d]);
+            const auto r=g.depthRoute[d];
+            const auto& dg=groups_[static_cast<std::size_t>(depthGroup_[r])];
+            float dn=(std::isfinite(g.weight[s]) ? g.weight[s] : 0.0f)*0.5f+0.5f;
+            for(std::size_t j=0;j<dg.globalSlotCount;++j) {
+                const auto t=static_cast<std::size_t>(dg.globalSlots[j]);
+                dn+=(std::isfinite(dg.weight[t])?dg.weight[t]:0.0f)*routeSourceValue(t,global[t],dg.bipolar[t]);
+            }
+            if(voice!=nullptr) for(std::size_t j=0;j<dg.voiceSlotCount;++j) {
+                const auto t=static_cast<std::size_t>(dg.voiceSlots[j]),slot=globalSourceCount+t;
+                dn+=(std::isfinite(dg.weight[slot])?dg.weight[slot]:0.0f)*routeSourceValue(slot,(*voice)[t],dg.bipolar[slot]);
+            }
+            if(operators!=nullptr) for(std::size_t j=0;j<dg.globalOpSlotCount;++j) {
+                const auto t=static_cast<std::size_t>(dg.globalOpSlots[j]);
+                dn+=(std::isfinite(dg.weight[sourceSlotCount+t])?dg.weight[sourceSlotCount+t]:0.0f)*operatorRouteValue(t,(*operators)[routedOutput_[t]],dg.bipolar[sourceSlotCount+t]);
+            }
+            const float depth=std::isfinite(dn) ? std::clamp(dn,0.0f,1.0f)*2.0f-1.0f : 0.0f;
+            const float delta=depth-(std::isfinite(g.weight[s]) ? g.weight[s] : 0.0f);
+            if(s<globalSourceCount) n+=delta*routeSourceValue(s,global[s],g.bipolar[s]);
+            else if(s<sourceSlotCount) { if(voice!=nullptr) n+=delta*routeSourceValue(s,(*voice)[s-globalSourceCount],g.bipolar[s]); }
+            else if(operators!=nullptr && !routedVoice_[s-sourceSlotCount])
+                n+=delta*operatorRouteValue(s-sourceSlotCount,(*operators)[routedOutput_[s-sourceSlotCount]],g.bipolar[s]);
+        }
         out.offset[k]=std::isfinite(n) ? std::clamp(n,-2.0f,2.0f) : 0.0f;
     }
 }

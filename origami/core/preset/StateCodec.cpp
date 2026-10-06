@@ -66,7 +66,18 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     // LFO STEREO: v33 only when some LFO uses it (older formats otherwise).
     bool lfoStereo=false;
     for(std::size_t i=0;i<4;++i) lfoStereo|=lfoSettings(s.modulation,i).stereo!=0.0f;
-    const std::uint32_t version=lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
+    // mct-origami-nested-modulation-manual-qa: v34 when a state uses what
+    // older formats cannot express: nested destinations (LFO RATE, MACRO,
+    // ROUTE DEPTH), MAIN TUNING routes (now a +/-48 st span; older formats
+    // meant +/-1 st), pitch-wheel endpoints that are not "UP 1..48 / DOWN
+    // -48..-1" (older formats stored DOWN as a magnitude), macro names.
+    bool v34=false;
+    for(const auto& route:s.modulation.routes)
+        v34|=route.id && (isNestedDestination(route.destination.parameter) || route.destination.parameter==ModDestination::MainTuning);
+    const float up=s.performance.pitchBendRangeSemitones,down=s.performance.pitchBendDownSemitones;
+    v34|=!(up>=1.0f && up<=48.0f && down<=-1.0f && down>=-48.0f);
+    for(const auto& name:s.modulation.macroNames) v34|=name[0]!='\0';
+    const std::uint32_t version=v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
     Writer w;w.word(magic);w.word(version);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
@@ -200,7 +211,8 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         }
     }
     // V25: asymmetric pitch bend. Original V4 field remains the UP range.
-    w.real(s.performance.pitchBendDownSemitones);
+    // Before v34 DOWN is a magnitude ("down by N"); v34 stores the signed endpoint.
+    w.real(version>=34 ? s.performance.pitchBendDownSemitones : -s.performance.pitchBendDownSemitones);
     // V26: named buses and per-oscillator bus sends.
     w.word(s.buses.count);w.word(s.buses.nextId);
     for(std::size_t i=0;i<s.buses.count;++i) {
@@ -247,6 +259,12 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     }
     // V33: per LFO, STEREO.
     if(version>=33) for(std::size_t i=0;i<4;++i) w.real(lfoSettings(s.modulation,i).stereo);
+    if(version>=34)
+        for(const auto& name:s.modulation.macroNames) {
+            std::uint32_t length=0; while(length<name.size() && name[length]!='\0') ++length;
+            w.word(length);
+            for(std::uint32_t c=0;c<length;++c) w.word(static_cast<unsigned char>(name[c]));
+        }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -257,7 +275,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>33) return false;
+    if(version<1 || version>34) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -443,6 +461,9 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     }
     if(version>=25) s.performance.pitchBendDownSemitones=r.real();
     else s.performance.pitchBendDownSemitones=s.performance.pitchBendRangeSemitones;
+    // Before v34 DOWN was a magnitude: the wheel went DOWN by it. As a signed
+    // endpoint that is its negative (same sound).
+    if(version<34) s.performance.pitchBendDownSemitones=-s.performance.pitchBendDownSemitones;
     if(version>=26) {
         const auto busCount=r.word();
         if(busCount<1 || busCount>BusState::capacity) return false;
@@ -518,6 +539,20 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         }
     }
     if(version>=33) for(std::size_t i=0;i<4;++i) lfoSettings(s.modulation,i).stereo=r.real(); // older: 0 (mono)
+    // v34: MAIN TUNING spans +/-48 st (was +/-1 st): an older route's amount
+    // (a fraction of the span) keeps its sound scaled by 2 / 96.
+    if(version<34)
+        for(auto& route:s.modulation.routes)
+            if(route.id && route.destination.parameter==ModDestination::MainTuning) route.amount/=48.0f;
+    if(version>=34) {
+        // Macro names (stable id order): length byte + bytes.
+        for(auto& name:s.modulation.macroNames) {
+            const auto length=r.word();
+            if(length>=name.size()) return false;
+            name.fill('\0');
+            for(std::uint32_t c=0;c<length;++c) { const auto ch=r.word(); if(ch==0u || ch>255u) return false; name[c]=static_cast<char>(ch); }
+        }
+    }
     // mct-origami-nodes-n01: (source, destination) pairs are unique. States
     // written before that rule may repeat a pair; merge them deterministically
     // (summed amount, as the compiler always did) instead of rejecting the load.

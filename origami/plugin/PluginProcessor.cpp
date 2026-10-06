@@ -1111,7 +1111,8 @@ void OrigamiAudioProcessor::setUiModWheel(float normalized) noexcept {
     pendingUiMod_.store(juce::jlimit(0,127,juce::roundToInt(juce::jlimit(0.0f,1.0f,normalized)*127.0f)),std::memory_order_release);
 }
 bool OrigamiAudioProcessor::setUiPitchBendRange(float semitones) noexcept {
-    return setUiPitchBendRanges(semitones,semitones);
+    // Symmetric wheel: signed endpoints +N / -N.
+    return setUiPitchBendRanges(semitones,-semitones);
 }
 bool OrigamiAudioProcessor::setUiPitchBendRanges(float upSemitones,float downSemitones) noexcept {
     const juce::ScopedLock lock(stateLock_);

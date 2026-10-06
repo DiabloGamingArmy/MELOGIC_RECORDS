@@ -121,6 +121,44 @@ inline float shapePostRoute(float signal,float source,OscRouteType type,float ra
     return signal;
 }
 }
+// mct-origami-nested-modulation-manual-qa: the prepared voice program
+// (per-voice LFOs at this voice's effective rate, per-voice operators and
+// route depths, in dependency order). Out of line: the renderers' hot loops
+// keep their code when no nested modulation exists.
+template<bool Stereo>
+__attribute__((noinline)) void Voice::runVoiceProgram(const CompiledModulation& compiled,const ModulationState& modulation,
+    const ModulationFrame& global,ModulationFrame& local,std::array<float,CompiledModulation::voiceSourceCount>& voiceSources,
+    StereoSourceValues& voiceStereo,float sourceLfoScale,bool observe) noexcept {
+    using Step=CompiledModulation::ProgramStep::Kind;
+    for(std::size_t p=0;p<compiled.voiceProgramSize();++p) {
+        const auto& step=compiled.voiceProgramStep(p);
+        switch(step.kind) {
+            case Step::Lfo: {
+                const std::size_t i=step.index;
+                const auto& l=lfoSettings(modulation,i);
+                if(l.mode==LfoMode::Free) { voiceSources[3+i]=0.0f; break; }
+                const float rate=compiled.voiceLfoRate(i,l.rateHz,global,voiceSources,local);
+                bool done=false;
+                if constexpr(Stereo) if(l.stereo>0.0f) {
+                    float right=0.0f;
+                    voiceSources[3+i]=noteLfos_[i].nextStereo(l,sampleRate_,rate,right)*sourceLfoScale;
+                    voiceStereo.lfo[i]=right*sourceLfoScale; voiceStereo.mask|=std::uint8_t(1u<<i);
+                    done=true;
+                }
+                if(!done) voiceSources[3+i]=noteLfos_[i].next(l,sampleRate_,rate)*sourceLfoScale;
+                if(observe) visualization_.lfoPhases[i]=static_cast<float>(noteLfos_[i].readPosition());
+                break;
+            }
+            case Step::Operator:
+                compiled.evaluateVoiceOperator(step.index,local,voiceSources,operatorState_,&operatorEventCounts_,&global,Stereo ? &voiceStereo : nullptr);
+                break;
+            case Step::Depth:
+                compiled.voiceRouteDepth(step.index,local,voiceSources);
+                break;
+            case Step::Macro: break; // macros are global
+        }
+    }
+}
 template<bool Stereo>
 Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,const ModulationFrame& global,
     float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
@@ -142,7 +180,10 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
     // plan is stereo and that LFO's STEREO is non-zero; LEFT is unchanged).
     StereoSourceValues voiceStereo{};
     constexpr bool stereoPlan=Stereo;
-    for(std::size_t i=0;i<4;++i){
+    // mct-origami-nested-modulation-manual-qa: with a voice nested plan the
+    // per-voice LFOs run in the prepared order (after what feeds their rate).
+    const bool nestedVoice=compiled.hasVoiceNestedPlan();
+    if(!nestedVoice) for(std::size_t i=0;i<4;++i){
         const auto& l=lfoSettings(modulation,i);
         if(l.mode==LfoMode::Free) voiceSources[3+i]=0.0f;
         else if constexpr(!Stereo) voiceSources[3+i]=noteLfos_[i].next(l,sampleRate_)*sourceLfoScale;
@@ -166,24 +207,32 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
     voiceSources[10]=aftertouch;
     voiceSources[11]=std::clamp(pitchBendNormalized,-1.0f,1.0f);
     voiceSources[12]=releasing_ ? 0.0f : 1.0f;
-    if(observe) visualization_.sources=voiceSources;
-    if(compiled.hasFxVoiceRoutes()) lastSources_=voiceSources;
+    if(!nestedVoice) {
+        if(observe) visualization_.sources=voiceSources;
+        if(compiled.hasFxVoiceRoutes() || compiled.needsNewestVoiceSources()) lastSources_=voiceSources;
+    }
     auto& local=localFrame_;const ModulationFrame* effective=&global;
     const bool voiceOperators=compiled.hasVoiceOperators();
     const bool noteOn=pendingNoteOn_,noteOff=pendingNoteOff_,retrigger=pendingRetrigger_;
     pendingNoteOn_=pendingNoteOff_=pendingRetrigger_=false;
-    if(compiled.hasVoiceRoutes() || voiceOperators) {
+    if(compiled.hasVoiceRoutes() || voiceOperators || nestedVoice) {
         // N07: only the active modules are copied per sample (full copy on the
         // decimated observation ticks, which publish every module slot).
-        if(observe) local=global; else local.copyForVoice(global,topology.active,topology.activeCount,compiled.voiceModuleMask(),stereoPlan);
-        // N04 per-voice CONTROL operators: this voice's sources, this voice's state.
+        if(observe) local=global; else local.copyForVoice(global,topology.active,topology.activeCount,compiled.voiceModuleMask(),stereoPlan,compiled.hasNestedPlan());
         if(voiceOperators) {
             local.events.noteOn=noteOn;local.events.noteOff=noteOff;
             local.events.retrigger=retrigger;local.events.gate=!releasing_;
             local.events.voiceSeed=voiceSeed();
+        }
+        if(nestedVoice) {
+            runVoiceProgram<Stereo>(compiled,modulation,global,local,voiceSources,voiceStereo,sourceLfoScale,observe);
+            if(observe) visualization_.sources=voiceSources;
+            if(compiled.hasFxVoiceRoutes() || compiled.needsNewestVoiceSources()) lastSources_=voiceSources;
+        } else if(voiceOperators) {
+            // N04 per-voice CONTROL operators: this voice's sources, this voice's state.
             compiled.evaluateVoiceOperators(local,voiceSources,operatorState_,&operatorEventCounts_,&global,stereoPlan ? &voiceStereo : nullptr);
         }
-        if(compiled.hasVoiceRoutes()) compiled.voiceFrame(local,voiceSources,sampleRate_,stereoPlan ? &voiceStereo : nullptr);
+        if(compiled.hasVoiceRoutes()) compiled.voiceFrame(local,voiceSources,sampleRate_,stereoPlan ? &voiceStereo : nullptr,&global);
         effective=&local;
     }
     // N05 targets act after this sample's evaluation (effective next sample).
