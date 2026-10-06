@@ -946,6 +946,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     voiceProcessModules_.fill(false);
     voiceModuleMask_=0;
     smoothingActive_=false;
+    movingCount_=0;
     filterEnabled_=state.filterEnabled;
     // N04: operators in topological order, inputs resolved to slots, ranges
     // and execution domains propagated. Fixed arrays; no allocation.
@@ -1122,8 +1123,15 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                             if(oldRouted[q]==routedOutput_[r]) { g.weight[sourceSlotCount+r]=old[j].weight[sourceSlotCount+q]; break; }
                     break;
                 }
-            for(std::size_t s=0;s<totalSlotCount;++s)
+            for(std::size_t s=0;s<totalSlotCount;++s) {
                 if(std::abs(g.target[s]-g.weight[s])>1.0e-6f) smoothingActive_=true;
+                // Exact inequality: a tiny delta still snaps on the first
+                // advance, exactly as the full scan did.
+                if(!(g.target[s]==g.weight[s])) {
+                    if(movingCount_<movingCapacity) moving_[movingCount_]={static_cast<std::uint8_t>(i),static_cast<std::uint8_t>(s)};
+                    ++movingCount_;
+                }
+            }
         }
         g.globalSlotCount=0;g.voiceSlotCount=0;
         for(std::size_t s=0;s<globalSourceCount;++s)
@@ -1226,19 +1234,24 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
 void CompiledModulation::advance(float alpha) noexcept {
     if(!smoothingActive_) return;
     bool stillMoving=false;
-    for(std::size_t i=0;i<count_;++i) {
-        for(std::size_t s=0;s<totalSlotCount;++s) {
-            auto& value=groups_[i].weight[s];
-            const float target=groups_[i].target[s];
-            const float delta=target-value;
-            if(std::abs(delta)<=1.0e-5f) {
-                value=target;
-                continue;
-            }
-            value+=alpha*delta;
-            if(std::abs(target-value)>1.0e-5f) stillMoving=true;
-            else value=target;
+    const auto glide=[&](std::size_t i,std::size_t s) noexcept {
+        auto& value=groups_[i].weight[s];
+        const float target=groups_[i].target[s];
+        const float delta=target-value;
+        if(std::abs(delta)<=1.0e-5f) {
+            value=target;
+            return;
         }
+        value+=alpha*delta;
+        if(std::abs(target-value)>1.0e-5f) stillMoving=true;
+        else value=target;
+    };
+    if(movingCount_<=movingCapacity) {
+        // Per sample while a route amount glides: only the slots that moved.
+        for(std::size_t k=0;k<movingCount_;++k) glide(moving_[k].group,moving_[k].slot);
+    } else {
+        for(std::size_t i=0;i<count_;++i)
+            for(std::size_t s=0;s<totalSlotCount;++s) glide(i,s);
     }
     smoothingActive_=stillMoving;
 }

@@ -972,6 +972,14 @@ private:
     bool voiceFilter_=false;
     bool filterEnabled_=true;
     bool smoothingActive_=false;
+    // mct-origami-dsp-performance-stereo-chain: the (group, slot) pairs whose
+    // weight differs from its target after compile. advance() glides only
+    // these (every other slot is already at its target: a no-op); a list that
+    // would overflow falls back to the full scan.
+    struct MovingSlot { std::uint8_t group=0,slot=0; };
+    static constexpr std::size_t movingCapacity=128;
+    std::array<MovingSlot,movingCapacity> moving_{};
+    std::size_t movingCount_=0;
 
     // P06: tan() is prepared into a fixed coefficient basis table off RT.
     dsp::LowPassCoefficientTable filterTable_{};

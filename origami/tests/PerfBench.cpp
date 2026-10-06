@@ -250,9 +250,14 @@ std::vector<Scenario> matrix() {
     for(double sr:{44100.0,96000.0}) m.push_back({"typical @ "+std::to_string(int(sr/1000))+" kHz",sr,256,8,typical});
     // Value edits while playing (B44): an oscillator knob republishes the
     // module snapshot; a route amount republishes the modulation state.
-    m.push_back({"knob drag: osc LEVEL, typical",48000,256,8,typical,[](OrigamiAudioProcessor& p,std::size_t b){
-        const auto id=firstOscillator(p); auto st=p.getUiOscillatorState(id);
+    // (OSC 2: OSC 1's level is a host parameter, which overrides module state.)
+    m.push_back({"knob drag: OSC 2 LEVEL, typical",48000,256,8,typical,[](OrigamiAudioProcessor& p,std::size_t b){
+        OscillatorModuleId id=0;
+        for(const auto& o:p.getUiInstrumentState().oscillators) if(o.id && o.id!=firstOscillator(p)) { id=o.id; break; }
+        auto st=p.getUiOscillatorState(id);
         st.level=0.5f+0.25f*std::sin(0.05f*float(b)); p.setUiOscillatorState(id,st); }});
+    m.push_back({"knob drag: OSC 1 LEVEL parameter, typical",48000,256,8,typical,[](OrigamiAudioProcessor& p,std::size_t b){
+        p.setUiParameter(ParameterId::OscLevel,0.5f+0.25f*std::sin(0.05f*float(b))); }});
     m.push_back({"knob drag: route amount, typical",48000,256,8,typical,[](OrigamiAudioProcessor& p,std::size_t b){
         auto mod=p.getUiInstrumentState().modulation;
         for(auto& r:mod.routes) if(r.id) { r.amount=0.2f+0.1f*std::sin(0.05f*float(b)); break; }
