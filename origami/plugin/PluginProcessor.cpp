@@ -28,6 +28,7 @@
 // mct-origami-audio-reengineer-p04-ui-telemetry-decimation
 // mct-origami-audio-reengineer-p03-midi-preallocation
 #include "PluginEditor.h"
+#include "ui/WavetableFrameOps.h"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -692,7 +693,8 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                                auxThisBlock_ ? auxPointers_.data() : nullptr,engine_.renderBusCount(),total,
                                &engine_.fxModulationOutput(),engine_.masterAfterFxActive(),engine_.blockMasterGain());
     if(fadeOutBlock) {
-        const int fade=std::max(1,std::min(total,static_cast<int>(std::lround(0.003*getSampleRate()))));
+        const double rate=runtimePreparedSampleRate_.load(std::memory_order_relaxed);
+        const int fade=std::max(1,std::min(total,static_cast<int>(std::lround(0.003*(rate>0.0 ? rate : 48000.0)))));
         for(int ch=0;ch<buffer.getNumChannels();++ch) {
             auto* x=buffer.getWritePointer(ch);
             for(int i=0;i<total;++i) x[i]*=i<fade ? 1.0f-static_cast<float>(i+1)/static_cast<float>(fade) : 0.0f;
@@ -1216,18 +1218,36 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
 }
 // ---- mct-origami-content-browser -------------------------------------------
 mct::origami::dsp::Wavetable OrigamiAudioProcessor::compileWavetable(const mct::origami::content::WavetableData& data) {
-    // The same canonical representation the wavetable editor commits: one
-    // full-band frame per source frame (the engine band-limits at read time).
+    // The engine's table format: per frame, band-limited levels holding
+    // harmonics 1, 2, 4 ... 512 (the renderer picks the level that cannot
+    // alias at the played pitch) and a full-band level that is the source
+    // frame exactly. Non-realtime: one FFT per frame, one inverse per level.
+    namespace ui=mct::origami::ui;
+    constexpr std::size_t n=mct::origami::content::wavetableFrameSamples;
+    static_assert(n==ui::kWavetableFrameSize,"one frame size");
     mct::origami::dsp::Wavetable table;
     table.name=data.name.toStdString();
-    table.tableLength=mct::origami::content::wavetableFrameSamples;
+    table.tableLength=n;
+    std::array<std::complex<double>,n> spectrum{},level{};
     for(int f=0;f<data.frames();++f) {
+        const float* source=data.samples.data()+static_cast<std::size_t>(f)*n;
+        for(std::size_t i=0;i<n;++i) spectrum[i]={static_cast<double>(source[i]),0.0};
+        ui::fft(spectrum,false);
         mct::origami::dsp::WavetableFrame frame;
-        mct::origami::dsp::WavetableBand band;
-        band.maximumHarmonic=static_cast<unsigned>(mct::origami::content::wavetableFrameSamples/2);
-        const auto* first=data.samples.data()+static_cast<std::size_t>(f)*mct::origami::content::wavetableFrameSamples;
-        band.samples.assign(first,first+mct::origami::content::wavetableFrameSamples);
-        frame.bands.push_back(std::move(band));
+        for(unsigned harmonics=1;harmonics<=static_cast<unsigned>(n/2);harmonics*=2) {
+            mct::origami::dsp::WavetableBand band;
+            band.maximumHarmonic=harmonics;
+            if(harmonics==n/2) band.samples.assign(source,source+n); // full band: the source itself
+            else {
+                level.fill({});
+                level[0]=spectrum[0];
+                for(std::size_t k=1;k<=harmonics;++k) { level[k]=spectrum[k]; level[n-k]=spectrum[n-k]; }
+                ui::fft(level,true);
+                band.samples.resize(n);
+                for(std::size_t i=0;i<n;++i) band.samples[i]=static_cast<float>(level[i].real());
+            }
+            frame.bands.push_back(std::move(band));
+        }
         table.frames.push_back(std::move(frame));
     }
     return table;

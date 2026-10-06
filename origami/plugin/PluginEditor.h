@@ -2008,21 +2008,9 @@ private:
             for(const auto& f:document_.frames) data.samples.insert(data.samples.end(),f.samples.begin(),f.samples.end());
             return data;
         }
-        mct::origami::dsp::Wavetable compiledWavetable() const {
-            mct::origami::dsp::Wavetable table;
-            table.name=document_.name.toStdString();
-            table.tableLength=mct::origami::ui::kWavetableFrameSize;
-            table.frames.reserve(document_.frames.size());
-            for(const auto& source:document_.frames) {
-                mct::origami::dsp::WavetableFrame frame;
-                mct::origami::dsp::WavetableBand band;
-                band.maximumHarmonic=static_cast<unsigned>(mct::origami::ui::kWavetableFrameSize/2);
-                band.samples.assign(source.samples.begin(),source.samples.end());
-                frame.bands.push_back(std::move(band));
-                table.frames.push_back(std::move(frame));
-            }
-            return table;
-        }
+        // The engine format (band-limited levels): the same compiler as every
+        // other table source (OrigamiAudioProcessor::compileWavetable).
+        mct::origami::dsp::Wavetable compiledWavetable() const;
 
         bool keyPressed(const juce::KeyPress& key) override {
             const auto mods=key.getModifiers();

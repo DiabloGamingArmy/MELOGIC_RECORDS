@@ -1070,3 +1070,7 @@ void OrigamiAudioProcessorEditor::filesDropped(const juce::StringArray& files,in
         break; // one table per oscillator
     }
 }
+
+mct::origami::dsp::Wavetable OrigamiAudioProcessorEditor::WavetableEditorSurface::compiledWavetable() const {
+    return OrigamiAudioProcessor::compileWavetable(documentData());
+}
