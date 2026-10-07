@@ -430,6 +430,7 @@ void FxRenderer::processEffect(const FxPlanStep& step,float* outL,float* outR,in
         if(!fx.processing) return; // input passes straight through
         latch();
         fx.processor->process(outL,outR,n,fx.latched.data());
+        publishNodeTelemetry(fx.node,outL,outR,n);
         return;
     }
 
@@ -448,7 +449,8 @@ void FxRenderer::processEffect(const FxPlanStep& step,float* outL,float* outR,in
         }
         std::memcpy(tmpL,outL,bytes); std::memcpy(tmpR,outR,bytes);
         for(int i=0;i<n;++i) { outL[i]*=gate[i]; outR[i]*=gate[i]; }
-        fx.processor->process(outL,outR,n,fx.latched.data());\n        publishNodeTelemetry(fx.node,outL,outR,n);
+        fx.processor->process(outL,outR,n,fx.latched.data());
+        publishNodeTelemetry(fx.node,outL,outR,n);
         float tail=0.0f;
         for(int i=0;i<n;++i) {
             if(target==0.0f) tail=std::max(tail,std::max(std::abs(outL[i]),std::abs(outR[i])));
@@ -470,7 +472,8 @@ void FxRenderer::processEffect(const FxPlanStep& step,float* outL,float* outR,in
     latch();
     const bool fading=fx.wet!=target || fx.wet!=1.0f;
     if(fading) { std::memcpy(tmpL,outL,bytes); std::memcpy(tmpR,outR,bytes); }
-    fx.processor->process(outL,outR,n,fx.latched.data());\n    publishNodeTelemetry(fx.node,outL,outR,n);
+    fx.processor->process(outL,outR,n,fx.latched.data());
+    publishNodeTelemetry(fx.node,outL,outR,n);
     if(fading) {
         for(int i=0;i<n;++i) {
             fx.wet=target>fx.wet ? std::min(target,fx.wet+bypassStep_) : std::max(target,fx.wet-bypassStep_);
