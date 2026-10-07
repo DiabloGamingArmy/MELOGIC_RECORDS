@@ -517,7 +517,6 @@ void FxRenderer::processEffect(const FxPlanStep& step,float* outL,float* outR,in
     const bool fading=fx.wet!=target || fx.wet!=1.0f;
     if(fading) { std::memcpy(tmpL,outL,bytes); std::memcpy(tmpR,outR,bytes); }
     fx.processor->process(outL,outR,n,fx.latched.data());
-    publishNodeTelemetry(fx.node,outL,outR,n);
     if(fading) {
         for(int i=0;i<n;++i) {
             fx.wet=target>fx.wet ? std::min(target,fx.wet+bypassStep_) : std::max(target,fx.wet-bypassStep_);
