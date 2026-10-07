@@ -142,4 +142,67 @@ retained; no additional full-canvas cable animation is introduced.
 
 ## Validation results
 
-Results and PR/commit references are recorded below after validation.
+### Structural / DSP-scope audit
+
+Final branch audit against baseline `153bed2c2db0f7e2874fa59a9971520c95d47223`
+confirms that this pass changes only NODES UI/telemetry presentation, its plugin
+regression coverage, and this QA record. It does not modify `core/`,
+`PluginProcessor`, effect processors, parameter descriptors, state codecs,
+routing compilation, modulation evaluation, smoothing, or the audio callback.
+The UI evaluator consumes the already-published runtime snapshot on the message
+thread; authored slider values are never written from effective modulation.
+
+The plugin regression includes an audio-transparency twin-render: one processor
+is observed through the live NODES/Matrix visualization paths while an
+identically configured processor is not observed. Their rendered float buffers
+must compare bit-for-bit equal. This is the acceptance guard for the
+"visualization must not change audio" requirement.
+
+### Regression gates
+
+The final development build completed and deployed Standalone, AU and VST3.
+The full gates passed:
+
+- plugin/UI: **1,606,314 checks**
+- core: **233,613 checks**
+- FX graph/DSP/bus: **628 checks**
+- FX stress gate: 32-node x16-voice / empty x16-voice CPU ratio **3.91971**
+- `git diff --check`: clean before the handoff commit
+
+The NODES visual regression covers: modulation arc appearance, moving effective
+dot, unchanged authored knob value, opposing-route aggregate range, disabled
+route exclusion, nested route-depth evaluation, node hover, enlarged port hit
+target, compatible-target emphasis, semantic zoom at 100/50/30%, bypass
+presentation, hidden-page telemetry suppression, and the audio-transparency
+comparison described above.
+
+### Performance / rendering audit
+
+The diagnostic harness is deliberately opt-in through
+`ORIGAMI_NODES_VISUAL_REPORT`; normal regression runs do not pay for repeated
+software snapshots or write QA images. It measures hidden refresh cost,
+5/20/60-node graphs at 100% and 30% zoom, active modulation refresh, cached
+preview memory, and a selected-EQ frame. These are software-renderer diagnostics,
+not GPU/compositor frame-time claims.
+
+During the implementation run, warmed default-zoom software rendering was
+approximately **1.3 ms for 5 nodes** and **2.3 ms for 20 nodes**. Treat those as
+diagnostic measurements rather than release thresholds: machine load, software
+snapshotting, font rasterization and cache warmth affect them. The regression
+instead enforces the architectural budget directly: hidden pages return before
+telemetry reads, offscreen nodes are excluded from repaint traversal, previews
+are lazy/cached, modulation refresh does not invalidate preview images, and
+there is no per-node FFT/worker/history allocation.
+
+### Final disposition
+
+Accepted as a **UI-only NODES visual-feedback pass**, pending the manual visual
+QA above in the actual plugin host. The intentionally deferred live per-effect
+analyzers remain out of scope until Origami has truthful, bounded per-node
+telemetry. Do not substitute MAIN OUT for node-local measurements.
+
+Handoff implementation commit: `e33aa9dd69f2f4ca077aa6d5011247b9f16d3ef5`.
+Final validation/documentation is committed on the same
+`mct-origami-nodes-visual-feedback` branch. The stacked PR targets
+`mct-origami-manual-qa-ui-wavetable-fixes`; it must not be retargeted to
+`main` while the dependency stack is still open.
