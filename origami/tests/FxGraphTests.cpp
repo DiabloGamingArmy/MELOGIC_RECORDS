@@ -2629,12 +2629,18 @@ void consolidationTests() {
 
 
 void nodeTelemetryTests() {
-    FxGraph graph=makeDefaultFxGraph();
-    const auto id=graph.addEffect(FxEffectType::Gain,{100,100});
-    FxRenderer renderer;
-    renderer.prepare(48000.0);
-    check(renderer.sync(graph),"node telemetry graph compiles");
-
+    // The node under observation must be ON the signal path: addEffect() only
+    // appends an unconnected node, which the compiler (reachable from a
+    // source AND reaching OUT) never executes. insertEffectBeforeOutput()
+    // places it between MAIN IN and MAIN OUT.
+    const auto makeGraph=[](float gainDb,bool enabled,FxNodeId& id) {
+        FxGraph graph=makeDefaultFxGraph();
+        id=graph.insertEffectBeforeOutput(FxEffectType::Gain);
+        const auto* d=findFxEffect(FxEffectType::Gain);
+        graph.setParameter(id,d->parameters[0].id,gainDb);
+        graph.setEnabled(id,enabled);
+        return graph;
+    };
     const auto makeSignal=[] {
         std::pair<std::array<float,256>,std::array<float,256>> signal;
         for(std::size_t i=0;i<signal.first.size();++i) {
@@ -2643,14 +2649,19 @@ void nodeTelemetryTests() {
         }
         return signal;
     };
+    FxNodeId id=invalidFxNodeId;
+    const auto graph=makeGraph(-6.0f,true,id);
+    FxRenderer renderer;
+    renderer.prepare(48000.0);
+    check(id!=invalidFxNodeId && renderer.sync(graph),"node telemetry graph compiles");
 
-    // Telemetry is opt-in. A hidden NODES page must leave the renderer silent.
+    // 1 / 13: telemetry defaults OFF; a hidden NODES page publishes nothing.
     auto disabled=makeSignal();
-    const auto disabledOriginal=disabled;
     renderer.process(disabled.first.data(),disabled.second.data(),int(disabled.first.size()));
+    check(!renderer.identity(),"the Gain node is an Effect step on the path (not the identity fast path)");
     check(!renderer.consumeNodeTelemetry(id).valid,"hidden NODES leaves node telemetry unpublished");
 
-    // Enabling visualization publishes a stable-id stereo snapshot.
+    // 2-5: enabled -> a stable-id, coherent, stereo snapshot of the node output.
     renderer.setTelemetryEnabled(true);
     auto enabled=makeSignal();
     renderer.process(enabled.first.data(),enabled.second.data(),int(enabled.first.size()));
@@ -2659,29 +2670,108 @@ void nodeTelemetryTests() {
     check(snapshot.valid && snapshot.node==id && snapshot.sequence>0,"node telemetry publishes stable-id snapshot");
     check(snapshot.peakLeft>0.0f && snapshot.peakRight>0.0f,"node telemetry publishes stereo activity");
     check(enabled==beforeRead,"consuming telemetry cannot mutate rendered audio");
+    // The node is the last before OUT and the globals are neutral: the rendered
+    // block is its output after the global stage, which recomputes
+    // dry + mix * (wet - dry) even at mix 1 (last-bit float rounding only).
+    bool samplesMatch=true;
+    for(std::size_t k=0;k<FxRenderer::telemetrySamples;++k) {
+        const auto source=std::min<std::size_t>(255,(k*256)/FxRenderer::telemetrySamples);
+        samplesMatch=samplesMatch && std::abs(snapshot.left[k]-enabled.first[source])<=1.0e-6f && std::abs(snapshot.right[k]-enabled.second[source])<=1.0e-6f;
+    }
+    check(samplesMatch,"the snapshot holds the node's real output samples (coherent)");
+    check(std::abs(snapshot.peakLeft-*std::max_element(enabled.first.begin(),enabled.first.end(),[](float a,float b){return std::abs(a)<std::abs(b);}))<1.0e-6f
+          || snapshot.peakLeft>=std::abs(enabled.first[0]),"peaks follow the node output");
 
-    // Peak meters are consume/reset, while the sample snapshot remains readable.
+    // 6: peaks are consume/reset; the sample snapshot stays readable.
     const auto second=renderer.consumeNodeTelemetry(id);
     check(second.valid && second.sequence==snapshot.sequence
           && second.peakLeft==0.0f && second.peakRight==0.0f,
           "node peaks consume/reset while sample snapshot remains readable");
 
-    auto missing=renderer.consumeNodeTelemetry(0xf00du);
-    check(!missing.valid,"unknown node has no fabricated telemetry");
+    // 7: unknown ids are never fabricated.
+    check(!renderer.consumeNodeTelemetry(0xf00du).valid && !renderer.consumeNodeTelemetry(invalidFxNodeId).valid,"unknown node has no fabricated telemetry");
 
-    // Turning telemetry back off freezes the published sequence. Rendering is
-    // observationally identical whether telemetry collection is enabled or not.
+    // 8: disabling stops future publication; by contract the last snapshot stays readable.
     renderer.setTelemetryEnabled(false);
     auto offAgain=makeSignal();
     renderer.process(offAgain.first.data(),offAgain.second.data(),int(offAgain.first.size()));
     const auto afterDisable=renderer.consumeNodeTelemetry(id);
     check(afterDisable.valid && afterDisable.sequence==snapshot.sequence,
           "disabled node telemetry does not publish a new snapshot");
-    check(disabledOriginal.first==enabled.first && disabledOriginal.second==enabled.second
-          && disabledOriginal.first==offAgain.first && disabledOriginal.second==offAgain.second,
-          "node telemetry on/off is bit-identical for rendered audio");
+    check(afterDisable.peakLeft==0.0f && afterDisable.peakRight==0.0f,"disabled telemetry accumulates no peaks");
+
+    // 10: telemetry on / off is audio-transparent. Two independently prepared
+    // renderers with the same graph and input (identical state at every step).
+    {
+        FxNodeId a=invalidFxNodeId,b=invalidFxNodeId;
+        FxRenderer on,off;
+        on.prepare(48000.0); off.prepare(48000.0);
+        on.sync(makeGraph(-6.0f,true,a)); off.sync(makeGraph(-6.0f,true,b));
+        on.setTelemetryEnabled(true);
+        bool identical=true;
+        for(int block=0;block<16;++block) {
+            auto x=makeSignal(),y=makeSignal();
+            on.process(x.first.data(),x.second.data(),256);
+            off.process(y.first.data(),y.second.data(),256);
+            identical=identical && x==y;
+            on.consumeNodeTelemetry(a);
+        }
+        check(identical,"node telemetry on/off is bit-identical for rendered audio");
+    }
+
+    // 12: bypass / crossfade -> the snapshot is the FINAL node output (dry when bypassed).
+    {
+        FxNodeId b=invalidFxNodeId;
+        FxRenderer bypassed;
+        bypassed.prepare(48000.0);
+        bypassed.setBypassMode(FxBypassMode::Hard);
+        bypassed.sync(makeGraph(-12.0f,false,b));
+        bypassed.setTelemetryEnabled(true);
+        auto x=makeSignal(); const auto dry=x;
+        bypassed.process(x.first.data(),x.second.data(),256);
+        const auto t=bypassed.consumeNodeTelemetry(b);
+        check(t.valid && std::abs(t.left[10]-dry.first[(10*256)/FxRenderer::telemetrySamples])<=1.0e-6f,"a bypassed node reports its final (dry) output");
+        FxGraph live=makeGraph(-12.0f,true,b);
+        bypassed.setBypassMode(FxBypassMode::Crossfade);
+        bypassed.sync(live);
+        float lastCaptured=1.0f; bool tracks=true;
+        for(int block=0;block<40;++block) {
+            auto y=makeSignal();
+            bypassed.process(y.first.data(),y.second.data(),256);
+            const auto snap=bypassed.consumeNodeTelemetry(b);
+            const auto source=(10*256)/FxRenderer::telemetrySamples;
+            tracks=tracks && snap.valid && std::abs(snap.left[10]-y.first[source])<=1.0e-6f;
+            lastCaptured=std::abs(snap.left[10]);
+        }
+        check(tracks,"through the crossfade the snapshot is the node's final output, block by block");
+        check(lastCaptured<std::abs(dry.first[(10*256)/FxRenderer::telemetrySamples]),"after the crossfade the snapshot carries the -12 dB output");
+    }
+
+    // 9: graph / node churn never exhausts the fixed slots.
+    {
+        FxRenderer churn;
+        churn.prepare(48000.0);
+        churn.setTelemetryEnabled(true);
+        FxGraph g=makeDefaultFxGraph();
+        FxNodeId previous=invalidFxNodeId,current=invalidFxNodeId;
+        bool allPublished=true;
+        for(std::size_t round=0;round<FxGraph::maxNodes*3;++round) {
+            if(previous!=invalidFxNodeId) g.removeNode(previous);
+            current=g.insertEffectBeforeOutput(FxEffectType::Gain);
+            churn.sync(g);
+            auto x=makeSignal();
+            churn.process(x.first.data(),x.second.data(),256);
+            allPublished=allPublished && churn.consumeNodeTelemetry(current).valid;
+            previous=current;
+        }
+        check(allPublished,"after 3 x maxNodes delete / recreate rounds every new node still gets a slot");
+        check(!churn.consumeNodeTelemetry(1).valid || g.findNode(1)!=nullptr,"a deleted node's telemetry is released");
+        churn.prepare(48000.0);
+        check(!churn.consumeNodeTelemetry(current).valid,"re-prepare releases every slot");
+    }
 
 #ifndef ORIGAMI_SANITIZED
+    // 11: zero audio-thread allocation while publishing and adopting plans.
     renderer.setTelemetryEnabled(true);
     auto allocationSignal=makeSignal();
     allocations=0;guardAllocations=true;

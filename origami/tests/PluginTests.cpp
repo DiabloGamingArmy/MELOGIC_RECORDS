@@ -3838,6 +3838,38 @@ void nodesMenuHierarchyAudit() {
     check(disabled && reason.contains("one sequencer"),"a second SEQUENCER stays disabled in the tree, with its reason");
 }
 
+// NODES P03: node telemetry is published only while NODES is on screen.
+void nodesTelemetryVisibilityAudit() {
+    using namespace mct::origami;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    fx::FxNodeId gain=fx::invalidFxNodeId;
+    p.getUiFxDocument().edit([&](fx::FxGraph& g){ gain=g.insertEffectBeforeOutput(fx::FxEffectType::Gain); return gain!=fx::invalidFxNodeId; });
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi,none;
+    midi.addEvent(juce::MidiMessage::noteOn(1,60,0.9f),0);
+    const auto block=[&](juce::MidiBuffer& m){ audio.clear(); p.processBlock(audio,m); m.clear(); };
+    const auto sequence=[&]{ return p.consumeUiFxNodeTelemetry(mainBusId,gain).sequence; };
+    block(midi); block(none);
+    check(gain!=fx::invalidFxNodeId && !p.consumeUiFxNodeTelemetry(mainBusId,gain).valid,"no editor: no node telemetry is published");
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::OrigamiHeader* header=nullptr; walk(*editor,[&](juce::Component& c){ if(auto* h=dynamic_cast<ui::OrigamiHeader*>(&c)) header=h; });
+    block(none);
+    check(!p.consumeUiFxNodeTelemetry(mainBusId,gain).valid,"SYNTH page: NODES hidden, nothing published");
+    header->selectMode(2);
+    block(none); const auto first=sequence(); block(none);
+    check(first>0 && sequence()>first,"NODES shown: the node publishes every block");
+    header->selectMode(0);
+    const auto frozen=sequence(); block(none); block(none);
+    check(sequence()==frozen,"NODES hidden again: publication stops");
+    header->selectMode(2); block(none);
+    check(sequence()>frozen,"shown again: publication resumes");
+    editorOwner.reset();
+    const auto closed=sequence(); block(none); block(none);
+    check(sequence()==closed,"closing the editor stops publication (no orphaned telemetry)");
+}
+
 // mct-origami-manual-qa-ui-wavetable-fixes: BEND fields, MAIN IN meters, macro X.
 void manualQaUiAudit() {
     using namespace mct::origami;
@@ -5816,6 +5848,7 @@ void run() {
     contentBrowserAudit();
     wavetableEditorCommitAudit();
     manualQaUiAudit();
+    nodesTelemetryVisibilityAudit();
     lfoEditorControlsAudit();
     typographyAudit();
     macroGridAndOscHeaderAudit();
