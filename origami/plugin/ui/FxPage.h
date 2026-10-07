@@ -455,6 +455,7 @@ struct FxPageHost {
     // mct-origami-manual-qa-ui-wavetable-fixes: peak (L, R) of the signal
     // entering a bus's graph (its IN node) since the last read.
     std::function<std::pair<float,float>(BusId)> inputPeaks;
+    std::function<fx::FxRenderer::NodeTelemetrySnapshot(BusId,fx::FxNodeId)> nodeTelemetry;
 };
 
 class FxPage final : public juce::Component, private juce::Timer {
@@ -557,6 +558,7 @@ public:
     std::pair<float,float> inputMeterLevels(fx::FxNodeId id) const { const auto it=inputMeters_.find(id); return it!=inputMeters_.end() ? it->second : std::pair<float,float>{0.0f,0.0f}; }
     void meterTickForTesting() { updateMeters(); }
     void updateMeters();
+    fx::FxRenderer::NodeTelemetrySnapshot nodeTelemetry(fx::FxNodeId id) const { return host_.nodeTelemetry ? host_.nodeTelemetry(bus_,id) : fx::FxRenderer::NodeTelemetrySnapshot{}; }
     void zoomIn();
     void zoomOut();
     void zoomReset();
