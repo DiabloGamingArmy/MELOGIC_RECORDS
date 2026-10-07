@@ -5695,6 +5695,19 @@ void nodesVisualFeedbackAudit() {
     visual.routeSources[slot]=1;
     page->refreshVisualFeedback();
     check(negative!=bare && negative!=hash(*knob),"FX modulation arc appears and effective dot moves");
+    // P01 geometry: modulation must live on a visibly separate outer radial
+    // track instead of painting over the authored white magnitude arc.
+    {
+        const auto image=knob->createComponentSnapshot(knob->getLocalBounds(),true,2.0f);
+        const auto centre=image.getBounds().toFloat().getCentre();
+        float furthestRed=0.0f;
+        for(int y=0;y<image.getHeight();++y) for(int x=0;x<image.getWidth();++x) {
+            const auto pixel=image.getPixelAt(x,y);
+            if(pixel.getRed()>150 && pixel.getRed()>pixel.getGreen()*1.8f && pixel.getRed()>pixel.getBlue()*1.8f)
+                furthestRed=std::max(furthestRed,juce::Point<float>(float(x),float(y)).getDistanceFrom(centre));
+        }
+        check(furthestRed>image.getWidth()*0.43f,"FX modulation overlay occupies dedicated outer knob track");
+    }
     check(knob->getValue()==base,"visual feedback never changes authored knob value");
     saveNode("modulation-positive");
     state.modulation.routes[1]={2,true,ModSource::Lfo2,address,-.4f,true};

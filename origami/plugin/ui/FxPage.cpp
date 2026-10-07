@@ -36,7 +36,7 @@ public:
             if(frame.bus[i]==fxAddressBus(address) && frame.node[i]==node && frame.parameter[i]==fxAddressParameter(address))
                 current=juce::jlimit(0.0f,1.0f,current+frame.offset[i]);
         if(isRotary())
-            paintKnobModulationOverlay(g,getLocalBounds().toFloat().reduced(3.0f),range.lo,range.hi,
+            paintKnobModulationOverlay(g,getLocalBounds().toFloat().expanded(1.0f),range.lo,range.hi,
                                        range.hasDepth,range.anyRoute,true,current,range.selected);
         else if(range.anyRoute) {
             const auto r=getLocalBounds().toFloat().reduced(3.0f);
@@ -594,7 +594,10 @@ void FxNodeComponent::paint(juce::Graphics& g) {
             previewDirty_=false;
         }
         g.drawImageAt(previewImage_,12,40);
-        text(g,node_.enabled ? "PARAMETER MODEL" : "BYPASSED",{18,42,getWidth()-36,12},10.0f,Palette::muted(),juce::Justification::topRight);
+        // The preview itself is primary. Keep model/bypass provenance as a quiet
+        // caption rather than laying a prominent label over the visualization.
+        text(g,node_.enabled ? "MODEL" : "BYPASSED",{18,42,getWidth()-36,12},Type::secondary,
+             Palette::muted().withAlpha(.62f),juce::Justification::topRight);
         const auto quick=parametersFor(node_,true,std::nullopt);
         auto labels=local.withTrimmedTop(local.getHeight()-22).reduced(12,0);
         const int width=labels.getWidth()/juce::jmax<int>(1,int(quick.size()));
