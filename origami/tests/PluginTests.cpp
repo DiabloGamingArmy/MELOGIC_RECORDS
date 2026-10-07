@@ -5683,6 +5683,7 @@ void nodesVisualFeedbackAudit() {
     const auto slot=modulationSourceSlot(ModSource::Lfo1,state.modulation);
     visual.routeSources[slot]=-1;
     page->refreshVisualFeedback();
+    knob->repaint();
     const auto negative=hash(*knob);
     const auto saveNode=[&](const char* name) {
         if(const char* folder=std::getenv("ORIGAMI_NODES_VISUAL_REPORT")) {
@@ -5694,6 +5695,7 @@ void nodesVisualFeedbackAudit() {
     saveNode("modulation-negative");
     visual.routeSources[slot]=1;
     page->refreshVisualFeedback();
+    knob->repaint();
     check(negative!=bare && negative!=hash(*knob),"FX modulation arc appears and effective dot moves");
     // P01 geometry: modulation must live on a visibly separate outer radial
     // track instead of painting over the authored white magnitude arc.
