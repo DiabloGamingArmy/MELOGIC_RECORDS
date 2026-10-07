@@ -11,6 +11,7 @@
 #include "core/nodes/ControlGraph.h"
 #include "NativeChoiceMenu.h"
 #include "core/fx/FxGraph.h"
+#include "core/fx/FxRenderer.h"
 #include "core/fx/FxWorkspace.h"
 #include <array>
 #include <functional>
