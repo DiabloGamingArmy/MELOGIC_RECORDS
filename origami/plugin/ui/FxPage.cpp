@@ -3688,6 +3688,20 @@ void FxPage::refreshVisualFeedback() {
         for(const auto& n:graph().nodes()) if(auto* c=canvas_.nodeComponent(n.id))
             if(view_.getLocalArea(c,c->getLocalBounds()).intersects(view_.getLocalBounds())) visit(visit,*c);
     visit(visit,*modulePanel_);
+    // Live audio previews: selected node every tick (30 Hz); other visible
+    // effect nodes every other tick (15 Hz). Hidden/offscreen/minimal-zoom
+    // nodes consume no node telemetry and perform no DFT work.
+    if(host_.nodeTelemetry && graphZoom()>=.6f) {
+        for(const auto& n:graph().nodes()) {
+            if(n.kind!=FxNodeKind::Effect) continue;
+            if(n.id!=selected_ && (visualRefreshCount_&1u)!=0) continue;
+            auto* component=canvas_.nodeComponent(n.id);
+            if(component==nullptr || !component->isVisible()) continue;
+            const auto visible=view_.getLocalArea(component,component->getLocalBounds()).getIntersection(view_.getLocalBounds());
+            if(visible.isEmpty()) continue;
+            component->setTelemetry(host_.nodeTelemetry(bus_,n.id));
+        }
+    }
     if(visualRuntime_.modulatedMacros!=0) macrosPanel_->repaint();
 }
 
