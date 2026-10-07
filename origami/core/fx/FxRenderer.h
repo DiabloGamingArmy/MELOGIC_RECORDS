@@ -155,6 +155,7 @@ private:
         std::atomic<std::uint64_t> sequence{0};
     };
     std::array<NodeTelemetrySlot,FxGraph::maxNodes> nodeTelemetry_{};
+    std::atomic<bool> telemetryEnabled_{false};
     void publishNodeTelemetry(FxNodeId,const float*,const float*,int) noexcept;
 };
 }
