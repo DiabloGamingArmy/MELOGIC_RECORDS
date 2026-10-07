@@ -37,6 +37,7 @@ public:
     // entering `bus`'s graph (what its IN node emits) since the last call.
     std::pair<float,float> consumeInputPeaks(FxBusId bus) noexcept;
     FxRenderer::NodeTelemetrySnapshot consumeNodeTelemetry(FxBusId bus,FxNodeId node) noexcept;
+    void setNodeTelemetryEnabled(FxBusId bus,bool enabled) noexcept;
     const FxRenderer& renderer(std::size_t slot) const noexcept { return *renderers_[slot]; }
 
     // ---- realtime. aux: 2*(maxRenderBuses-1) planar pointers (may be null).
