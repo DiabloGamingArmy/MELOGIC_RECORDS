@@ -2633,6 +2633,7 @@ void nodeTelemetryTests() {
     const auto id=graph.addEffect(FxEffectType::Gain,{100,100});
     FxRenderer renderer;
     renderer.prepare(48000.0);
+    renderer.setTelemetryEnabled(true);
     check(renderer.sync(graph),"node telemetry graph compiles");
     std::array<float,256> silentL{},silentR{};
     renderer.process(silentL.data(),silentR.data(),int(silentL.size()));
