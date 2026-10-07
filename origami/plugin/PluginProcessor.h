@@ -182,6 +182,7 @@ public:
     mct::origami::fx::FxRenderer::NodeTelemetrySnapshot consumeUiFxNodeTelemetry(mct::origami::fx::FxBusId bus,mct::origami::fx::FxNodeId node) noexcept {
         return fxEnvironment_.consumeNodeTelemetry(bus,node);
     }
+    void setUiFxNodeTelemetryEnabled(mct::origami::fx::FxBusId bus,bool enabled) noexcept { fxEnvironment_.setNodeTelemetryEnabled(bus,enabled); }
     std::uint64_t getFxCompileCount() const noexcept { return fxEnvironment_.compileCount(); }
     mct::origami::fx::FxViewState& getUiFxViewState() noexcept { return fxViewState_; }
     // mct-origami-nodes-n03-control: NODES CONTROL-layer view metadata
