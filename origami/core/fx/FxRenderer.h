@@ -148,5 +148,13 @@ private:
 
     std::vector<float> pool_;             // (maxNodes + 3) stereo chunk buffers
     std::atomic<float> peakLeft_{0.0f},peakRight_{0.0f};
+    struct NodeTelemetrySlot {
+        std::atomic<FxNodeId> node{invalidFxNodeId};
+        std::array<std::atomic<float>,telemetrySamples> left{},right{};
+        std::atomic<float> peakLeft{0.0f},peakRight{0.0f};
+        std::atomic<std::uint64_t> sequence{0};
+    };
+    std::array<NodeTelemetrySlot,FxGraph::maxNodes> nodeTelemetry_{};
+    void publishNodeTelemetry(FxNodeId,const float*,const float*,int) noexcept;
 };
 }
