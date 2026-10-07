@@ -99,6 +99,15 @@ public:
     std::uint64_t compileCount() const noexcept { return compileCount_; }
 
     // ---- UI telemetry: bounded, lock-free, consumed with reset.
+    // Node telemetry contract (P03):
+    // - opt-in: nothing is published (no work at all) until enabled;
+    // - one snapshot per node per block, of the signal LEAVING the node
+    //   (after bypass / crossfade), from the Effect step that renders it;
+    // - disabling stops future publication only: the last snapshot stays
+    //   readable (same sequence) until its node leaves the plan or the
+    //   renderer is re-prepared, which release the slot;
+    // - samples are read coherently (seqlock); peaks are consume / reset;
+    // - an id that is not a live node of the plan never has telemetry.
     std::pair<float,float> consumePeaks() noexcept;
 
     static constexpr std::size_t telemetrySamples=64;
@@ -106,7 +115,7 @@ public:
         FxNodeId node=invalidFxNodeId;
         std::array<float,telemetrySamples> left{},right{};
         float peakLeft=0.0f,peakRight=0.0f;
-        std::uint64_t sequence=0;
+        std::uint64_t sequence=0; // publications of this node since its slot was claimed
         bool valid=false;
     };
     NodeTelemetrySnapshot consumeNodeTelemetry(FxNodeId) noexcept;
@@ -159,14 +168,23 @@ private:
 
     std::vector<float> pool_;             // (maxNodes + 3) stereo chunk buffers
     std::atomic<float> peakLeft_{0.0f},peakRight_{0.0f};
+    // One writer (the audio thread; prepare() with audio stopped). `guard` is
+    // a seqlock: odd while the slot is written, so a reader never accepts a
+    // half-written snapshot. `node` and `published` are written under it.
     struct NodeTelemetrySlot {
+        std::atomic<std::uint64_t> guard{0};
         std::atomic<FxNodeId> node{invalidFxNodeId};
+        std::atomic<std::uint64_t> published{0};
         std::array<std::atomic<float>,telemetrySamples> left{},right{};
         std::atomic<float> peakLeft{0.0f},peakRight{0.0f};
-        std::atomic<std::uint64_t> sequence{0};
     };
     std::array<NodeTelemetrySlot,FxGraph::maxNodes> nodeTelemetry_{};
     std::atomic<bool> telemetryEnabled_{false};
     void publishNodeTelemetry(FxNodeId,const float*,const float*,int) noexcept;
+    // Frees the slots of nodes that are not Effect steps of the active plan
+    // (graph churn never exhausts the fixed slot array). Audio thread, on
+    // plan adoption only; bounded by maxNodes x steps.
+    void releaseStaleTelemetry() noexcept;
+    static void releaseTelemetrySlot(NodeTelemetrySlot&) noexcept;
 };
 }

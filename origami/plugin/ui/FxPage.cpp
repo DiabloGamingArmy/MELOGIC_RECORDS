@@ -3600,7 +3600,12 @@ FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings h
     refreshSidebar();
 }
 
-FxPage::~FxPage() { stopTimer(); sidebar_.setMatrixView(nullptr); }
+FxPage::~FxPage() {
+    // P03: telemetry is on only while NODES is on screen; a closed editor
+    // must not leave the audio thread publishing.
+    if(host_.nodeTelemetryEnabled) host_.nodeTelemetryEnabled(bus_,false);
+    stopTimer(); sidebar_.setMatrixView(nullptr);
+}
 
 juce::Component& FxPage::moduleParametersPanel() noexcept { return *modulePanel_; }
 juce::Component& FxPage::macrosPanel() noexcept { return *macrosPanel_; }

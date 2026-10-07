@@ -184,6 +184,7 @@ void FxRenderer::prepare(double sampleRate) {
     delete active_;
     active_=nullptr;
     sampleRate_=sampleRate;
+    for(auto& slot:nodeTelemetry_) releaseTelemetrySlot(slot); // a re-prepared renderer has no telemetry
     modulationGeneration_=~std::uint64_t{0};
     modulationPlan_=nullptr;
     smoothing_=float(std::exp(-1.0/(0.02*sampleRate)));
@@ -257,6 +258,7 @@ void FxRenderer::adoptPending() noexcept {
         retireWrite_.store(write+1,std::memory_order_release);
     }
     active_=next;
+    releaseStaleTelemetry(); // deleted / replaced nodes give their slots back
 }
 
 std::pair<float,float> FxRenderer::consumePeaks() noexcept {
@@ -272,32 +274,70 @@ void FxRenderer::publishNodeTelemetry(FxNodeId node,const float* left,const floa
         if(id==invalidFxNodeId && slot==nullptr) slot=&candidate;
     }
     if(slot==nullptr) return;
-    if(slot->node.load(std::memory_order_relaxed)!=node) slot->node.store(node,std::memory_order_relaxed);
     float pl=0.0f,pr=0.0f;
     for(int i=0;i<n;++i) { pl=std::max(pl,std::abs(left[i])); pr=std::max(pr,std::abs(right[i])); }
-    if(pl>slot->peakLeft.load(std::memory_order_relaxed)) slot->peakLeft.store(pl,std::memory_order_relaxed);
-    if(pr>slot->peakRight.load(std::memory_order_relaxed)) slot->peakRight.store(pr,std::memory_order_relaxed);
+    // Seqlock write: odd guard, data, even guard.
+    const auto g=slot->guard.load(std::memory_order_relaxed);
+    slot->guard.store(g+1,std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    if(slot->node.load(std::memory_order_relaxed)!=node) { slot->node.store(node,std::memory_order_relaxed); slot->published.store(0,std::memory_order_relaxed); }
     for(std::size_t i=0;i<telemetrySamples;++i) {
         const int source=std::min(n-1,int((i*std::size_t(n))/telemetrySamples));
         slot->left[i].store(left[source],std::memory_order_relaxed);
         slot->right[i].store(right[source],std::memory_order_relaxed);
     }
-    slot->sequence.fetch_add(1,std::memory_order_release);
+    slot->published.store(slot->published.load(std::memory_order_relaxed)+1,std::memory_order_relaxed);
+    slot->guard.store(g+2,std::memory_order_release);
+    // Peaks are a separate consume / reset channel (max since the last read).
+    if(pl>slot->peakLeft.load(std::memory_order_relaxed)) slot->peakLeft.store(pl,std::memory_order_relaxed);
+    if(pr>slot->peakRight.load(std::memory_order_relaxed)) slot->peakRight.store(pr,std::memory_order_relaxed);
+}
+
+void FxRenderer::releaseTelemetrySlot(NodeTelemetrySlot& slot) noexcept {
+    const auto g=slot.guard.load(std::memory_order_relaxed);
+    slot.guard.store(g+1,std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    slot.node.store(invalidFxNodeId,std::memory_order_relaxed);
+    slot.published.store(0,std::memory_order_relaxed);
+    slot.guard.store(g+2,std::memory_order_release);
+    slot.peakLeft.store(0.0f,std::memory_order_relaxed);
+    slot.peakRight.store(0.0f,std::memory_order_relaxed);
+}
+
+void FxRenderer::releaseStaleTelemetry() noexcept {
+    for(auto& slot:nodeTelemetry_) {
+        const auto id=slot.node.load(std::memory_order_relaxed);
+        if(id==invalidFxNodeId) continue;
+        bool live=false;
+        if(active_!=nullptr)
+            for(std::size_t s=0;s<active_->stepCount && !live;++s)
+                live=active_->steps[s].kind==FxStepKind::Effect && active_->steps[s].instance!=nullptr && active_->steps[s].instance->node==id;
+        if(!live) releaseTelemetrySlot(slot);
+    }
 }
 
 FxRenderer::NodeTelemetrySnapshot FxRenderer::consumeNodeTelemetry(FxNodeId node) noexcept {
     NodeTelemetrySnapshot out; out.node=node;
+    if(node==invalidFxNodeId) return out;
     for(auto& slot:nodeTelemetry_) {
         if(slot.node.load(std::memory_order_acquire)!=node) continue;
-        for(int attempt=0;attempt<2;++attempt) {
-            const auto before=slot.sequence.load(std::memory_order_acquire);
+        // Seqlock read: accept the samples only if no write overlapped them.
+        bool coherent=false;
+        for(int attempt=0;attempt<4 && !coherent;++attempt) {
+            const auto before=slot.guard.load(std::memory_order_acquire);
+            if(before&1u) continue;
+            const bool ours=slot.node.load(std::memory_order_relaxed)==node;
+            const auto published=slot.published.load(std::memory_order_relaxed);
             for(std::size_t i=0;i<telemetrySamples;++i) {
                 out.left[i]=slot.left[i].load(std::memory_order_relaxed);
                 out.right[i]=slot.right[i].load(std::memory_order_relaxed);
             }
-            const auto after=slot.sequence.load(std::memory_order_acquire);
-            if(before==after) { out.sequence=after; out.valid=after!=0; break; }
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if(slot.guard.load(std::memory_order_relaxed)!=before) continue;
+            if(!ours) return NodeTelemetrySnapshot{node,{},{},0.0f,0.0f,0,false}; // released meanwhile
+            out.sequence=published; out.valid=published!=0; coherent=true;
         }
+        if(!coherent) { out.left.fill(0.0f); out.right.fill(0.0f); } // still being written: next frame
         out.peakLeft=slot.peakLeft.exchange(0.0f,std::memory_order_acq_rel);
         out.peakRight=slot.peakRight.exchange(0.0f,std::memory_order_acq_rel);
         return out;
