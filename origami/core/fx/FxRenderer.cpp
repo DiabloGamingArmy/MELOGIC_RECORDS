@@ -418,6 +418,10 @@ void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
             case FxStepKind::Effect:
                 copyInput();
                 processEffect(step,outL,outR,n);
+                // P03 telemetry is observational only: capture the signal that
+                // actually leaves the node, after bypass/crossfade semantics.
+                // This call is a no-op unless the NODES UI enabled telemetry.
+                if(step.instance!=nullptr) publishNodeTelemetry(step.instance->node,outL,outR,n);
                 break;
             }
         }
@@ -472,7 +476,6 @@ void FxRenderer::processEffect(const FxPlanStep& step,float* outL,float* outR,in
         if(!fx.processing) return; // input passes straight through
         latch();
         fx.processor->process(outL,outR,n,fx.latched.data());
-        publishNodeTelemetry(fx.node,outL,outR,n);
         return;
     }
 
@@ -492,7 +495,6 @@ void FxRenderer::processEffect(const FxPlanStep& step,float* outL,float* outR,in
         std::memcpy(tmpL,outL,bytes); std::memcpy(tmpR,outR,bytes);
         for(int i=0;i<n;++i) { outL[i]*=gate[i]; outR[i]*=gate[i]; }
         fx.processor->process(outL,outR,n,fx.latched.data());
-        publishNodeTelemetry(fx.node,outL,outR,n);
         float tail=0.0f;
         for(int i=0;i<n;++i) {
             if(target==0.0f) tail=std::max(tail,std::max(std::abs(outL[i]),std::abs(outR[i])));
