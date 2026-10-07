@@ -73,7 +73,18 @@ cp -R "$VST3_BUILD" "$HOME/Library/Audio/Plug-Ins/VST3/MCT Origami.vst3"
 
 killall -9 AudioComponentRegistrar 2>/dev/null || true
 
-echo "===== MCT ORIGAMI DEV BUILD DEPLOYED ====="
+# Host-level AU gate. Unit tests prove the processor/core contracts, but they do
+# not prove that macOS can discover, instantiate, initialize, render, and tear
+# down the installed Audio Unit wrapper. Validate the exact JUCE identity from
+# CMake (instrument / PLUGIN_CODE Orig / manufacturer Mctg) after deployment.
+if ! command -v auval >/dev/null 2>&1; then
+  echo "ERROR: auval is unavailable; cannot validate the installed Audio Unit." >&2
+  exit 1
+fi
+echo "===== RUNNING MCT ORIGAMI AUDIO UNIT VALIDATION GATE ====="
+auval -v aumu Orig Mctg
+
+echo "===== MCT ORIGAMI DEV BUILD DEPLOYED + VALIDATED ====="
 echo "Standalone: $APP_INSTALL"
 echo "AU: $HOME/Library/Audio/Plug-Ins/Components/MCT Origami.component"
 echo "VST3: $HOME/Library/Audio/Plug-Ins/VST3/MCT Origami.vst3"
