@@ -458,6 +458,7 @@ struct FxPageHost {
     // entering a bus's graph (its IN node) since the last read.
     std::function<std::pair<float,float>(BusId)> inputPeaks;
     std::function<fx::FxRenderer::NodeTelemetrySnapshot(BusId,fx::FxNodeId)> nodeTelemetry;
+    std::function<void(BusId,bool)> nodeTelemetryEnabled;
 };
 
 class FxPage final : public juce::Component, private juce::Timer {
