@@ -45,7 +45,9 @@ struct PerformanceInputSnapshot {
     std::array<std::uint8_t,128> velocity{};
 };
 struct VoiceVisualizationSnapshot {
-    std::array<float,13> sources{};
+    std::array<float,CompiledModulation::voiceSourceCount> sources{};
+    std::array<float,maxSourceInstances> instancePhases{};
+    std::array<EnvelopeRuntimeInfo,maxSourceInstances> instanceEnvelopes{};
     std::array<float,4> lfoPhases{};
     std::array<float,16> moduleSamples{};
     std::array<float,operatorOutputSlotCount> operators{}; // N04/N06 operator outputs, slot*4+port (this voice)
@@ -144,6 +146,14 @@ private:
     // dependency and prevents algebraic feedback loops.
     std::array<float,maxOscillatorModules> previousOscillatorSamples_{};
 
+    struct InstanceRuntime {
+        std::uint32_t id=0; dsp::Envelope envelope{}; Lfo lfo{};
+    };
+    std::array<InstanceRuntime,maxSourceInstances> instanceRuntime_{};
+    std::array<std::uint8_t,maxSourceInstances> instanceSlots_{};
+    std::size_t instanceCount_=0;
+    std::uint64_t instanceRevision_=~std::uint64_t{0};
+    bool instanceRetrigger_=false;
     dsp::Envelope envelope_,env2_,env3_;
     std::array<Lfo,4> noteLfos_{};
     std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFilters_{};

@@ -32,25 +32,29 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 private:
-    // Emergency DSP reset: always visible in the utility strip (an emergency
-    // control must be findable); the product logo is never a control.
+    // The identity is the emergency surface, revealed on hover or keyboard focus.
     class PanicButton final : public juce::Button,private juce::Timer {
     public:
         PanicButton():juce::Button("Emergency DSP reset") { setTooltip("PANIC: silence every voice and clear effect tails; the patch is kept"); }
+        void focusGained(FocusChangeType cause) override { juce::Button::focusGained(cause); keyboardFocus_=cause!=focusChangedByMouseClick; repaint(); }
+        void focusLost(FocusChangeType cause) override { juce::Button::focusLost(cause); keyboardFocus_=false; repaint(); }
         void confirm() { confirmed_=true; startTimer(500); repaint(); }
         void paintButton(juce::Graphics& g,bool over,bool down) override {
-            auto bounds=getLocalBounds().toFloat().reduced(.5f);
+            if(!over && !down && !keyboardFocus_) return;
+            g.setColour(Palette::background().withAlpha(.78f));
+            g.fillRect(getLocalBounds());
+            auto bounds=getLocalBounds().toFloat().withSizeKeepingCentre(140.f,36.f);
             g.setColour(confirmed_ ? signalShade(.55f,.9f) : down ? signalShade(.7f,.95f) : over ? signalShade(.35f,.9f) : Palette::raised());
             g.fillRect(bounds);
             g.setColour(confirmed_ || over ? signalSourceColour() : Palette::borderSoft());
             g.drawRect(bounds,1.0f);
             g.setColour(Palette::text());
             g.setFont(juce::FontOptions(Type::control));
-            g.drawText(confirmed_ ? "RESET" : "PANIC",getLocalBounds(),juce::Justification::centred);
+            g.drawText(confirmed_ ? "DSP RESET" : "STOP / PANIC",bounds,juce::Justification::centred);
         }
     private:
         void timerCallback() override { stopTimer(); confirmed_=false; repaint(); }
-        bool confirmed_=false;
+        bool confirmed_=false,keyboardFocus_=false;
     } panic_;
     juce::TextButton previous_{"<"},next_{">"},preset_{"Init"},browse_{"BROWSE"},save_{"SAVE"},settings_{"..."};
     std::array<juce::TextButton,5> modes_;

@@ -668,7 +668,7 @@ void lfoStereoModulation() {
         c.globalFrame(*f,src,48000.0); return f;
     };
     {
-        ModulationState st; st.lfoActiveMask=0xF; st.nextRouteId=10;
+        ModulationState st; st.filterEnabled=true; st.lfoActiveMask=0xF; st.nextRouteId=10;
         st.routes[0]=route(1,ModSource::Lfo1,ModDestination::Cutoff,.4f);
         st.routes[1]=route(2,ModSource::Macro1,ModDestination::Cutoff,.2f);
         st.routes[2]=route(3,ModSource::Lfo1,ModDestination::Pan,.5f,1);
@@ -789,7 +789,7 @@ void lfoStereoModulation() {
         // Block-size independence of both channels.
         for(int block:{64,1024}) { std::vector<float> rb; const auto lb=render(s1,block,24576,&rb); check(lb==l1 && rb==r1,"stereo modulation renders identically at any block size"); }
         // CUTOFF: stereo spectral motion, LEFT unchanged.
-        auto c0=base; c0.routes[0]=route(1,ModSource::Lfo1,ModDestination::Cutoff,.8f); std::vector<float> rc0; const auto lc0=render(c0,256,12288,&rc0);
+        auto c0=base; c0.filterEnabled=true; c0.routes[0]=route(1,ModSource::Lfo1,ModDestination::Cutoff,.8f); std::vector<float> rc0; const auto lc0=render(c0,256,12288,&rc0);
         auto c1=c0; c1.lfo1.stereo=1.0f; std::vector<float> rc1; const auto lc1=render(c1,256,12288,&rc1);
         bool differ=false; for(std::size_t i=0;i<rc1.size();++i) differ|=std::abs(rc1[i]-lc1[i])>1e-4f;
         check(lc0==rc0 && lc1==lc0 && differ,"CUTOFF: STEREO 0 identical channels; STEREO 100% RIGHT filters differently, LEFT unchanged");

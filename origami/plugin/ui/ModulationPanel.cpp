@@ -82,6 +82,34 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     :Panel("MODULATION"),setter_(std::move(setter)),getter_(std::move(getter)),
      bindings_(std::move(bindings)) {
 
+    canonicalBindings_=bindings_;
+    if(canonicalBindings_.snapshot) bindings_.snapshot=[this] {auto state=canonicalBindings_.snapshot();state.modulation=projectEditor(state.modulation);return state;};
+    if(canonicalBindings_.modulation) bindings_.modulation=[this](ModulationState edited) {
+        if(railSelected_>=14 && canonicalBindings_.snapshot) {
+            const auto actual=canonicalBindings_.snapshot().modulation;
+            const auto slot=std::size_t(railSelected_-14);
+            if(!actual.instances[slot].id || edited.instances[slot].id!=actual.instances[slot].id) return false;
+            auto& a=edited.instances[slot];
+            switch(a.family) {
+            case SourceFamily::Envelope:a.envelope=edited.env2;edited.env2=actual.env2;break;
+            case SourceFamily::Lfo:a.lfo=edited.lfo1;edited.lfo1=actual.lfo1;break;
+            case SourceFamily::Random:a.random=edited.random;edited.random=actual.random;break;
+            case SourceFamily::Function:a.function=edited.function;edited.function=actual.function;break;
+            case SourceFamily::Chaos:a.chaos=edited.chaos;edited.chaos=actual.chaos;break;
+            case SourceFamily::Drift:a.drift=edited.drift;edited.drift=actual.drift;break;
+            case SourceFamily::Sequencer:a.sequencer=edited.sequencer;edited.sequencer=actual.sequencer;break;
+            }
+        }
+        return canonicalBindings_.modulation(edited);
+    };
+    if(canonicalBindings_.envelopeTrace) bindings_.envelopeTrace=[this] {
+        auto trace=canonicalBindings_.envelopeTrace();
+        if(railSelected_>=14 && canonicalBindings_.visualization) {
+            const auto runtime=canonicalBindings_.visualization();
+            trace.envelopes[1]=runtime.instanceEnvelopes[std::size_t(railSelected_-14)];
+        }
+        return trace;
+    };
     addAndMakeVisible(sourceViewport_);
     sourceViewport_.setViewedComponent(&sourceContent_,false);
     // The source rail is intentionally scrollbar-less. JUCE still permits
@@ -95,9 +123,9 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         "LFO 1","LFO 2","LFO 3","LFO 4",
         "FUNCTION","RANDOM","CHAOS","DRIFT","SEQ","VELOCITY","NOTE"
     };
-    for(int i=0;i<14;++i) {
+    for(int i=0;i<int(tabs_.size());++i) {
         auto& slot=tabs_[static_cast<std::size_t>(i)];
-        slot=std::make_unique<ModulationSourceRow>(sourceForTab(static_cast<std::size_t>(i)),names[i],
+        slot=std::make_unique<ModulationSourceRow>(sourceForTab(static_cast<std::size_t>(i)),i<14 ? names[i] : juce::String("SOURCE"),
                                                    "MOD SOURCE TAB "+juce::String(i+1));
         auto& tab=*slot;
         sourceContent_.addAndMakeVisible(tab);
@@ -108,7 +136,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         tab.onHoverChanged=[this]{repaint();};
         tab.onClick=[this,i]{
             if(!sourceTabActive(static_cast<std::size_t>(i))) return;
-            selected_=i;
+            selectTab(i);
             for(std::size_t j=0;j<tabs_.size();++j)
                 tabs_[j]->setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);
             scrollSeconds_=0.0;
@@ -463,6 +491,7 @@ ModulationPanel::~ModulationPanel() {
 }
 
 bool ModulationPanel::sourceTabActive(std::size_t index) const noexcept {
+    if(index>=14) return index<tabs_.size() && cached_.instances[index-14].id!=0;
     if(index<=2) return (cached_.envActiveMask&(1u<<index))!=0;
     if(index>=3 && index<=6) return (cached_.lfoActiveMask&(1u<<(index-3)))!=0;
     if(index==7) return (cached_.generatorActiveMask&0x01u)!=0;
@@ -488,8 +517,8 @@ bool ModulationPanel::revealSourceAtParentPoint(juce::Point<int> parentPoint) {
         if(!sourceTabActive(i) || !tabs_[i]->isShowing()) continue;
         const auto bounds=getLocalArea(tabs_[i].get(),tabs_[i]->getLocalBounds());
         if(!bounds.contains(local)) continue;
-        if(selected_==static_cast<int>(i)) return true;
-        selected_=static_cast<int>(i);
+        if(railSelected_==static_cast<int>(i)) return true;
+        selectTab(static_cast<int>(i));
         for(std::size_t j=0;j<tabs_.size();++j)
             tabs_[j]->setToggleState(j==i,juce::dontSendNotification);
         sourceRemove_.setEnabled(i!=0);scrollSeconds_=0.0;
@@ -498,8 +527,10 @@ bool ModulationPanel::revealSourceAtParentPoint(juce::Point<int> parentPoint) {
     return false;
 }
 
-void ModulationPanel::showAddSourceMenu() {
-    const std::vector<NativeChoiceItem> choices{
+std::vector<NativeChoiceItem> ModulationPanel::sourceMenuItems() const {
+    const auto actual=canonicalBindings_.snapshot ? canonicalBindings_.snapshot().modulation : cached_;
+    const bool room=actual.nextInstanceId<=maxSourceInstanceId && std::any_of(actual.instances.begin(),actual.instances.end(),[](const auto& a){return a.id==0;});
+    std::vector<NativeChoiceItem> choices{
         {1,"Envelope",true,""},
         {2,"LFO",true,""},
         {3,"Random",true,""},
@@ -512,7 +543,13 @@ void ModulationPanel::showAddSourceMenu() {
         {8,"Velocity",true,""},
         {9,"Note",true,""}
     };
-    showNativeChoiceMenu(sourceAdd_,"ADD MOD SOURCE",choices,0,
+    for(auto& c:choices) if(c.id<=7 && !room) {c.enabled=false;c.tooltip="Modulation source capacity reached (32 additional instances)";}
+    for(auto& c:choices) if((c.id==8 && (actual.performanceSourceActiveMask&1u)) || (c.id==9 && (actual.performanceSourceActiveMask&2u))) {c.enabled=false;c.tooltip="Already instantiated";}
+    return choices;
+}
+
+void ModulationPanel::showAddSourceMenu() {
+    showNativeChoiceMenu(sourceAdd_,"ADD MOD SOURCE",sourceMenuItems(),0,
         [safe=juce::Component::SafePointer<ModulationPanel>(this)](int id) {
             if(safe!=nullptr) safe->allocateSource(id);
         });
@@ -520,38 +557,19 @@ void ModulationPanel::showAddSourceMenu() {
 
 void ModulationPanel::allocateSource(int sourceType) {
     if(!bindings_.snapshot || !bindings_.modulation) return;
-    auto mod=bindings_.snapshot().modulation;
+    auto mod=canonicalBindings_.snapshot().modulation;
     int slot=-1;
-
-    if(sourceType==1) {
-        for(int i=1;i<=2;++i) if((mod.envActiveMask&(1u<<i))==0) {
-            mod.envActiveMask|=(1u<<i);slot=i;break;
-        }
-    } else if(sourceType==2) {
-        for(int i=0;i<4;++i) if((mod.lfoActiveMask&(1u<<i))==0) {
-            mod.lfoActiveMask|=(1u<<i);slot=3+i;break;
-        }
-    } else if(sourceType==8) {
-        if((mod.performanceSourceActiveMask&0x1u)==0) {
-            mod.performanceSourceActiveMask|=0x1u;slot=12;
-        }
-    } else if(sourceType==9) {
-        if((mod.performanceSourceActiveMask&0x2u)==0) {
-            mod.performanceSourceActiveMask|=0x2u;slot=13;
-        }
-    } else {
-        struct GeneratorSlot {int type;int tab;std::uint32_t bit;};
-        static constexpr std::array<GeneratorSlot,5> generators{{
-            {7,7,0x01u},{3,8,0x02u},{4,9,0x04u},{5,10,0x08u},{6,11,0x10u}
-        }};
-        for(const auto& g:generators) if(g.type==sourceType && (mod.generatorActiveMask&g.bit)==0) {
-            mod.generatorActiveMask|=g.bit;slot=g.tab;break;
-        }
-    }
-    if(slot<0 || !bindings_.modulation(mod)) return;
+    if(sourceType>=1 && sourceType<=7) {
+        const auto source=addSourceInstance(mod,static_cast<SourceFamily>(sourceType));
+        if(source==ModSource::None) return;
+        slot=14+int(sourceInstanceSlot(mod,source));
+    } else if(sourceType==8 && !(mod.performanceSourceActiveMask&1u)) {mod.performanceSourceActiveMask|=1u;slot=12;}
+    else if(sourceType==9 && !(mod.performanceSourceActiveMask&2u)) {mod.performanceSourceActiveMask|=2u;slot=13;}
+    if(slot<0 || !canonicalBindings_.modulation(mod)) return;
 
     applyModulationState(mod);
-    selected_=slot;
+    selectTab(slot);
+    syncFromModel();
     for(std::size_t i=0;i<tabs_.size();++i) {
         tabs_[i]->setVisible(sourceTabActive(i));
         tabs_[i]->setToggleState(i==static_cast<std::size_t>(slot),juce::dontSendNotification);
@@ -564,18 +582,19 @@ void ModulationPanel::allocateSource(int sourceType) {
 
 void ModulationPanel::removeSelectedSource() {
     if(!bindings_.snapshot || !bindings_.modulation) return;
-    if(selected_==0 || selected_<0 || selected_>=static_cast<int>(tabs_.size())) return;
+    if(railSelected_==0 || railSelected_<0 || railSelected_>=static_cast<int>(tabs_.size())) return;
 
-    const auto removed=sourceForTab(static_cast<std::size_t>(selected_));
-    auto mod=bindings_.snapshot().modulation;
+    const auto removed=sourceForTab(static_cast<std::size_t>(railSelected_));
+    auto mod=canonicalBindings_.snapshot().modulation;
 
-    if(selected_<=2) mod.envActiveMask&=~(1u<<selected_);
-    else if(selected_<=6) mod.lfoActiveMask&=~(1u<<(selected_-3));
-    else if(selected_==12) mod.performanceSourceActiveMask&=~0x1u;
-    else if(selected_==13) mod.performanceSourceActiveMask&=~0x2u;
+    if(railSelected_>=14) removeSourceInstance(mod,removed);
+    else if(railSelected_<=2) mod.envActiveMask&=~(1u<<railSelected_);
+    else if(railSelected_<=6) mod.lfoActiveMask&=~(1u<<(railSelected_-3));
+    else if(railSelected_==12) mod.performanceSourceActiveMask&=~0x1u;
+    else if(railSelected_==13) mod.performanceSourceActiveMask&=~0x2u;
     else {
         static constexpr std::array<std::uint32_t,5> bits{{0x01u,0x02u,0x04u,0x08u,0x10u}};
-        mod.generatorActiveMask&=~bits[static_cast<std::size_t>(selected_-7)];
+        mod.generatorActiveMask&=~bits[static_cast<std::size_t>(railSelected_-7)];
     }
 
     // Compact away Matrix edges from the removed source.
@@ -585,9 +604,9 @@ void ModulationPanel::removeSelectedSource() {
         if(route.id!=0 && route.source!=removed) compact[write++]=route;
     mod.routes=compact;
 
-    if(!bindings_.modulation(mod)) return;
+    if(!canonicalBindings_.modulation(mod)) return;
     applyModulationState(mod);
-    selected_=0;
+    selectTab(0);
     for(std::size_t i=0;i<tabs_.size();++i) {
         tabs_[i]->setVisible(sourceTabActive(i));
         tabs_[i]->setToggleState(i==0,juce::dontSendNotification);
@@ -731,12 +750,13 @@ void ModulationPanel::updateVisibleControls() {
 }
 
 void ModulationPanel::applyModulationState(const ModulationState& mod) {
-    cached_=mod;
+    cached_=projectEditor(canonicalBindings_.snapshot ? canonicalBindings_.snapshot().modulation : mod);
     // Route topology decides each source card's height and active sources
     // decide which cards exist: either change invalidates the rail layout
     // (bounds + scroll content height), not just its pixels.
     bool layoutChanged=false;
     for(std::size_t i=0;i<tabs_.size();++i) {
+        if(i>=14) {tabs_[i]->setSource(sourceForTab(i));tabs_[i]->setButtonText(modulationSourceLabel(cached_,sourceForTab(i)));}
         layoutChanged|=tabs_[i]->setRoutes(modulationSourceRoutes(cached_,sourceForTab(i)));
         layoutChanged|=tabs_[i]->isVisible()!=sourceTabActive(i);
     }
@@ -745,8 +765,8 @@ void ModulationPanel::applyModulationState(const ModulationState& mod) {
 
 void ModulationPanel::syncFromModel() {
     if(bindings_.snapshot) applyModulationState(bindings_.snapshot().modulation);
-    if(!sourceTabActive(static_cast<std::size_t>(selected_))) selected_=0;
-    sourceRemove_.setEnabled(selected_!=0);
+    if(!sourceTabActive(static_cast<std::size_t>(railSelected_))) selectTab(0);
+    sourceRemove_.setEnabled(railSelected_!=0);
     if(selected_==0) {
         if(getter_) for(std::size_t i=0;i<4;++i)
             if(!envSliders_[i].isMouseButtonDown())
@@ -761,7 +781,7 @@ void ModulationPanel::syncFromModel() {
         const auto& l=lfoSettings(cached_,static_cast<std::size_t>(selected_-3));
         if(lfoPointDrag_<0 && lfoCurveDrag_<0)
             loadMsegShapeFromSettings(lfoMseg_[static_cast<std::size_t>(selected_-3)],l);
-        lfoStrip_.setLfo(static_cast<std::size_t>(selected_-3),l);
+        lfoStrip_.setLfo(static_cast<std::size_t>(selected_-3),l,railSelected_>=14 ? static_cast<std::uint32_t>(sourceForTab(std::size_t(railSelected_))) : 0);
         lfoStrip_.setSnap(snap_.getToggleState());
     } else if(selected_==7) {
         if(!rate_.isMouseButtonDown()) rate_.setValue(cached_.function.rateHz,juce::dontSendNotification);
@@ -1530,6 +1550,7 @@ void ModulationPanel::updateLfoProcessedOverlay() {
     // SMOOTH, one drawn) at 512 samples per cycle. Cached on the settings.
     if(selected_<3 || selected_>6 || envCanvas_.isEmpty()) { lfoProcessed_.clear(); lfoProcessedRight_.clear(); return; }
     const auto index=static_cast<std::size_t>(selected_-3);
+    const auto streamIndex=railSelected_>=14 ? instanceIdOf(sourceForTab(std::size_t(railSelected_)))+4 : index;
     auto s=lfoSettings(cached_,index);
     s.delaySeconds=0.0f; s.attackSeconds=0.0f;
     if(s.mode==LfoMode::Envelope) s.mode=LfoMode::Loop; // one cycle == the one-shot's cycle
@@ -1539,11 +1560,11 @@ void ModulationPanel::updateLfoProcessedOverlay() {
     const auto& editor=lfoMseg_[index];
     s.pointCount=static_cast<std::uint32_t>(std::min(editor.count,s.points.size()));
     for(std::size_t i=0;i<s.pointCount;++i) s.points[i]={editor.points[i].x,editor.points[i].y,editor.points[i].curve};
-    if((!lfoProcessed_.empty() || !lfoProcessedRight_.empty()) && lfoProcessedIndex_==index && lfoProcessedCanvas_==envCanvas_ &&
+    if((!lfoProcessed_.empty() || !lfoProcessedRight_.empty()) && lfoProcessedIndex_==streamIndex && lfoProcessedCanvas_==envCanvas_ &&
        std::memcmp(&lfoProcessedKey_,&s,sizeof(LfoSettings))==0) return;
-    lfoProcessedKey_=s; lfoProcessedIndex_=index; lfoProcessedCanvas_=envCanvas_;
+    lfoProcessedKey_=s; lfoProcessedIndex_=streamIndex; lfoProcessedCanvas_=envCanvas_;
     constexpr int perCycle=512;
-    Lfo lfo; lfo.reset(); lfo.setStreams(Lfo::globalStream(index),Lfo::fractureSeed(index));
+    Lfo lfo; lfo.reset(); lfo.setStreams(Lfo::globalStream(streamIndex),Lfo::fractureSeed(streamIndex));
     const double sampleRate=double(juce::jlimit(.01f,40.0f,s.rateHz))*perCycle;
     float right=0.0f;
     for(int i=0;i<perCycle;++i) lfo.nextStereo(s,sampleRate,right);
@@ -1562,7 +1583,7 @@ bool ModulationPanel::selectSource(ModSource source) {
         if(sourceForTab(i)==source) {
             if(!sourceTabActive(i)) return false;
             if(tabs_[i]->onClick) tabs_[i]->onClick();
-            return selected_==static_cast<int>(i);
+            return railSelected_==static_cast<int>(i);
         }
     return false;
 }
@@ -1794,6 +1815,7 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     else if(selected_==12) title="VELOCITY / RESPONSE MSEG";
     else if(selected_==13) title="NOTE / KEYTRACK MSEG";
     else title="MODULATION SOURCE";
+    if(railSelected_>=14) {const auto slash=title.indexOf(" /");title=modulationSourceLabel(cached_,sourceForTab(std::size_t(railSelected_)))+(slash>=0 ? title.substring(slash) : juce::String());}
     text(g,title,caption,Type::label,Palette::muted());well(g,body);
     if(selected_==12 || selected_==13) { paintPerformanceCurve(g); return; }
 
@@ -2176,7 +2198,8 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
 }
 
 
-ModSource ModulationPanel::sourceForTab(std::size_t index) noexcept {
+ModSource ModulationPanel::sourceForTab(std::size_t index) const noexcept {
+    if(index>=14) return cached_.instances[index-14].id ? instanceSource(cached_.instances[index-14].id) : ModSource::None;
     static constexpr std::array<ModSource,14> sources{
         ModSource::Env1,ModSource::Env2,ModSource::Env3,
         ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,
@@ -2184,6 +2207,38 @@ ModSource ModulationPanel::sourceForTab(std::size_t index) noexcept {
         ModSource::Velocity,ModSource::Keytrack
     };
     return sources[juce::jmin(index,sources.size()-1)];
+}
+
+// Reuse the established family editors through an explicit UI projection.
+// Only the selected instance's settings are written back; legacy fields keep
+// their canonical values. This projection never enters the audio engine.
+ModulationState ModulationPanel::projectEditor(ModulationState mod) const {
+    if(railSelected_<14) return mod;
+    const auto& a=mod.instances[std::size_t(railSelected_-14)];
+    switch(a.family) {
+    case SourceFamily::Envelope:mod.env2=a.envelope;break;
+    case SourceFamily::Lfo:mod.lfo1=a.lfo;break;
+    case SourceFamily::Random:mod.random=a.random;break;
+    case SourceFamily::Function:mod.function=a.function;break;
+    case SourceFamily::Chaos:mod.chaos=a.chaos;break;
+    case SourceFamily::Drift:mod.drift=a.drift;break;
+    case SourceFamily::Sequencer:mod.sequencer=a.sequencer;break;
+    }
+    return mod;
+}
+void ModulationPanel::selectTab(int tab) {
+    railSelected_=tab;
+    selected_=tab;
+    if(tab>=14) {
+        switch(cached_.instances[std::size_t(tab-14)].family) {
+        case SourceFamily::Envelope:selected_=1;break;case SourceFamily::Lfo:selected_=3;break;
+        case SourceFamily::Random:selected_=8;break;case SourceFamily::Function:selected_=7;break;
+        case SourceFamily::Chaos:selected_=9;break;case SourceFamily::Drift:selected_=10;break;
+        case SourceFamily::Sequencer:selected_=11;break;
+        }
+    }
+    traceTail_.clear();lfoTraceTail_.clear();randomViewportHistory_.clear();chaosViewportHistory_.clear();
+    havePreviousVisualEnvelopeRuntime_.fill(false);lastLfoTracePhase_=-1;
 }
 
 void ModulationPanel::setRouteAmount(std::uint32_t routeId,float amount) {
@@ -2234,10 +2289,10 @@ void ModulationPanel::updateSourceHistory(float) {
     if(newNote) sourceTraceOrder_=sourceTrace_.order;
 
     auto& telemetry=modulationUiTelemetry();
-    telemetry.state=cached_;
+    telemetry.state=canonicalBindings_.snapshot ? canonicalBindings_.snapshot().modulation : cached_;
     telemetry.runtime=runtimeVisualization_;
     telemetry.visualizationMask=visualizationMask_;
-    telemetry.selectedSource=sourceForTab(static_cast<std::size_t>(selected_));
+    telemetry.selectedSource=sourceForTab(static_cast<std::size_t>(railSelected_));
     telemetry.synthActive=sourceTrace_.active;
     telemetry.performanceInputActive=false;
     telemetry.velocityValue=0.0f;
@@ -2266,6 +2321,15 @@ void ModulationPanel::updateSourceHistory(float) {
         return;
     }
 
+    if(railSelected_>=14) {
+        const auto i=std::size_t(railSelected_-14);
+        const auto source=sourceForTab(std::size_t(railSelected_));
+        runtimeVisualization_.sourceValues[std::size_t(selected_)]=modulationUiSourceValue(source);
+        runtimeVisualization_.sourcePhases[std::size_t(selected_)]=runtimeVisualization_.instancePhases[i];
+    }
+    for(std::size_t i=14;i<tabs_.size();++i) if(sourceTabActive(i)) {
+        auto& h=sourceHistory_[i];h.push_back(modulationUiSourceValue(sourceForTab(i)));while(h.size()>sourceHistoryLength_) h.pop_front();
+    }
     const auto samples=runtimeVisualization_.sourceValues;
     const auto lfoIndex=selected_>=3 && selected_<=6
         ? static_cast<std::size_t>(selected_-3) : std::size_t{0};
@@ -2307,7 +2371,7 @@ void ModulationPanel::updateSourceHistory(float) {
         while(chaosViewportHistory_.size()>chaosHistoryLength_)
             chaosViewportHistory_.pop_front();
     }
-    telemetry.sourceValues=samples;
+    telemetry.sourceValues=telemetry.runtime.sourceValues;
 
     randomViewportHistory_.push_back(juce::jlimit(-1.0f,1.0f,samples[8]));
     while(randomViewportHistory_.size()>randomHistoryLength_)

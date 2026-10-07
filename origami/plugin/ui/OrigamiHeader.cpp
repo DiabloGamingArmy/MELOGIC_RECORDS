@@ -85,9 +85,9 @@ void OrigamiHeader::paint(juce::Graphics& g) {
 }
 void OrigamiHeader::resized() {
     auto area=getLocalBounds().withTrimmedLeft(324).reduced(0,10);
-    auto utilities=area.removeFromRight(juce::jmin(236,area.getWidth()/3));
+    auto utilities=area.removeFromRight(juce::jmin(172,area.getWidth()/3));
     settings_.setBounds(utilities.removeFromRight(34).reduced(2,6));
-    panic_.setBounds(utilities.removeFromRight(64).reduced(2,6));
+    panic_.setBounds(10,4,286,64);
     save_.setBounds(utilities.removeFromRight(55).reduced(2,6));browse_.setBounds(utilities.reduced(2,6));
     area.removeFromRight(10);auto modes=area.removeFromRight(300);for(auto& mode:modes_)mode.setBounds(modes.removeFromLeft(60).reduced(1,6));
     area.removeFromRight(14);previous_.setBounds(area.removeFromLeft(27).reduced(0,6));next_.setBounds(area.removeFromRight(27).reduced(0,6));preset_.setBounds(area.reduced(3,6));

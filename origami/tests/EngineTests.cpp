@@ -187,6 +187,7 @@ void signalBehavior() {
     engine.reset();engine.noteOn(69,1);const auto loud=energy(render(engine,5000));
     engine.reset();engine.noteOn(69,.5f);const auto quiet=energy(render(engine,5000));
     check(std::abs(quiet/loud-.25)<1e-5,"linear velocity amplitude");
+    {auto m=engine.instrumentState().modulation;m.filterEnabled=true;check(engine.setModulationState(m),"explicit low-pass fixture");}
     set(engine,ParameterId::Cutoff,20);engine.reset();engine.noteOn(100,1);const double low=energy(render(engine,24000));
     set(engine,ParameterId::Cutoff,20000);engine.reset();engine.noteOn(100,1);const double high=energy(render(engine,24000));
     check(low<high*.01,"low-pass attenuates high frequencies");
@@ -1296,6 +1297,68 @@ void wavetableHandoffAudit() {
     check(!actual.wavetableHandoffPending(),"released slot accepts a new table");
     actual.collectRetiredWavetables();
 }
+void sourceInstanceRealtimeAudit() {
+    auto e=std::make_unique<OrigamiEngine>();check(e->prepare(48000,256,2),"instance RT prepare");
+    auto m=e->instrumentState().modulation;
+    std::array<ModSource,maxSourceInstances> sources{};
+    for(std::size_t i=0;i<maxSourceInstances;++i) {
+        const auto f=static_cast<SourceFamily>(i%7+1);sources[i]=addSourceInstance(m,f);
+        auto& a=m.instances[i];a.lfo.mode=i%2 ? LfoMode::Loop : LfoMode::Free;a.lfo.stereo=.7f;a.random.rateHz=40;
+        m.routes[i]={m.nextRouteId++,true,sources[i],{ModDestination::Level,1,0},.01f,false};
+    }
+    // A nested rate uses stable instance identity, including through Nodes.
+    m.routes[0].destination={ModDestination::LfoRate,0,std::uint32_t(sources[1])};
+    check(e->setModulationState(m),"full pool installed");e->reset();
+    std::array<float,256> left{},right{};float* out[]{left.data(),right.data()};
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+    bool okay=true;
+    for(int n=0;n<16;++n) okay &= e->noteOn(48+n,.6f);
+    for(int block=0;block<100;++block) okay &= e->process(out,2,256);
+    for(int n=0;n<16;++n) okay &= e->noteOff(48+n);
+    okay &= e->process(out,2,256);e->emergencyResetRuntime();
+    guardAllocations.store(false);
+    check(okay,"32-source pool renders, releases and resets under load");
+#ifndef ORIGAMI_SANITIZED
+    check(allocations.load()==0 && frees.load()==0,"full pool has no audio-thread allocation or free");
+#endif
+    for(float x:left) check(std::isfinite(x),"full pool output finite");
+    e->noteOn(60,.8f);e->process(out,2,256);
+    const auto& visual=e->runtimeVisualizationSnapshot();
+    for(std::size_t i=0;i<maxSourceInstances;++i) check(visual.instanceIds[i]==instanceIdOf(sources[i]),"telemetry retains instance identity");
+    const auto r1=modulationSourceSlot(sources[2],m),r2=modulationSourceSlot(sources[9],m);
+    check(visual.routeSources[r1]!=visual.routeSources[r2],"additional Random sources have independent streams");
+    check(removeSourceInstance(m,sources[2]),"live deletion accepted");const auto fresh=addSourceInstance(m,SourceFamily::Random);
+    check(fresh!=sources[2] && e->setModulationState(m),"live recreation uses a new identity");
+    allocations.store(0);frees.store(0);guardAllocations.store(true);okay=e->process(out,2,256);guardAllocations.store(false);
+    check(okay,"live source pool handoff renders");
+#ifndef ORIGAMI_SANITIZED
+    check(allocations.load()==0 && frees.load()==0,"pool mailbox adoption and recompilation allocate nothing");
+#endif
+}
+
+void correctiveSpectralPreview() {
+    std::array<float,2048> input{},left{},right{},middle{};
+    for(std::size_t i=0;i<input.size();++i) input[i]=2.0f*float(i)/float(input.size())-1.0f;
+    for(const auto type:{dsp::OscProcessType::RandAmp,dsp::OscProcessType::RandSparse}) {
+        dsp::OscProcessPlan plan;plan.count=1;plan.stages[0]={type,0,0xabcdefu};
+        for(int boundary=1;boundary<32;++boundary) {
+            const float key=float(boundary)/32;
+            plan.stages[0].amount=key-1e-5f;dsp::renderOscillatorPreview2048(input.data(),left.data(),plan);
+            plan.stages[0].amount=key+1e-5f;dsp::renderOscillatorPreview2048(input.data(),right.data(),plan);
+            float delta=0;for(std::size_t i=0;i<input.size();++i) delta=std::max(delta,std::abs(left[i]-right[i]));
+            check(delta<.002f,"random preview is continuous across every preparation boundary");
+        }
+        for(int key=0;key<32;++key) {
+            plan.stages[0].amount=float(key)/32;dsp::renderProcessedFrame2048(input.data(),left.data(),plan);
+            plan.stages[0].amount=float(key+1)/32;dsp::renderProcessedFrame2048(input.data(),right.data(),plan);
+            plan.stages[0].amount=(float(key)+.37f)/32;dsp::renderOscillatorPreview2048(input.data(),middle.data(),plan);
+            for(std::size_t i=0;i<input.size();++i) check(std::abs(middle[i]-(left[i]+.37f*(right[i]-left[i])))<2e-6f,"preview represents DSP endpoint interpolation exactly");
+        }
+    }
+    check(dsp::oscillatorPreviewPhase(383,384)<1.0f,"visible waveform terminal phase cannot wrap to first point");
+    const float last=2*dsp::oscillatorPreviewPhase(383,384)-1;
+    check(last>.99f,"saw viewport ends on final positive sample rather than artificial negative edge");
+}
 
 int main() {
     // OrigamiEngine/Voice are intentionally large fixed-storage realtime
@@ -1303,6 +1366,8 @@ int main() {
     // test runner cannot overflow before it reaches its first diagnostic.
     // Production engine ownership already follows this pattern.
     try {
+        correctiveSpectralPreview();
+        sourceInstanceRealtimeAudit();
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();
         std::cerr<<"oscillator control cache\n";oscillatorControlCacheEquivalence();
         std::cerr<<"simple playback + visualization policy\n";simplePlaybackAndVisualizationPolicy();

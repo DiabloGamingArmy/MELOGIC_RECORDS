@@ -779,6 +779,7 @@ void playabilityAudit() {
     auto& filterLow=create();auto& filterHigh=create();
     filterLow.prepareToPlay(48000,128);filterHigh.prepareToPlay(48000,128);
     disableExtraOscillators(filterLow);disableExtraOscillators(filterHigh);
+    for(auto* p:{&filterLow,&filterHigh}) {auto m=p->getUiInstrumentState().modulation;m.filterEnabled=true;check(p->setUiModulationState(m),"explicit filter fixture");}
     check(filterLow.setUiParameter(ParameterId::Cutoff,100.0f),"low cutoff accepted");
     check(filterHigh.setUiParameter(ParameterId::Cutoff,20000.0f),"high cutoff accepted");
     const auto low=renderNote(filterLow,100,1.0f,4096),high=renderNote(filterHigh,100,1.0f,4096);
@@ -2008,6 +2009,7 @@ void fxWorkspaceP03Audit() {
     for(const auto& r:modulators) envDrag|=r.label=="ENV 1" && r.dragDescription=="MCT_MOD_SOURCE:1";
     check(envDrag,"MODULATORS drag the same source description as SYNTH");
     bool mainBus=false,addBus=false,mainInput=false,filterTruth=false;
+    auto withFilter=p.getUiInstrumentState().modulation;withFilter.filterEnabled=true;check(p.setUiModulationState(withFilter),"sidebar authored filter fixture");page->syncFromModel();
     for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Buses)) {
         mainBus|=r.label=="MAIN" && r.active && !r.onSecondaryClick; // selected, not deletable
         addBus|=r.label=="+ ADD BUS" && bool(r.onClick);
@@ -2419,6 +2421,7 @@ void nodesN01Audit() {
     auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
+    {auto m=p.getUiInstrumentState().modulation;m.filterEnabled=true;check(p.setUiModulationState(m),"Nodes destination fixture includes a filter");}
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
     ui::FxPage* page=nullptr;
@@ -2632,7 +2635,7 @@ void nodesN01Audit() {
 // is compiled settled. Saved state is equal; only the first block differs.
 void deterministicRenderAudit() {
     using namespace mct::origami;
-    const auto make=[]{ auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256); disableExtraOscillators(*q); return q; };
+    const auto make=[]{ auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256); disableExtraOscillators(*q);auto m=q->getUiInstrumentState().modulation;m.filterEnabled=true;check(q->setUiModulationState(m),"deterministic authored filter fixture"); return q; };
     const auto render=[](OrigamiAudioProcessor& q,int blocks,const std::function<void()>& perBlock={}) {
         std::vector<float> out;
         juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi;
@@ -2713,6 +2716,7 @@ void nodesN03Audit() {
     auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
+    {auto m=p.getUiInstrumentState().modulation;m.filterEnabled=true;check(p.setUiModulationState(m),"Nodes picker fixture includes a filter");}
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
     editor->setVisible(true);
@@ -4839,6 +4843,7 @@ void synthDynamicMacrosAudit() {
         const auto renderWith=[&](std::size_t id,float value) {
             auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000.0,512,2);
             auto s=e->instrumentState().modulation;
+            s.filterEnabled=true; // This macro regression authors a filter destination.
             s.macroMask=std::uint16_t(s.macroMask|(1u<<(id-1))); s.macros[id-1]=value;
             s.routes[0]={1,true,macroSource(id),{ModDestination::Cutoff,0,0},0.8f,false}; s.nextRouteId=2;
             e->setModulationState(s); e->noteOn(60,0.9f);
@@ -5831,6 +5836,87 @@ void nodesVisualFeedbackAudit() {
     page->setLookAndFeel(nullptr);
 }
 
+void correctiveViewportAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    ui::OscillatorCard* card=nullptr;
+    walk(*editor,[&](juce::Component& c){if(auto* x=dynamic_cast<ui::OscillatorCard*>(&c)) if(x->id()==1) card=x;});
+    check(card!=nullptr,"viewport renderer available");
+    juce::Image image(juce::Image::ARGB,card->getWidth(),card->getHeight(),true);juce::Graphics g(image);
+    auto m=p.getUiOscillatorState(1);m.processCount=1;m.nextProcessId=2;
+    auto previousTelemetry=ui::modulationUiTelemetry();ui::modulationUiTelemetry()={};
+    for(const auto type:{dsp::OscProcessType::RandAmp,dsp::OscProcessType::RandSparse}) {
+        for(int boundary:{1,3,8,16,24,31}) {
+            const auto paintAmount=[&](float amount) {
+                m.processes[0]={1,type,amount,0xabcdefu,true};check(p.setUiOscillatorState(1,m),"viewport process amount accepted");
+                rack(*editor).syncFromModel();card->paintEntireComponent(g,true);
+                check(card->viewportProcessPlan().stages[0].amount==amount,"viewport uses continuous canonical amount");
+                return card->viewportWaveform();
+            };
+            const float amount=float(boundary)/32;
+            const auto left=paintAmount(amount-1e-5f),right=paintAmount(amount+1e-5f);
+            float delta=0;for(std::size_t i=0;i<left.size();++i) delta=std::max(delta,std::abs(left[i]-right[i]));
+            check(delta<.002f,"painted viewport does not snap across spectral preparation boundaries");
+        }
+    }
+    m.processCount=0;check(p.setUiOscillatorState(1,m),"viewport bare saw fixture");rack(*editor).syncFromModel();card->paintEntireComponent(g,true);
+    juce::Path::Iterator it(card->viewportStroke());int moves=0,lines=0,closes=0;float previousY=0,lastJump=0;
+    while(it.next()) {
+        if(it.elementType==juce::Path::Iterator::startNewSubPath) {++moves;previousY=it.y1;}
+        else if(it.elementType==juce::Path::Iterator::lineTo) {++lines;lastJump=std::abs(it.y1-previousY);previousY=it.y1;}
+        else if(it.elementType==juce::Path::Iterator::closePath) ++closes;
+    }
+    check(moves==1 && lines==383 && closes==0,"visible waveform stroke has exactly the sample polyline and no closing geometry");
+    check(lastJump<float(card->getHeight())*.02f,"visible saw has no artificial terminal jump to phase zero/baseline");
+    ui::modulationUiTelemetry()=previousTelemetry;
+}
+
+void correctivePassUiAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;
+    check(!p.getUiInstrumentState().modulation.filterEnabled,"fresh plugin has no filter module");
+    auto m=p.getUiInstrumentState().modulation;
+    std::vector<ModSource> sources;
+    for(const auto family:{SourceFamily::Envelope,SourceFamily::Lfo,SourceFamily::Random})
+        for(int n=0;n<6;++n) sources.push_back(addSourceInstance(m,family));
+    check(p.setUiModulationState(m),"many independent sources accepted by plugin");
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    ui::ModulationPanel* panel=nullptr;
+    walk(*editor,[&](juce::Component& c){if(auto* x=dynamic_cast<ui::ModulationPanel*>(&c)) panel=x;});
+    check(panel!=nullptr,"source editor available");panel->syncFromModel();
+    for(const auto source:sources) {
+        check(panel->sourceRow(source)!=nullptr,"every instance has an identity-bearing source row");
+        check(panel->selectSource(source),"every additional source selects its family editor");
+    }
+    const auto lfo=sources[6];check(panel->selectSource(lfo),"additional LFO selected");
+    panel->lfoStrip().rateKnob().setValue(4.0,juce::sendNotificationSync);
+    const auto edited=p.getUiInstrumentState().modulation;
+    check(edited.lfo1.rateHz==m.lfo1.rateHz,"instance editor preserves legacy LFO settings");
+    check(findSourceInstance(edited,lfo)->lfo.rateHz!=m.instances[6].lfo.rateHz,"instance editor writes only selected identity");
+    const auto added=panel->addSource(SourceFamily::Envelope);
+    check(added!=ModSource::None && panel->sourceRow(added) && panel->selectSource(added),"plus action instantiates another ENV with a usable row/editor");
+    ui::FxPage* nodesPage=nullptr;walk(*editor,[&](juce::Component& c){if(auto* x=dynamic_cast<ui::FxPage*>(&c)) nodesPage=x;});
+    check(nodesPage && nodesPage->addControlSource(added),"Nodes accepts a new source instance");
+    const auto connected=nodesPage->connectControl(added,{ModDestination::Level,1,0});
+    check(connected.result==nodes::ControlLinkResult::Ok,"new ENV connects to oscillator level in Nodes");
+    auto op=nodesPage->addControlOperator(ControlOpType::Add);
+    check(op && nodesPage->connectControlEdge(nodes::ControlEndpoint::fromSource(lfo),nodes::ControlEndpoint::toInput(*op,0)).result==nodes::ControlLinkResult::Ok,"new LFO feeds a Nodes operator");
+    // A user-authored filter remains persistent and Init clears it.
+    auto filter=p.getUiInstrumentState().modulation;filter.filterEnabled=true;check(p.setUiModulationState(filter),"manual filter addition works");
+    juce::MemoryBlock saved;p.getStateInformation(saved);
+    check(p.loadUiInitPreset() && !p.getUiInstrumentState().modulation.filterEnabled,"Init contains no filters");
+    p.setStateInformation(saved.getData(),int(saved.getSize()));
+    check(p.getUiInstrumentState().modulation.filterEnabled,"saved patch restores authored filter");
+    panel->syncFromModel();check(panel->selectSource(lfo),"instance editor survives save/reload");
+    const auto restored=p.getUiInstrumentState().modulation;
+    bool hasCable=false;for(const auto& r:restored.routes) hasCable|=r.id && r.source==added && r.destination==ModAddress{ModDestination::Level,1,0};
+    check(hasCable && findControlOperator(restored,*op)->inputs[0].source==lfo,"new instance Nodes cables survive plugin save/reload");
+    auto full=restored;while(addSourceInstance(full,SourceFamily::Random)!=ModSource::None) {}
+    check(p.setUiModulationState(full),"UI pool capacity fixture installed");panel->syncFromModel();
+    for(const auto& item:panel->sourceMenuItems()) if(item.id<=7) check(!item.enabled && item.tooltip.contains("capacity"),"full pool add menu explains the engine maximum");
+    check(panel->addSource(SourceFamily::Envelope)==ModSource::None,"full pool add action returns an explicit failure");
+
+}
+
 void emergencyPanicAudit() {
     auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
     p.prepareToPlay(48000.0,256);
@@ -5862,7 +5948,9 @@ void emergencyPanicAudit() {
         if(auto* button=dynamic_cast<juce::Button*>(&c))
             if(button->getName()=="Emergency DSP reset") stop=button;
     });
-    check(stop!=nullptr && bool(stop->onClick),"header STOP is present on every page");
+    check(stop!=nullptr && bool(stop->onClick),"identity exposes emergency reset on every page");
+    check(stop->getBounds()==juce::Rectangle<int>(10,4,286,64),"panic occupies full identity area and is absent from right utilities");
+    check(stop->getWantsKeyboardFocus(),"panic retains keyboard button semantics");
     stop->onClick();
     audio.clear();p.processBlock(audio,midi);
     check(magnitude(audio)==0.0f && p.panicCount()==2,"header STOP reaches emergency reset");
@@ -5927,6 +6015,8 @@ void declarativeThemeAudit() {
 
 void run() {
     declarativeThemeAudit();
+    correctiveViewportAudit();
+    correctivePassUiAudit();
     emergencyPanicAudit();
     panicUnderLoadAudit();
     nodesVisualFeedbackAudit();

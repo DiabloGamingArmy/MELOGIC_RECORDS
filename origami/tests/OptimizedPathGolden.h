@@ -44,6 +44,7 @@ inline ModRoute route(std::uint32_t id,ModSource source,ModDestination d,Oscilla
 // Returns whether `edited` differs (applied at editAt).
 inline bool setup(OrigamiEngine& e,int scenario,ModulationState& mod,ModulationState& edited) {
     mod=e.instrumentState().modulation;
+    mod.filterEnabled=true; // Preserve the authored topology used by the pinned golden hashes.
     bool edit=false;
     auto osc1=e.oscillatorModuleState(1);
     switch(scenario) {

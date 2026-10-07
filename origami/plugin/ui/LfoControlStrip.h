@@ -84,7 +84,7 @@ public:
     void setCallbacks(Callbacks c) { callbacks_=std::move(c); }
 
     // Canonical state -> controls (never calls back).
-    void setLfo(std::size_t index,const LfoSettings&);
+    void setLfo(std::size_t index,const LfoSettings&,std::uint32_t sourceItem=0);
     void setSnap(bool);
 
     Page page() const noexcept { return static_cast<Page>(page_.selected()); }
@@ -161,6 +161,7 @@ private:
     Callbacks callbacks_;
     LfoSettings lfo_{};
     std::size_t index_=0;
+    std::uint32_t sourceItem_=1;
 
     StackSelector page_{{"TOOLS","FUNC"}};
     juce::Viewport toolsViewport_,funcViewport_;

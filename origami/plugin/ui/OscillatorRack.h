@@ -79,6 +79,11 @@ private:
 
 class OscillatorCard final : public Panel {
 public:
+    // Read-only renderer diagnostics (message-thread, last painted frame).
+    const dsp::OscProcessPlan& viewportProcessPlan() const noexcept { return spectralPreviewPlan_; }
+    const std::array<float,2048>& viewportWaveform() const noexcept { return spectralPreviewCache_; }
+    const juce::Path& viewportStroke() const noexcept { return viewportStroke_; }
+
     explicit OscillatorCard(OscillatorDisplay display,std::function<void(unsigned)> remove,
                             std::function<bool(mct::origami::ParameterId,float)> setter={},
                             std::function<float(mct::origami::ParameterId)> getter={},
@@ -293,9 +298,8 @@ private:
     // UI-only spectral preview cache. FFT/IFFT work is reused until a visually
     // meaningful source/process key changes.
     std::array<float,2048> spectralPreviewCache_{};
-    std::array<float,2048> spectralPreviewPrevious_{};
-    float spectralPreviewMorph_=1.0f;
-    int spectralPreviewWtKey_=-1;
+    juce::Path viewportStroke_;
+    float spectralPreviewPosition_=-1;
     const void* spectralPreviewTable_=nullptr;
     const void* shownTable_=nullptr; // the canonical table the viewport last drew // the table the cached spectral preview was built from
     dsp::OscProcessPlan spectralPreviewPlan_{};

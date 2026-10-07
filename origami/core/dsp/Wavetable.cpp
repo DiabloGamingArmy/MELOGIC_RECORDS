@@ -816,6 +816,28 @@ void renderProcessedFrame2048(const float* input,float* output,
         output[i]=static_cast<float>(std::clamp(bins[i].real()*normalise,-0.985,0.985));
 }
 
+void renderOscillatorPreview2048(const float* input,float* output,const OscProcessPlan& plan) noexcept {
+    auto anchor=plan;
+    std::size_t random=maxOscProcessStages;
+    float lower=0,blend=0;
+    for(std::size_t i=0;i<anchor.count;++i) {
+        if(random==maxOscProcessStages && oscProcessUsesSeed(plan.stages[i].type)) {
+            random=i;
+            const float x=std::clamp(plan.stages[i].amount,0.0f,1.0f)*spectralAmountSteps;
+            lower=std::floor(x); blend=x-lower;
+        }
+        anchor.stages[i].amount=quantizedStageAmount(anchor.stages[i].type,anchor.stages[i].amount);
+    }
+    if(random==maxOscProcessStages) { renderProcessedFrame2048(input,output,anchor); return; }
+    anchor.stages[random].amount=lower/spectralAmountSteps;
+    renderProcessedFrame2048(input,output,anchor);
+    if(blend==0) return;
+    std::array<float,spectralSize> upper{};
+    anchor.stages[random].amount=(lower+1)/spectralAmountSteps;
+    renderProcessedFrame2048(input,upper.data(),anchor);
+    for(std::size_t i=0;i<spectralSize;++i) output[i]+=blend*(upper[i]-output[i]);
+}
+
 void renderProcessedFrame2048(const float* input,float* output,
                               OscProcessType process1,float amount1,std::uint32_t seed1,
                               OscProcessType process2,float amount2,std::uint32_t seed2) noexcept {

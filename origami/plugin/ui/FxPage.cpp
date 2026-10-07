@@ -131,6 +131,7 @@ juce::String sourceName(ModSource s) {
 }
 // mct-origami-nested-modulation-manual-qa: a renamed macro shows its name.
 juce::String sourceName(const ModulationState& m,ModSource s) {
+    if(isInstanceSource(s)) return modulationSourceLabel(m,s);
     if(const auto id=macroIdOf(s)) return macroLabel(m,id);
     return sourceName(s);
 }
@@ -164,6 +165,7 @@ std::vector<SourceEntry> availableSources(const ModulationState& m) {
     if(m.generatorActiveMask&0x10u) out.push_back({ModSource::Sequencer,"GENERATORS"});
     for(auto s:{ModSource::Velocity,ModSource::ModWheel,ModSource::Keytrack,ModSource::Aftertouch,ModSource::PitchBend,ModSource::NoteGate})
         out.push_back({s,"PERFORMANCE"});
+    for(const auto& a:m.instances) if(a.id) out.push_back({instanceSource(a.id),"INSTANCES"});
     return out;
 }
 
@@ -4322,6 +4324,7 @@ std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
         std::vector<ModSource> primary{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,ModSource::Env1,ModSource::Env2,ModSource::Env3};
         for(const auto s:activeMacroSources(state.modulation)) primary.push_back(s);
         primary.push_back(ModSource::Random);
+        for(const auto& a:state.modulation.instances) if(a.id) primary.push_back(instanceSource(a.id));
         for(const auto s:primary)
             if(nodes::controlSourceActive(s,state.modulation))
                 items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(state.modulation,s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","MODULATION SOURCES"},"Already on the canvas"));
@@ -4924,6 +4927,7 @@ std::vector<NativeChoiceItem> FxPage::controlCreateItems(const nodes::ControlEnd
     if(signal==ControlSignal::Control && fromOutput) items.push_back({FxModuleMenu::parameterPickerId,"Parameter...",true,"CONTROL"});
     if(signal==ControlSignal::Control && !fromOutput) {
         std::vector<ModSource> feeds{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,ModSource::Env1,ModSource::Env2,ModSource::Env3};
+        for(const auto& a:m.instances) if(a.id) feeds.push_back(instanceSource(a.id));
         for(const auto macro:activeMacroSources(m)) feeds.push_back(macro);
         feeds.push_back(ModSource::Random); feeds.push_back(ModSource::Sequencer);
         for(const auto s:feeds)

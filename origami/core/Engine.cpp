@@ -151,11 +151,14 @@ void OrigamiEngine::reset() noexcept {
     smoothedMacros_=audioModulation_.macros;
     // Global FREE LFOs: their lifecycle (DELAY / ATTACK) starts at engine reset;
     // one coherent ENTROPY stream per LFO index.
+    for(auto& r:instanceRuntime_) r.reset();
     for(std::size_t i=0;i<globalLfos_.size();++i) { globalLfos_[i].reset(); globalLfos_[i].setStreams(Lfo::globalStream(i),Lfo::fractureSeed(i)); }
     globalRandom_.reset();globalFunction_.reset();globalChaos_.reset();globalDrift_.reset();globalSequencer_.reset();
     const auto resetModules=oscillatorModules_.snapshot();
     compiledModulation_.markStateRevision();
     compiledModulation_.compile(audioModulation_,resetModules,true);
+    globalInstanceCount_=0;
+    for(std::size_t i=0;i<maxSourceInstances;++i) {const auto& a=audioModulation_.instances[i];if(a.id && !sourceIsVoice(instanceSource(a.id),audioModulation_) && compiledModulation_.usesGlobalSource(CompiledModulation::instanceGlobalSlot(i))) globalInstanceSlots_[globalInstanceCount_++]=std::uint8_t(i);}
     publishNodesDiagnostics();
     compiledModulation_.resetOperatorState();
     oscillatorPlan_.compile(resetModules);
@@ -172,6 +175,7 @@ void OrigamiEngine::reset() noexcept {
 }
 void OrigamiEngine::emergencyResetRuntime() noexcept {
     for(auto& voice:voices_) { voice.reset(); voice.restartLifecycles(); }
+    for(auto& r:instanceRuntime_) r.reset();
     for(std::size_t i=0;i<globalLfos_.size();++i) {
         globalLfos_[i].reset();
         globalLfos_[i].setStreams(Lfo::globalStream(i),Lfo::fractureSeed(i));
@@ -571,6 +575,12 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     if(modulationChanged) compiledModulation_.markStateRevision();
     if(modulationChanged || moduleTopologyChanged || oscillatorGenerationChanged) {
         compiledModulation_.compile(audioModulation_,hostModules_);
+        globalInstanceCount_=0;
+        for(std::size_t i=0;i<maxSourceInstances;++i) {
+            const auto& a=audioModulation_.instances[i];
+            if(a.id && !sourceIsVoice(instanceSource(a.id),audioModulation_) && compiledModulation_.usesGlobalSource(CompiledModulation::instanceGlobalSlot(i)))
+                globalInstanceSlots_[globalInstanceCount_++]=static_cast<std::uint8_t>(i);
+        }
         publishNodesDiagnostics();
     }
     if(suppressVisualization_) diagSuppressedBlocks_.fetch_add(1,std::memory_order_relaxed);
@@ -672,7 +682,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         // its RIGHT value too (LEFT is bit-identical either way).
         const bool stereoPlan=compiledModulation_.hasStereoPlan();
         auto& globalStereo=frame.stereo.globalLfo;
-        globalStereo.mask=0;
+        globalStereo.mask=0;globalStereo.instanceMask=0;
         // mct-origami-nested-modulation-manual-qa: with nested modulation the
         // FREE LFOs run in the prepared dependency order (below).
         const bool nested=compiledModulation_.hasNestedPlan();
@@ -686,6 +696,20 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                 globalStereo.lfo[i]=right*currentLfoScaling_;
                 globalStereo.mask|=std::uint8_t(1u<<i);
             } else sources[i]=globalLfos_[i].next(l,sampleRate_)*currentLfoScaling_;
+        }
+        for(std::size_t n=0;n<globalInstanceCount_;++n) {
+            const auto i=globalInstanceSlots_[n];
+            const auto& a=audioModulation_.instances[i];
+            if(nested && a.family==SourceFamily::Lfo) continue;
+            if(stereoPlan && a.family==SourceFamily::Lfo && a.lfo.stereo>0) {
+                auto& r=instanceRuntime_[i];if(r.id!=a.id) r.reset(a.id);
+                float right=0;
+                sources[CompiledModulation::instanceGlobalSlot(i)]=r.lfo.nextStereo(a.lfo,sampleRate_,right)*currentLfoScaling_;
+                globalStereo.instances[i]=right*currentLfoScaling_;globalStereo.instanceMask|=1u<<i;
+                continue;
+            }
+            sources[CompiledModulation::instanceGlobalSlot(i)]=instanceRuntime_[i].next(a,sampleRate_)*
+                (a.family==SourceFamily::Lfo ? currentLfoScaling_ : 1.0f);
         }
         // Macros by stable id (1..16); only routed ones smooth / publish.
         for(std::size_t i=0;i<smoothedMacros_.size();++i) {
@@ -743,6 +767,15 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                 switch(step.kind) {
                     case Step::Lfo: {
                         const std::size_t i=step.index;
+                        if(i>=4) {
+                            const auto slot=i-4;const auto& a=audioModulation_.instances[slot];auto& r=instanceRuntime_[slot];
+                            if(r.id!=a.id) r.reset(a.id);
+                            const auto output=CompiledModulation::instanceGlobalSlot(slot);
+                            const auto rate=compiledModulation_.globalLfoRate(i,a.lfo.rateHz,sources,frame,newest);
+                            if(stereoPlan && a.lfo.stereo>0) {float right=0;sources[output]=r.lfo.nextStereo(a.lfo,sampleRate_,rate,right)*currentLfoScaling_;globalStereo.instances[slot]=right*currentLfoScaling_;globalStereo.instanceMask|=1u<<slot;}
+                            else sources[output]=r.lfo.next(a.lfo,sampleRate_,rate)*currentLfoScaling_;
+                            break;
+                        }
                         const auto& l=lfoSettings(audioModulation_,i);
                         if(l.mode!=LfoMode::Free) { sources[i]=0.0f; break; }
                         const float rate=compiledModulation_.globalLfoRate(i,l.rateHz,sources,frame,newest);
@@ -778,6 +811,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         // advance at full audio rate; only copying/inspection is decimated.
         const bool observeVisualization=!suppressVisualization_ && runtimeVisualizationCountdown_==0;
         if(observeVisualization) {
+            for(std::size_t i=0;i<maxSourceInstances;++i) {runtimeVisualization_.instanceIds[i]=audioModulation_.instances[i].id;runtimeVisualization_.instancePhases[i]=float(instanceRuntime_[i].lfo.readPosition());}
             runtimeVisualizationCountdown_=visualizationPeriod-1;
             for(std::size_t i=0;i<4;++i) {
                 runtimeVisualization_.sourceValues[3+i]=sources[i];
@@ -872,6 +906,8 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                                                 modWheel_[channel],aftertouch_[channel],oscillatorPlan_,sharedProcesses,observe);
             if(observe) {
                 const auto& visual=voices_[v].visualizationSnapshot();
+                runtimeVisualization_.instanceEnvelopes=visual.instanceEnvelopes;
+                for(std::size_t i=0;i<maxSourceInstances;++i) if(audioModulation_.instances[i].family==SourceFamily::Envelope || (audioModulation_.instances[i].family==SourceFamily::Lfo && audioModulation_.instances[i].lfo.mode!=LfoMode::Free)) runtimeVisualization_.instancePhases[i]=visual.instancePhases[i];
                 for(std::size_t i=0;i<CompiledModulation::voiceSourceCount;++i)
                     runtimeVisualization_.routeSources[CompiledModulation::globalSourceCount+i]=visual.sources[i];
                 if(compiledModulation_.hasVoiceOperators())

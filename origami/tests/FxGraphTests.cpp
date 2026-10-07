@@ -2622,8 +2622,11 @@ void consolidationTests() {
     static_assert(ControlOpRuntime::delayCapacity==8,"EVENT DELAY queue is a deliberate limit");
     static_assert(sizeof(ControlOpRuntime)<=64,"per-operator runtime state");
     static_assert(sizeof(CompiledModulation::OperatorState)<=2048,"per-voice operator state");
-    static_assert(sizeof(Voice)<=124*1024,"voice footprint");
-    static_assert(sizeof(OrigamiEngine)<=2200*1024,"engine footprint");
+    // October corrective pass: 32 lightweight ENV/LFO pool states per voice;
+    // measured 126.4 KiB, budget 128 KiB. No oscillator copies were added.
+    static_assert(sizeof(Voice)<=128*1024,"voice footprint including source pool");
+    // Measured 2331.8 KiB (was 2084.8): pool, mailbox and compiled/telemetry slots.
+    static_assert(sizeof(OrigamiEngine)<=2360*1024,"engine footprint including source pool");
     check(true,"memory gates hold (compile-time)");
 }
 

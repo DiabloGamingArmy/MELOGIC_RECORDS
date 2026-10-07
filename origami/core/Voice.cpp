@@ -24,13 +24,13 @@ void Voice::bindMorphHints() noexcept {
         moduleBlendCenters_[m].setMorphHints(blendMorphHints_[m].data());
     }
 }
-void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset();seedLfos(); }
+void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;for(auto& r:instanceRuntime_) r.envelope.prepare(sampleRate);envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset();seedLfos(); }
 // Per-voice LFO streams: a distinct, repeatable ENTROPY stream per voice
 // lifecycle (the NODES voice-seed family); FRACTURE structure per LFO index.
 void Voice::seedLfos() noexcept {
     for(std::size_t i=0;i<noteLfos_.size();++i) noteLfos_[i].setStreams(Lfo::voiceStream(voiceSeed(),i),Lfo::fractureSeed(i));
 }
-void Voice::reset() noexcept { topologyGeneration_=0; bindMorphHints(); for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& hints:rightSpectralHints_)hints={};for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);previousOscillatorSamplesRight_.fill(0.0f);rightTapMask_=rightPhaseModules_=0;oneShotRelease_=false;envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();for(auto& filter:moduleFiltersRight_)filter.reset();rightFilterLive_=0;operatorState_={};active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
+void Voice::reset() noexcept { instanceRevision_=~std::uint64_t{0}; instanceCount_=0; instanceRetrigger_=false; for(auto& r:instanceRuntime_) {r.id=0;r.envelope.reset();r.lfo.reset();}  topologyGeneration_=0; bindMorphHints(); for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& hints:rightSpectralHints_)hints={};for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);previousOscillatorSamplesRight_.fill(0.0f);rightTapMask_=rightPhaseModules_=0;oneShotRelease_=false;envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();for(auto& filter:moduleFiltersRight_)filter.reset();rightFilterLive_=0;operatorState_={};active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,std::uint8_t graphOwnedEnvelopes) noexcept {
     reset();ampSettings_=settings;address_=address;velocity_=velocity;order_=order;++lifecycle_;seedLfos();
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
@@ -54,6 +54,7 @@ void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,cons
         glideRemaining_=samples;
         glideRatio_=std::exp(std::log(targetFrequency_/frequency_)/static_cast<double>(samples));
     }
+    instanceRetrigger_=retriggerEnvelope;
     if(retriggerEnvelope) {if(!(graphOwnedEnvelopes&1u)) envelope_.noteOn(settings);if(!(graphOwnedEnvelopes&2u)) env2_.noteOn(env2);if(!(graphOwnedEnvelopes&4u)) env3_.noteOn(env3);for(auto& lfo:noteLfos_)lfo.reset();operatorState_={};++lifecycle_;seedLfos();}
 }
 void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
@@ -146,6 +147,15 @@ __attribute__((noinline)) void Voice::runVoiceProgram(const CompiledModulation& 
         switch(step.kind) {
             case Step::Lfo: {
                 const std::size_t i=step.index;
+                if(i>=4) {
+                    const auto slot=i-4;const auto& a=modulation.instances[slot];auto& r=instanceRuntime_[slot];const auto output=CompiledModulation::instanceLfoSlot(slot);
+                    const auto rate=compiled.voiceLfoRate(i,a.lfo.rateHz,global,voiceSources,local);
+                    bool pair=false;
+                    if constexpr(Stereo) if(a.lfo.stereo>0) {float right=0;voiceSources[output]=r.lfo.nextStereo(a.lfo,sampleRate_,rate,right)*sourceLfoScale;voiceStereo.instances[slot]=right*sourceLfoScale;voiceStereo.instanceMask|=1u<<slot;pair=true;}
+                    if(!pair) voiceSources[output]=r.lfo.next(a.lfo,sampleRate_,rate)*sourceLfoScale;
+                    if(observe) visualization_.instancePhases[slot]=float(r.lfo.readPosition());
+                    break;
+                }
                 const auto& l=lfoSettings(modulation,i);
                 if(l.mode==LfoMode::Free) { voiceSources[3+i]=0.0f; break; }
                 const float rate=compiled.voiceLfoRate(i,l.rateHz,global,voiceSources,local);
@@ -181,19 +191,51 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         frequency_*=glideRatio_;
         if(--glideRemaining_==0) {frequency_=targetFrequency_;glideRatio_=1.0;}
     }
+    if(instanceRevision_!=compiled.stateRevision()) {
+        instanceRevision_=compiled.stateRevision(); instanceCount_=0;
+        for(std::size_t i=0;i<maxSourceInstances;++i) {
+            const auto& a=modulation.instances[i];
+            if(a.id && (a.family==SourceFamily::Envelope || (a.family==SourceFamily::Lfo && a.lfo.mode!=LfoMode::Free)))
+                instanceSlots_[instanceCount_++]=static_cast<std::uint8_t>(i);
+        }
+    }
     const float envelope=envelope_.next(sustain);
     const float env2=env2_.next(modulation.env2.sustain),env3=env3_.next(modulation.env3.sustain);
-    std::array<float,CompiledModulation::voiceSourceCount> voiceSources{};
+    std::array<float,CompiledModulation::voiceSourceCount> voiceSources;
+    // Legacy slots are all written below. Spare slots are read only by a
+    // pool route, or copied for observation/newest-voice monitoring. Avoid
+    // clearing 64 unused floats per voice per sample in ordinary patches.
+    if(instanceCount_ || observe || compiled.hasFxVoiceRoutes() || compiled.needsNewestVoiceSources())
+        std::fill(voiceSources.begin()+13,voiceSources.end(),0.0f);
     const float sourceEnvelopeScale=std::clamp(global.envelopeScaling,0.0f,2.0f);
     const float sourceLfoScale=std::clamp(global.lfoScaling,0.0f,2.0f);
     voiceSources[0]=envelope*sourceEnvelopeScale;voiceSources[1]=env2*sourceEnvelopeScale;voiceSources[2]=env3*sourceEnvelopeScale;
+    StereoSourceValues voiceStereo; // only mask-marked RIGHT values are read
+    for(std::size_t n=0;n<instanceCount_;++n) {
+        const auto i=instanceSlots_[n]; const auto& a=modulation.instances[i];auto& r=instanceRuntime_[i];
+        if(r.id!=a.id) {
+            r.id=a.id;r.envelope.reset();r.lfo.reset();
+            r.lfo.setStreams(Lfo::voiceStream(voiceSeed(),a.id+4),Lfo::fractureSeed(a.id+4));
+            if(!releasing_) r.envelope.noteOn(a.envelope);
+        } else if(instanceRetrigger_) {r.envelope.noteOn(a.envelope);r.lfo.reset();}
+        if(pendingNoteOff_) r.envelope.noteOff(a.envelope);
+        if(a.family==SourceFamily::Envelope)
+            voiceSources[CompiledModulation::instanceEnvelopeSlot(i)]=r.envelope.next(a.envelope.sustain)*sourceEnvelopeScale;
+        else {
+            if(compiled.hasVoiceNestedPlan()) continue;
+            if constexpr(Stereo) {if(a.lfo.stereo>0) {float right=0;voiceSources[CompiledModulation::instanceLfoSlot(i)]=r.lfo.nextStereo(a.lfo,sampleRate_,right)*sourceLfoScale;voiceStereo.instances[i]=right*sourceLfoScale;voiceStereo.instanceMask|=1u<<i;continue;}}
+            voiceSources[CompiledModulation::instanceLfoSlot(i)]=r.lfo.next(a.lfo,sampleRate_)*sourceLfoScale;
+        }
+    }
+    if(observe) for(std::size_t n=0;n<instanceCount_;++n) {const auto i=instanceSlots_[n];const auto& r=instanceRuntime_[i]; visualization_.instancePhases[i]=float(r.lfo.readPosition());visualization_.instanceEnvelopes[i]={r.envelope.stage(),r.envelope.stageProgress(),r.envelope.value()};}
+    instanceRetrigger_=false;
     // mct-origami-stereo-modulation: per-voice LFO pairs (RIGHT only when the
     // plan is stereo and that LFO's STEREO is non-zero; LEFT is unchanged).
-    StereoSourceValues voiceStereo{};
     constexpr bool stereoPlan=Stereo;
     // mct-origami-nested-modulation-manual-qa: with a voice nested plan the
     // per-voice LFOs run in the prepared order (after what feeds their rate).
     const bool nestedVoice=compiled.hasVoiceNestedPlan();
+    if(nestedVoice) std::fill_n(voiceSources.begin()+3,4,0.0f); // FREE LFO voice slots are inert in the nested program
     if(!nestedVoice) for(std::size_t i=0;i<4;++i){
         const auto& l=lfoSettings(modulation,i);
         if(l.mode==LfoMode::Free) voiceSources[3+i]=0.0f;

@@ -153,7 +153,7 @@ void nestedStateV34() {
     bool truncated=true;
     for(std::size_t n=0;n<bytes.size();++n) { InstrumentState t; truncated&=!decodeInstrumentState(bytes.data(),n,t); }
     check(truncated,"every truncation of a v34 state is rejected");
-    { auto future=bytes; word(future,4,35); check(!decodeInstrumentState(future.data(),future.size(),out),"an unknown future version (35) is rejected"); }
+    { auto future=bytes; word(future,4,36); check(!decodeInstrumentState(future.data(),future.size(),out),"an unknown future version (36) is rejected"); }
     // The state ends with the names: per macro a length word and one word per
     // character. MACRO 2 is "Wobble" (6), MACRO 3..16 are empty (14 words).
     const std::size_t tail=14*4,name2=bytes.size()-tail-6*4;
@@ -202,6 +202,37 @@ void nestedStateV34() {
     }
     check(safe,"bit-flipped v34 states load only when valid");
 }
+void instanceStateV35() {
+    auto e=std::make_unique<OrigamiEngine>();auto state=e->instrumentState();
+    check(!state.modulation.filterEnabled,"fresh engine has no filter");
+    auto old=encodeInstrumentState(state);InstrumentState restored;
+    check(decodeInstrumentState(old.data(),old.size(),restored) && restored.modulation.nextInstanceId==1,"pre-v35 state migrates with empty pool");
+    auto& m=state.modulation;
+    std::array<ModSource,maxSourceInstances> sources{};
+    for(std::size_t i=0;i<sources.size();++i) sources[i]=addSourceInstance(m,static_cast<SourceFamily>(i%7+1));
+    check(addSourceInstance(m,SourceFamily::Envelope)==ModSource::None,"shared capacity is bounded");
+    auto& l=m.instances[1].lfo;l.rateHz=3.7f;l.stereo=.8f;l.entropy=.4f;l.pointCount=2;l.points[0]={0,-.6f,.2f};l.points[1]={1,.7f,-.3f};
+    m.instances[2].random.smoothing=.6f;m.instances[5].sequencer.probability[3]=.4f;
+    m.routes[0]={m.nextRouteId++,true,sources[0],{ModDestination::Level,1,0},.5f,false};
+    m.routes[1]={m.nextRouteId++,true,sources[1],{ModDestination::LfoRate,0,std::uint32_t(sources[8])},.1f,true};
+    auto& op=m.operators[0];op.id=m.nextOperatorId++;op.type=ControlOpType::Add;
+    op.inputs[0]={ControlInput::Kind::Source,sources[2],0};
+    check(validInstrumentState(state),"full pool and Nodes source inputs valid");
+    const auto bytes=encodeInstrumentState(state);
+    check(bytes[7]==35,"instances select schema v35");
+    check(decodeInstrumentState(bytes.data(),bytes.size(),restored) && encodeInstrumentState(restored)==bytes,"v35 settings, routes, Nodes inputs and pool holes round trip");
+    for(std::size_t n=bytes.size()-16;n<bytes.size();++n) check(!decodeInstrumentState(bytes.data(),n,restored),"truncated pool is transactional");
+    const auto removed=sources[2];check(removeSourceInstance(m,removed),"remove instance");
+    const auto replacement=addSourceInstance(m,SourceFamily::Random);
+    check(replacement!=removed && sourceInstanceSlot(m,replacement)==2,"slot reuse gets a new identity");
+    check(m.operators[0].inputs[0].kind==ControlInput::Kind::None,"deletion disconnects Nodes input");
+    check(!findSourceInstance(m,removed),"removed identity stays absent");
+    const auto again=encodeInstrumentState(state);check(decodeInstrumentState(again.data(),again.size(),restored),"deletion/recreation persists");
+    m.filterEnabled=true;const auto authored=encodeInstrumentState(state);
+    check(decodeInstrumentState(authored.data(),authored.size(),restored) && restored.modulation.filterEnabled,"authored v35 filter restores");
+    auto legacy=e->instrumentState();legacy.modulation.filterEnabled=true;const auto legacyBytes=encodeInstrumentState(legacy);
+    check(legacyBytes[7]<35 && decodeInstrumentState(legacyBytes.data(),legacyBytes.size(),restored) && restored.modulation.filterEnabled,"legacy filter flag preserves authored topology");
+}
 void patches() {
     Patch p,out;std::string error;
     p.parameters[0]=.625f;
@@ -216,4 +247,4 @@ void patches() {
     check(!parsePatch(partial,out,error),"partial historical set rejected");
 }
 }
-int main() {try {states();nestedStateV34();patches();std::cout<<"PASS: "<<checks<<" state checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
+int main() {try {states();nestedStateV34();instanceStateV35();patches();std::cout<<"PASS: "<<checks<<" state checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

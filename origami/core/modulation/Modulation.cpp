@@ -22,7 +22,8 @@ namespace {
 // raw -1..1, so routes apply a polarity transform.
 inline bool signedGeneratorSlot(std::size_t slot) noexcept {
     constexpr std::size_t voice=CompiledModulation::globalSourceCount; // voice LFOs are voice sources 3..6
-    return slot<=3u || (slot>=8u && slot<=12u) || (slot>=voice+3u && slot<=voice+6u);
+    return (slot>=25u && slot<CompiledModulation::globalSourceCount) ||
+        (slot>=voice+13u+maxSourceInstances && slot<CompiledModulation::sourceSlotCount) || slot<=3u || (slot>=8u && slot<=12u) || (slot>=voice+3u && slot<=voice+6u);
 }
 bool range(float x,float a,float b) {return std::isfinite(x) && x>=a && x<=b;}
 bool validEnvelope(const dsp::EnvelopeSettings& e) {
@@ -53,6 +54,7 @@ bool validLfo(const LfoSettings& s) {
     return true;
 }
 bool known(ModSource s) {
+    if(isInstanceSource(s)) return true;
     if(isMacroSource(s)) return true; // existence is checked against macroMask
     switch(s) {
         case ModSource::Env1:case ModSource::Env2:case ModSource::Env3:
@@ -95,6 +97,12 @@ Range limits(ModDestination d) {
 // Destinations whose normalized domain is logarithmic.
 constexpr bool logDestination(ModDestination d) noexcept { return d==ModDestination::Cutoff || d==ModDestination::LfoRate; }
 std::size_t slotFor(ModSource source,const ModulationState& state) {
+    if(const auto i=sourceInstanceSlot(state,source); i<maxSourceInstances) {
+        const auto& s=state.instances[i];
+        if(s.family==SourceFamily::Envelope) return CompiledModulation::globalSourceCount+CompiledModulation::instanceEnvelopeSlot(i);
+        if(s.family==SourceFamily::Lfo && s.lfo.mode!=LfoMode::Free) return CompiledModulation::globalSourceCount+CompiledModulation::instanceLfoSlot(i);
+        return CompiledModulation::instanceGlobalSlot(i);
+    }
     if(isOperatorSource(source))
         return CompiledModulation::sourceSlotCount+operatorOutputIndex(std::min(controlOperatorSlot(state,operatorIdOf(source)),
                                                                                 ModulationState::maxControlOperators-1),
@@ -116,6 +124,36 @@ std::size_t slotFor(ModSource source,const ModulationState& state) {
     }
     return 0u;
 }
+}
+
+std::size_t sourceInstanceSlot(const ModulationState& s,ModSource source) noexcept {
+    const auto id=instanceIdOf(source);
+    if(id) for(std::size_t i=0;i<s.instances.size();++i) if(s.instances[i].id==id) return i;
+    return maxSourceInstances;
+}
+const SourceInstance* findSourceInstance(const ModulationState& s,ModSource source) noexcept {
+    const auto slot=sourceInstanceSlot(s,source); return slot<maxSourceInstances ? &s.instances[slot] : nullptr;
+}
+const char* sourceFamilyName(SourceFamily f) noexcept {
+    switch(f) { case SourceFamily::Envelope:return "ENV"; case SourceFamily::Lfo:return "LFO";
+    case SourceFamily::Random:return "RANDOM"; case SourceFamily::Chaos:return "CHAOS";
+    case SourceFamily::Drift:return "DRIFT"; case SourceFamily::Sequencer:return "SEQ";
+    case SourceFamily::Function:return "FUNCTION"; } return "SOURCE";
+}
+ModSource addSourceInstance(ModulationState& s,SourceFamily family) noexcept {
+    if(s.nextInstanceId>maxSourceInstanceId || static_cast<unsigned>(family)<1 || static_cast<unsigned>(family)>7) return ModSource::None;
+    std::uint32_t number=family==SourceFamily::Envelope ? 3 : family==SourceFamily::Lfo ? 4 : 1;
+    for(const auto& i:s.instances) if(i.id && i.family==family) number=std::max(number,i.number);
+    for(auto& i:s.instances) if(!i.id) { i={};i.id=s.nextInstanceId++;i.family=family;i.number=number+1;return instanceSource(i.id); }
+    return ModSource::None;
+}
+bool removeSourceInstance(ModulationState& s,ModSource source) noexcept {
+    const auto slot=sourceInstanceSlot(s,source); if(slot>=maxSourceInstances) return false;
+    for(auto& op:s.operators) if(op.id) for(auto& in:op.inputs) if(in.kind==ControlInput::Kind::Source && in.source==source) in={};
+    std::array<std::uint32_t,ModulationState::capacity> removed{};std::size_t count=0;
+    for(const auto& r:s.routes) if(r.id && (r.source==source || (r.destination.parameter==ModDestination::LfoRate && r.destination.itemId==static_cast<std::uint32_t>(source)))) removed[count++]=r.id;
+    for(std::size_t i=0;i<count;++i) removeRouteCascade(s,removed[i]);
+    s.instances[slot]={};return true;
 }
 
 float performanceSourceCurveValue(const PerformanceSourceCurve& curve,float input) noexcept {
@@ -148,7 +186,7 @@ float lfoRateFromNormalized(float normalized) noexcept {
 }
 namespace {
 // Graph nodes: LFO 1..4, MACRO 1..16, operator storage slots, route indices.
-constexpr std::size_t nodeLfo=0,nodeMacro=4,nodeOp=nodeMacro+maxMacros,
+constexpr std::size_t nodeLfo=0,nodeMacro=4+maxSourceInstances,nodeOp=nodeMacro+maxMacros,
                       nodeRoute=nodeOp+ModulationState::maxControlOperators,
                       nodeCount=nodeRoute+ModulationState::capacity;
 using NodeSet=std::array<std::uint64_t,(nodeCount+63)/64>;
@@ -156,6 +194,7 @@ using ModGraph=std::array<NodeSet,nodeCount>;
 std::size_t graphSourceNode(ModSource s,const ModulationState& state) noexcept {
     const auto v=static_cast<std::uint32_t>(s);
     if(v>=101 && v<=104) return nodeLfo+(v-101);
+    if(isInstanceSource(s)) {const auto i=lfoIndexForItem(state,v);if(i<4+maxSourceInstances) return nodeLfo+i;}
     if(const auto id=macroIdOf(s)) return nodeMacro+(id-1);
     if(isOperatorSource(s)) {
         const auto slot=controlOperatorSlot(state,operatorIdOf(s));
@@ -170,7 +209,7 @@ std::size_t routeIndexOf(const ModulationState& state,std::uint32_t id) noexcept
 }
 std::size_t graphTargetNode(const ModAddress& a,const ModulationState& state) noexcept {
     switch(a.parameter) {
-        case ModDestination::LfoRate: if(a.itemId>=1 && a.itemId<=4) return nodeLfo+(a.itemId-1); break;
+        case ModDestination::LfoRate: {const auto i=lfoIndexForItem(state,a.itemId);if(i<4+maxSourceInstances) return nodeLfo+i;} break;
         case ModDestination::MacroValue: if(a.itemId>=1 && a.itemId<=maxMacros) return nodeMacro+(a.itemId-1); break;
         case ModDestination::RouteDepth: { const auto r=routeIndexOf(state,a.itemId); if(r<ModulationState::capacity) return nodeRoute+r; } break;
         default: break;
@@ -290,6 +329,14 @@ bool isGlobalDestination(ModDestination d) noexcept {
 }
 bool knownModSource(ModSource s) noexcept { return known(s); }
 bool validModulation(const ModulationState& s,const std::array<OscillatorModuleState,16>& modules) noexcept {
+    if(s.nextInstanceId==0 || s.nextInstanceId>maxSourceInstanceId+1) return false;
+    for(std::size_t i=0;i<s.instances.size();++i) {
+        const auto& a=s.instances[i]; if(!a.id) continue;
+        if(a.id>=s.nextInstanceId || !a.number || static_cast<unsigned>(a.family)<1 || static_cast<unsigned>(a.family)>7) return false;
+        for(std::size_t j=0;j<i;++j) if(s.instances[j].id==a.id || (s.instances[j].id && s.instances[j].family==a.family && s.instances[j].number==a.number)) return false;
+        ModulationState probe; probe.env2=a.envelope;probe.lfo1=a.lfo;probe.random=a.random;probe.function=a.function;probe.chaos=a.chaos;probe.drift=a.drift;probe.sequencer=a.sequencer;
+        if(!validModulation(probe,modules)) return false;
+    }
     if((s.envActiveMask&~0x7u)!=0 || (s.envActiveMask&0x1u)==0) return false;
     if((s.lfoActiveMask&~0xFu)!=0) return false;
     if((s.generatorActiveMask&~0x1Fu)!=0) return false;
@@ -363,7 +410,7 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
             if(in.kind==ControlInput::Kind::None) { if(in.source!=ModSource::None || in.op!=0 || in.port!=0) return false; }
             else if(in.kind==ControlInput::Kind::Source) {
                 // Canonical sources are CONTROL: never into a GATE / EVENT input.
-                if(!known(in.source) || in.op!=0 || in.port!=0 || info->inputSignals[k]!=ControlSignal::Control) return false;
+                if((isInstanceSource(in.source) && !findSourceInstance(s,in.source)) || !known(in.source) || in.op!=0 || in.port!=0 || info->inputSignals[k]!=ControlSignal::Control) return false;
                 if(isMacroSource(in.source) && !macroActive(s,macroIdOf(in.source))) return false; // a removed macro
             } else if(in.kind==ControlInput::Kind::Operator) {
                 const auto* upstream=findControlOperator(s,in.op);
@@ -382,6 +429,7 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
     for(const auto& r:s.routes) {
         if(!r.id) {empty=true;continue;}
         if(empty || r.id<=previous || r.id>=s.nextRouteId || !range(r.amount,-1,1)) return false;
+        if(isInstanceSource(r.source) && !findSourceInstance(s,r.source)) return false;
         if(isOperatorSource(r.source)) {
             // Only a CONTROL output can drive a parameter (GATE / EVENT need a converter).
             const auto* op=findControlOperator(s,operatorIdOf(r.source));
@@ -405,7 +453,7 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
             // existing macro, or another existing complete route (by id).
             if(r.destination.oscillator!=0) return false;
             const auto item=r.destination.itemId;
-            if(r.destination.parameter==ModDestination::LfoRate && (item<1 || item>4)) return false;
+            if(r.destination.parameter==ModDestination::LfoRate && lfoIndexForItem(s,item)>=4+maxSourceInstances) return false;
             if(r.destination.parameter==ModDestination::MacroValue && !macroActive(s,item)) return false;
             if(r.destination.parameter==ModDestination::RouteDepth) {
                 if(item==r.id) return false;
@@ -1040,6 +1088,7 @@ bool sameParams(const ControlOperator& a,const ControlOperator& b) noexcept {
 CompiledModulation::PlanChange CompiledModulation::classifyChange(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules) const noexcept {
     const auto& k=planKey_;
     if(!k.valid || k.sampleRate!=sampleRate_ || k.filterEnabled!=state.filterEnabled) return PlanChange::Topology;
+    for(std::size_t i=0;i<maxSourceInstances;++i) if(k.instanceIds[i]!=state.instances[i].id || k.instanceFamilies[i]!=state.instances[i].family || k.instanceModes[i]!=state.instances[i].lfo.mode || k.instanceStereo[i]!=(state.instances[i].lfo.stereo>0)) return PlanChange::Topology;
     for(std::size_t i=0;i<4;++i) if(k.lfoModes[i]!=lfoSettings(state,i).mode) return PlanChange::Topology;
     for(std::size_t i=0;i<4;++i) if(k.lfoStereo[i]!=(lfoSettings(state,i).stereo>0.0f)) return PlanChange::Topology;
     for(std::size_t i=0;i<state.routes.size();++i) if(!sameRoute(k.routes[i],state.routes[i])) return PlanChange::Topology;
@@ -1065,6 +1114,7 @@ void CompiledModulation::storePlanKey(const ModulationState& state,const std::ar
     k.valid=true; k.sampleRate=sampleRate_; k.filterEnabled=state.filterEnabled;
     for(std::size_t i=0;i<4;++i) k.lfoModes[i]=lfoSettings(state,i).mode;
     for(std::size_t i=0;i<4;++i) k.lfoStereo[i]=lfoSettings(state,i).stereo>0.0f;
+    for(std::size_t i=0;i<maxSourceInstances;++i) {k.instanceIds[i]=state.instances[i].id;k.instanceFamilies[i]=state.instances[i].family;k.instanceModes[i]=state.instances[i].lfo.mode;k.instanceStereo[i]=state.instances[i].lfo.stereo>0;}
     k.routes=state.routes; k.operators=state.operators;
     for(std::size_t i=0;i<modules.size();++i) {
         auto& m=k.modules[i]; m=ModulePlanKey{};
@@ -1417,6 +1467,12 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         }
         return l>=0 && lfoStereo[std::size_t(l)] ? l : -1;
     };
+    const auto instanceOfSlot=[&state](std::size_t slot)->int {
+        std::size_t i=maxSourceInstances;
+        if(slot>=25 && slot<globalSourceCount) i=slot-25;
+        else if(slot>=globalSourceCount+13+maxSourceInstances && slot<sourceSlotCount) i=slot-globalSourceCount-13-maxSourceInstances;
+        return i<maxSourceInstances && state.instances[i].id && state.instances[i].family==SourceFamily::Lfo && state.instances[i].lfo.stereo>0 ? int(i) : -1;
+    };
     std::array<bool,operatorSlotCount> opStereo{};
     for(std::size_t i=0;i<opCount_;++i) {
         auto& c=ops_[i];
@@ -1432,7 +1488,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         for(const auto input:c.input) {
             if(input<0) continue;
             const auto idx=static_cast<std::size_t>(input);
-            if(idx<sourceSlotCount) c.stereo|=lfoOfSlot(idx)>=0;
+            if(idx<sourceSlotCount) c.stereo|=lfoOfSlot(idx)>=0 || instanceOfSlot(idx)>=0;
             else { const auto out=idx-sourceSlotCount; c.stereo|=out%maxControlOutputs==0 && opStereo[out/maxControlOutputs]; }
         }
         opStereo[c.slot]=c.stereo;
@@ -1441,6 +1497,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     moduleReadGroups_.fill(0u); readGroupsAll_=0; readTargets_={};
     for(std::size_t i=0;i<count_;++i) {
         auto& g=groups_[i];
+        g.stereoGlobalInstances=g.stereoVoiceInstances=0;
         g.stereo=false; g.stereoGlobalLfos=g.stereoVoiceLfos=0; g.stereoGlobalOps=g.stereoVoiceOps=0;
         if(isFxDestination(g.address.parameter) || stereoCapability(g.address.parameter)!=StereoCapability::Stereo) continue;
         for(std::size_t k=0;k<g.globalSlotCount;++k) { const int l=lfoOfSlot(g.globalSlots[k]); if(l>=0) g.stereoGlobalLfos|=std::uint8_t(1u<<l); }
@@ -1453,7 +1510,9 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             const auto r=g.voiceOpSlots[k],out=routedOutput_[r];
             if(out%maxControlOutputs==0 && opStereo[out/maxControlOutputs]) g.stereoVoiceOps|=1u<<r;
         }
-        g.stereo=g.stereoGlobalLfos!=0 || g.stereoVoiceLfos!=0 || g.stereoGlobalOps!=0 || g.stereoVoiceOps!=0;
+        for(std::size_t k=0;k<g.globalSlotCount;++k) {const int i=instanceOfSlot(g.globalSlots[k]);if(i>=0) g.stereoGlobalInstances|=1u<<i;}
+        for(std::size_t k=0;k<g.voiceSlotCount;++k) {const int i=instanceOfSlot(globalSourceCount+g.voiceSlots[k]);if(i>=0) g.stereoVoiceInstances|=1u<<i;}
+        g.stereo=g.stereoGlobalInstances!=0 || g.stereoVoiceInstances!=0 || g.stereoGlobalLfos!=0 || g.stereoVoiceLfos!=0 || g.stereoGlobalOps!=0 || g.stereoVoiceOps!=0;
         if(g.stereo) {
             stereoGroups_[stereoGroupCount_++]=static_cast<std::uint8_t>(i);
             if(stereoOscillatorRead(g.address.parameter) && g.slot<16) {
@@ -1483,14 +1542,14 @@ void CompiledModulation::buildNestedPlan(const ModulationState& state) noexcept 
         const auto& g=groups_[i];
         if(!g.nested) continue;
         const auto item=g.address.itemId;
-        if(g.address.parameter==ModDestination::LfoRate && item>=1 && item<=4) lfoRateGroup_[item-1]=static_cast<std::int8_t>(i);
+        if(g.address.parameter==ModDestination::LfoRate && lfoIndexForItem(state,item)<4+maxSourceInstances) lfoRateGroup_[lfoIndexForItem(state,item)]=static_cast<std::int8_t>(i);
         else if(g.address.parameter==ModDestination::MacroValue && item>=1 && item<=maxMacros) macroGroup_[item-1]=static_cast<std::int8_t>(i);
         nestedPlan_=true;
     }
     for(const auto d:depthGroup_) nestedPlan_=nestedPlan_ || d>=0;
     if(!nestedPlan_) return;
 
-    constexpr std::size_t L=0,M=4,O=M+maxMacros,R=O+operatorSlotCount,N=R+ModulationState::capacity;
+    constexpr std::size_t L=0,M=4+maxSourceInstances,O=M+maxMacros,R=O+operatorSlotCount,N=R+ModulationState::capacity;
     std::array<bool,N> present{},voice{};
     std::array<std::array<std::uint64_t,(N+63)/64>,N> edge{};
     const auto link=[&](std::size_t from,std::size_t to) { if(from<N && to<N && from!=to) edge[from][to/64]|=std::uint64_t(1)<<(to%64); };
@@ -1502,8 +1561,10 @@ void CompiledModulation::buildNestedPlan(const ModulationState& state) noexcept 
     // The node a source slot (or a ModSource) is produced by, if any.
     const auto slotNode=[&](std::size_t slot)->std::size_t {
         if(slot<4) return L+slot;
+        if(slot>=25 && slot<globalSourceCount && state.instances[slot-25].family==SourceFamily::Lfo) return L+4+slot-25;
+        if(slot>=globalSourceCount+13+maxSourceInstances && slot<sourceSlotCount) return L+4+slot-globalSourceCount-13-maxSourceInstances;
         if(slot>=4 && slot<=7) return M+(slot-4);
-        if(slot>=13 && slot<globalSourceCount) return M+4+(slot-13);
+        if(slot>=13 && slot<25) return M+4+(slot-13);
         if(slot>=globalSourceCount+3 && slot<=globalSourceCount+6) return L+(slot-globalSourceCount-3);
         if(slot>=sourceSlotCount) { const auto c=compiledOp((slot-sourceSlotCount)/maxControlOutputs); if(c<operatorSlotCount) return O+c; }
         return N;
@@ -1521,6 +1582,12 @@ void CompiledModulation::buildNestedPlan(const ModulationState& state) noexcept 
         if(lfoVoice(i)) { present[L+i]=true; voice[L+i]=true; }
         else present[L+i]=usesGlobalSource(i);
     }
+    for(std::size_t i=4;i<4+maxSourceInstances;++i) {
+        const auto slot=i-4;const auto& a=state.instances[slot];
+        if(!a.id || a.family!=SourceFamily::Lfo) continue;
+        voice[L+i]=lfoVoice(i);
+        present[L+i]=voice[L+i] ? usesVoiceSource(instanceLfoSlot(slot)) || lfoRateGroup_[i]>=0 : usesGlobalSource(instanceGlobalSlot(slot)) || lfoRateGroup_[i]>=0;
+    }
     for(std::size_t j=0;j<maxMacros;++j) present[M+j]=macroGroup_[j]>=0;
     for(std::size_t c=0;c<opCount_;++c) { present[O+c]=true; voice[O+c]=ops_[c].voice; }
     for(std::size_t r=0;r<depthGroup_.size();++r) present[R+r]=depthGroup_[r]>=0;
@@ -1530,7 +1597,7 @@ void CompiledModulation::buildNestedPlan(const ModulationState& state) noexcept 
         const auto& g=groups_[static_cast<std::size_t>(routeGroup_[ri])];
         if(!g.nested) continue;
         std::size_t target=N;
-        if(g.address.parameter==ModDestination::LfoRate) target=L+(g.address.itemId-1);
+        if(g.address.parameter==ModDestination::LfoRate) target=L+lfoIndexForItem(state,g.address.itemId);
         else if(g.address.parameter==ModDestination::MacroValue) target=M+(g.address.itemId-1);
         else if(g.address.parameter==ModDestination::RouteDepth) { const auto r=routeIndexOf(state,g.address.itemId); if(r<depthGroup_.size()) target=R+r; }
         link(sourceNode(state.routes[ri].source),target);
@@ -1578,10 +1645,10 @@ void CompiledModulation::buildNestedPlan(const ModulationState& state) noexcept 
     order(true,voiceProgram_,voiceProgramCount_);
     // The voice program is needed when a per-voice LFO's rate or a per-voice
     // depth is modulated (otherwise voices keep their unchanged path).
-    for(std::size_t i=0;i<4;++i) voiceNestedPlan_=voiceNestedPlan_ || (lfoVoice(i) && lfoRateGroup_[i]>=0);
+    for(std::size_t i=0;i<4+maxSourceInstances;++i) voiceNestedPlan_=voiceNestedPlan_ || (lfoVoice(i) && lfoRateGroup_[i]>=0);
     for(std::size_t r=0;r<depthGroup_.size();++r) voiceNestedPlan_=voiceNestedPlan_ || (depthGroup_[r]>=0 && voice[R+r]);
     // Global nested targets with per-voice terms read the newest voice.
-    for(std::size_t i=0;i<4;++i) if(!lfoVoice(i) && lfoRateGroup_[i]>=0) needsNewestVoice_=needsNewestVoice_ || groups_[static_cast<std::size_t>(lfoRateGroup_[i])].voiceSlotCount!=0;
+    for(std::size_t i=0;i<4+maxSourceInstances;++i) if(!lfoVoice(i) && lfoRateGroup_[i]>=0) needsNewestVoice_=needsNewestVoice_ || groups_[static_cast<std::size_t>(lfoRateGroup_[i])].voiceSlotCount!=0;
     for(const auto m:macroGroup_) if(m>=0) needsNewestVoice_=needsNewestVoice_ || groups_[static_cast<std::size_t>(m)].voiceSlotCount!=0;
     for(const auto d:depthGroup_) if(d>=0) needsNewestVoice_=needsNewestVoice_ || groups_[static_cast<std::size_t>(d)].voiceSlotCount!=0;
 }
@@ -2526,6 +2593,8 @@ float CompiledModulation::operatorInputRight(std::int16_t input,float left,const
                                              const ModulationFrame& f,const ModulationFrame& operators) noexcept {
     if(input<0) return left;
     const auto i=static_cast<std::size_t>(input);
+    if(i>=25 && i<globalSourceCount) {const auto slot=i-25;return (f.stereo.globalLfo.instanceMask&(1u<<slot)) ? f.stereo.globalLfo.instances[slot] : left;}
+    if(i>=globalSourceCount+13+maxSourceInstances && i<sourceSlotCount && voiceStereo) {const auto slot=i-globalSourceCount-13-maxSourceInstances;return (voiceStereo->instanceMask&(1u<<slot)) ? voiceStereo->instances[slot] : left;}
     if(i<4) return ((f.stereo.globalLfo.mask>>i)&1u) ? f.stereo.globalLfo.lfo[i] : left; // FREE LFO
     if(i<globalSourceCount) return left;
     if(i<sourceSlotCount) {
@@ -2633,9 +2702,11 @@ float CompiledModulation::stereoDelta(const Group& g,const ModulationFrame& f,
         const auto lfos=std::uint8_t(g.stereoGlobalLfos&f.stereo.globalLfo.mask);
         for(std::size_t i=0;i<4;++i) if((lfos>>i)&1u)
             d+=weight(i)*(routeSourceValue(i,f.stereo.globalLfo.lfo[i],g.bipolar[i])-routeSourceValue(i,(*global)[i],g.bipolar[i]));
+        for(std::uint32_t bits=g.stereoGlobalInstances&f.stereo.globalLfo.instanceMask;bits;bits&=bits-1) {const auto i=std::size_t(__builtin_ctz(bits)),slot=instanceGlobalSlot(i);d+=weight(slot)*(routeSourceValue(slot,f.stereo.globalLfo.instances[i],g.bipolar[slot])-routeSourceValue(slot,(*global)[slot],g.bipolar[slot]));}
         opTerms(g.stereoGlobalOps);
     } else {
         if(voiceStereo!=nullptr) {
+            for(std::uint32_t bits=g.stereoVoiceInstances&voiceStereo->instanceMask;bits;bits&=bits-1) {const auto i=std::size_t(__builtin_ctz(bits)),v=instanceLfoSlot(i),slot=globalSourceCount+v;d+=weight(slot)*(routeSourceValue(slot,voiceStereo->instances[i],g.bipolar[slot])-routeSourceValue(slot,(*voice)[v],g.bipolar[slot]));}
             const auto lfos=std::uint8_t(g.stereoVoiceLfos&voiceStereo->mask);
             for(std::size_t i=0;i<4;++i) if((lfos>>i)&1u) {
                 const auto slot=globalSourceCount+3+i;
@@ -2697,7 +2768,7 @@ float CompiledModulation::nestedVoiceTerms(const Group& g,const std::array<float
 }
 float CompiledModulation::globalLfoRate(std::size_t lfo,float baseHz,const std::array<float,globalSourceCount>& sources,
                                         const ModulationFrame& f,const std::array<float,voiceSourceCount>* newestVoice) const noexcept {
-    if(lfo>=4 || lfoRateGroup_[lfo]<0) return baseHz;
+    if(lfo>=4+maxSourceInstances || lfoRateGroup_[lfo]<0) return baseHz;
     const auto& g=groups_[static_cast<std::size_t>(lfoRateGroup_[lfo])];
     return lfoRateFromNormalized(lfoRateToNormalized(baseHz)+nestedGlobalTerms(g,sources,f)+nestedNewestVoiceTerms(g,newestVoice,f));
 }
@@ -2721,7 +2792,7 @@ void CompiledModulation::globalRouteDepth(std::size_t route,ModulationFrame& f,c
 }
 float CompiledModulation::voiceLfoRate(std::size_t lfo,float baseHz,const ModulationFrame& global,
                                        const std::array<float,voiceSourceCount>& voice,const ModulationFrame& local) const noexcept {
-    if(lfo>=4 || lfoRateGroup_[lfo]<0) return baseHz;
+    if(lfo>=4+maxSourceInstances || lfoRateGroup_[lfo]<0) return baseHz;
     const auto& g=groups_[static_cast<std::size_t>(lfoRateGroup_[lfo])];
     // Global terms read the global frame (sources, global operators); the
     // depths of its routes are this voice's.
@@ -2798,7 +2869,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
     f.filterEnabled=filterEnabled_;
     // Stereo terms are evaluated only while some LFO / operator actually has a
     // right value (STEREO > 0); otherwise the frame is simply mono.
-    const bool stereoNow=stereoPlan_ && (f.stereo.globalLfo.mask!=0 || f.stereo.operatorMask!=0);
+    const bool stereoNow=stereoPlan_ && (f.stereo.globalLfo.instanceMask!=0 || f.stereo.globalLfo.mask!=0 || f.stereo.operatorMask!=0);
     if(stereoPlan_) { f.stereo.levelMask=0; f.stereo.rightMask=0; f.stereo.cutoffSplit=f.stereo.resonanceSplit=false; f.stereo.active=stereoNow; }
     const auto group=[&](std::size_t i,auto withDepth) {
         const auto& g=groups_[i];
@@ -2835,7 +2906,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
 }
 void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,double /*rate*/,
                                     const StereoSourceValues* voiceStereo,const ModulationFrame* global) const noexcept {
-    const bool stereoNow=stereoPlan_ && (f.stereo.active || f.stereo.operatorMask!=0 || (voiceStereo!=nullptr && voiceStereo->mask!=0));
+    const bool stereoNow=stereoPlan_ && (f.stereo.active || f.stereo.operatorMask!=0 || (voiceStereo!=nullptr && (voiceStereo->mask!=0 || voiceStereo->instanceMask!=0)));
     const auto group=[&](std::size_t i,auto withDepth) {
         const auto& g=groups_[i];
         float n=std::isfinite(f.normalized[i])?f.normalized[i]:0.0f;

@@ -1685,12 +1685,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 const float modulated=juce::jlimit(minimum,1.0f,
                     process.amount+
                     modulationUiAllRoutesValue(ModDestination::ProcessAmount,display_.id,process.id)*span);
-                // Match the spectral worker's bounded amount key so the
-                // preview and audible oscillator select the same prepared data.
-                const float steps=dsp::oscProcessIsSpectral(process.type)
-                    ? dsp::spectralAmountSteps : 64.0f;
-                const float visualAmount=std::round(modulated*steps)/steps;
-                visualPlan.stages[visualPlan.count++]={process.type,visualAmount,process.seed};
+                visualPlan.stages[visualPlan.count++]={process.type,modulated,process.seed};
             }
         }
 
@@ -1710,40 +1705,30 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         };
 
         if(spectralPreview) {
-            const int wtKey=juce::roundToInt(physical*128.0f);
+            const float wtKey=position;
             const bool stale=!spectralPreviewValid_ ||
-                spectralPreviewWtKey_!=wtKey || spectralPreviewTable_!=table.get() ||
+                spectralPreviewPosition_!=wtKey || spectralPreviewTable_!=table.get() ||
                 !samePlan(spectralPreviewPlan_,visualPlan);
 
             if(stale) {
-                if(spectralPreviewValid_)
-                    spectralPreviewPrevious_=spectralPreviewCache_;
-                std::array<float,previewSize> previewSource{};
-                const float visualFrame=static_cast<float>(wtKey)/(128.0f*3.0f)*float(frameCount-1);
-                const int va=juce::jlimit(0,frameCount-1,int(std::floor(visualFrame)));
-                const int vb=juce::jmin(frameCount-1,va+1);
-                const float vblend=visualFrame-float(va);
-                for(std::size_t sampleIndex=0;sampleIndex<previewSize;++sampleIndex) {
-                    const float phase=static_cast<float>(sampleIndex)/static_cast<float>(previewSize);
-                    const float ya=shape(va,phase),yb=shape(vb,phase);
-                    previewSource[sampleIndex]=ya+(yb-ya)*vblend;
+                // Process each canonical frame before WT interpolation, as DSP does.
+                std::array<float,previewSize> previewSource{},secondFrame{};
+                for(std::size_t i=0;i<previewSize;++i) {
+                    const float phase=float(i)/float(previewSize);
+                    previewSource[i]=shape(a,phase); secondFrame[i]=shape(next,phase);
                 }
-                dsp::renderProcessedFrame2048(
-                    previewSource.data(),spectralPreviewCache_.data(),visualPlan);
+                dsp::renderOscillatorPreview2048(previewSource.data(),spectralPreviewCache_.data(),visualPlan);
+                dsp::renderOscillatorPreview2048(secondFrame.data(),previewSource.data(),visualPlan);
+                for(std::size_t i=0;i<previewSize;++i)
+                    spectralPreviewCache_[i]+=blend*(previewSource[i]-spectralPreviewCache_[i]);
 
-                spectralPreviewWtKey_=wtKey;
+                spectralPreviewPosition_=wtKey;
                 spectralPreviewTable_=table.get();
                 spectralPreviewPlan_=visualPlan;
-                if(!spectralPreviewValid_)
-                    spectralPreviewPrevious_=spectralPreviewCache_;
                 spectralPreviewValid_=true;
-                spectralPreviewMorph_=0.0f;
-            } else if(spectralPreviewMorph_<1.0f) {
-                spectralPreviewMorph_=juce::jmin(1.0f,spectralPreviewMorph_+0.22f);
             }
         } else {
             spectralPreviewValid_=false;
-            spectralPreviewMorph_=1.0f;
             spectralPreviewPlan_={};
         }
 
@@ -1756,11 +1741,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 const float fraction=pos-static_cast<float>(static_cast<std::size_t>(pos));
                 const float current=spectralPreviewCache_[i]+
                     fraction*(spectralPreviewCache_[j]-spectralPreviewCache_[i]);
-                const float previous=spectralPreviewPrevious_[i]+
-                    fraction*(spectralPreviewPrevious_[j]-spectralPreviewPrevious_[i]);
-                const float t=spectralPreviewMorph_*spectralPreviewMorph_*
-                    (3.0f-2.0f*spectralPreviewMorph_);
-                return previous+(current-previous)*t;
+                return current;
             }
             double phase=static_cast<double>(sourcePhase);
             for(std::size_t i=0;i<visualPlan.count;++i) {
@@ -1774,10 +1755,10 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
         constexpr int points=384;
         std::array<juce::Point<float>,points> plot{};
-        juce::Path outline;
+        auto& outline=viewportStroke_;outline.clear();
 
         for(int i=0;i<points;++i) {
-            const float sourcePhase=float(i)/float(points-1);
+            const float sourcePhase=dsp::oscillatorPreviewPhase(std::size_t(i),points);
 
             // Preview is a bounded viewport. Even experimental/spectral
             // processes must not draw beyond its physical frame.

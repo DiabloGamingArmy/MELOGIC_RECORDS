@@ -18,6 +18,9 @@
 namespace mct::origami {
 struct RuntimeVisualizationSnapshot {
     static constexpr std::size_t waveformBins=256;
+    std::array<float,maxSourceInstances> instancePhases{};
+    std::array<EnvelopeRuntimeInfo,maxSourceInstances> instanceEnvelopes{};
+    std::array<std::uint32_t,maxSourceInstances> instanceIds{};
     std::array<float,12> sourceValues{};
     std::array<float,12> sourcePhases{};
     // Observed voice's MIDI/control sources, copied at visualization cadence.
@@ -177,6 +180,9 @@ private:
     CompiledModulation compiledModulation_;
     OscillatorRenderPlan oscillatorPlan_;
     std::array<OscillatorModuleId,16> compiledModuleIds_{};
+    std::array<GlobalSourceRuntime,maxSourceInstances> instanceRuntime_{};
+    std::array<std::uint8_t,maxSourceInstances> globalInstanceSlots_{};
+    std::size_t globalInstanceCount_=0;
     std::array<Lfo,4> globalLfos_{};
     RandomGenerator globalRandom_{};
     FunctionGenerator globalFunction_{};

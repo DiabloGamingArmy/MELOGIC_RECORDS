@@ -36,6 +36,35 @@ struct Reader {
     }
     float real() {auto n=word();float f;std::memcpy(&f,&n,4);return f;}
 };
+void writeInstance(Writer& w,const SourceInstance& a) {
+    w.word(a.id); if(!a.id) return;
+    w.word(a.number);w.word(static_cast<std::uint32_t>(a.family));
+    for(float v:{a.envelope.attack,a.envelope.decay,a.envelope.sustain,a.envelope.release,a.envelope.attackCurve,a.envelope.decayCurve,a.envelope.releaseCurve}) w.real(v);
+    const auto& l=a.lfo;w.word(static_cast<std::uint32_t>(l.shape));w.word(static_cast<std::uint32_t>(l.mode));w.real(l.rateHz);w.word(l.pointCount);
+    for(const auto& p:l.points) {w.real(p.x);w.real(p.y);w.real(p.curve);}
+    w.word(l.pingPong ? 1 : 0);
+    for(float v:{l.smooth,l.attackSeconds,l.delaySeconds,l.phase,l.skew,l.quantize,l.entropy,l.fracture,l.stereo}) w.real(v);
+    for(float v:{a.random.rateHz,a.random.smoothing,a.random.hold,a.random.delaySeconds,a.function.rateHz,a.function.curve,
+        a.chaos.rateHz,a.chaos.chaos,a.chaos.flow,a.chaos.damping,a.chaos.warp,a.chaos.smoothing,a.drift.rateHz,a.sequencer.rateHz}) w.real(v);
+    w.word(static_cast<std::uint32_t>(a.chaos.axis));w.word(static_cast<std::uint32_t>(a.chaos.method));
+    const auto& q=a.sequencer;w.word(q.activeSteps);w.word(static_cast<std::uint32_t>(q.direction));w.word(q.loop ? 1 : 0);w.real(q.humanize);
+    for(float v:q.steps) w.real(v);for(float v:q.probability) w.real(v);for(auto v:q.ratchets) w.word(v);
+}
+bool readInstance(Reader& r,SourceInstance& a) {
+    a={};a.id=r.word();if(!a.id) return r.ok;
+    a.number=r.word();a.family=static_cast<SourceFamily>(r.word());
+    for(float* v:{&a.envelope.attack,&a.envelope.decay,&a.envelope.sustain,&a.envelope.release,&a.envelope.attackCurve,&a.envelope.decayCurve,&a.envelope.releaseCurve}) *v=r.real();
+    auto& l=a.lfo;l.shape=static_cast<LfoShape>(r.word());l.mode=static_cast<LfoMode>(r.word());l.rateHz=r.real();l.pointCount=r.word();
+    for(auto& p:l.points) {p.x=r.real();p.y=r.real();p.curve=r.real();}
+    auto flag=r.word();if(flag>1) return false;l.pingPong=flag==1;
+    for(float* v:{&l.smooth,&l.attackSeconds,&l.delaySeconds,&l.phase,&l.skew,&l.quantize,&l.entropy,&l.fracture,&l.stereo}) *v=r.real();
+    for(float* v:{&a.random.rateHz,&a.random.smoothing,&a.random.hold,&a.random.delaySeconds,&a.function.rateHz,&a.function.curve,
+        &a.chaos.rateHz,&a.chaos.chaos,&a.chaos.flow,&a.chaos.damping,&a.chaos.warp,&a.chaos.smoothing,&a.drift.rateHz,&a.sequencer.rateHz}) *v=r.real();
+    a.chaos.axis=static_cast<ChaosAxis>(r.word());a.chaos.method=static_cast<ChaosMethod>(r.word());
+    auto& q=a.sequencer;q.activeSteps=r.word();q.direction=static_cast<SequenceDirection>(r.word());flag=r.word();if(flag>1) return false;q.loop=flag==1;q.humanize=r.real();
+    for(auto& v:q.steps) v=r.real();for(auto& v:q.probability) v=r.real();for(auto& v:q.ratchets) v=r.word();return r.ok;
+}
+
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
@@ -77,7 +106,7 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     const float up=s.performance.pitchBendRangeSemitones,down=s.performance.pitchBendDownSemitones;
     v34|=!(up>=1.0f && up<=48.0f && down<=-1.0f && down>=-48.0f);
     for(const auto& name:s.modulation.macroNames) v34|=name[0]!='\0';
-    const std::uint32_t version=v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
+    const std::uint32_t version=s.modulation.nextInstanceId!=1 ? 35u : v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
     Writer w;w.word(magic);w.word(version);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
@@ -265,6 +294,7 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
             w.word(length);
             for(std::uint32_t c=0;c<length;++c) w.word(static_cast<unsigned char>(name[c]));
         }
+    if(version>=35) {w.word(mod.nextInstanceId);w.word(maxSourceInstances);for(const auto& a:mod.instances) writeInstance(w,a);}
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -275,9 +305,11 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>34) return false;
+    if(version<1 || version>35) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
+    // Formats before collection flags implicitly contained the filter.
+    s.modulation.filterEnabled=true;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
     // Validate before converting the legacy unison float to an integer.
     for(const auto& p:parameterRegistry()) {
@@ -553,6 +585,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             for(std::uint32_t c=0;c<length;++c) { const auto ch=r.word(); if(ch==0u || ch>255u) return false; name[c]=static_cast<char>(ch); }
         }
     }
+    if(version>=35) {s.modulation.nextInstanceId=r.word();if(r.word()!=maxSourceInstances) return false;for(auto& a:s.modulation.instances) if(!readInstance(r,a)) return false;}
     // mct-origami-nodes-n01: (source, destination) pairs are unique. States
     // written before that rule may repeat a pair; merge them deterministically
     // (summed amount, as the compiler always did) instead of rejecting the load.

@@ -34,6 +34,7 @@ public:
 
     ModulationSourceRow(ModSource,const juce::String& title,const juce::String& componentName);
 
+    void setSource(ModSource s) noexcept { source_=s; }
     ModSource source() const noexcept { return source_; }
     // Returns true when the row's preferred height changed.
     bool setRoutes(std::vector<ModulationSourceRoute>);

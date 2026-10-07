@@ -157,6 +157,11 @@ struct OscProcessPlan {
     std::uint8_t count=0;
 };
 
+// Message-thread preview: the same prepared endpoint morph as the oscillator.
+void renderOscillatorPreview2048(const float*,float*,const OscProcessPlan&) noexcept;
+// A viewport shows a half-open cycle: never connect the end to phase zero.
+constexpr float oscillatorPreviewPhase(std::size_t i,std::size_t points) noexcept { return float(i)/float(points); }
+
 const char* oscProcessName(OscProcessType type) noexcept;
 const char* oscProcessCategory(OscProcessType type) noexcept;
 double processOscillatorPhase(double phase,OscProcessType type,float amount) noexcept;

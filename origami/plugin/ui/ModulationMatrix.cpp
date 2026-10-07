@@ -73,6 +73,8 @@ public:
             source_.addNativeItem(group,label,static_cast<int>(source));
         };
 
+        for(const auto& a:state.modulation.instances) if(a.id)
+            sourceItem("Instances",modulationSourceLabel(state.modulation,instanceSource(a.id)),instanceSource(a.id));
         if(state.modulation.envActiveMask&0x1u) sourceItem("Envelopes","ENV 1",ModSource::Env1);
         if(state.modulation.envActiveMask&0x2u) sourceItem("Envelopes","ENV 2",ModSource::Env2);
         if(state.modulation.envActiveMask&0x4u) sourceItem("Envelopes","ENV 3",ModSource::Env3);

@@ -22,6 +22,7 @@
 #include "ModulationSourceRow.h"
 #include "VisualizationSettings.h"
 #include "LfoControlStrip.h"
+#include "NativeChoiceMenu.h"
 #include <deque>
 #include <memory>
 #include <optional>
@@ -45,6 +46,13 @@ public:
     // Selects a source's editor (as clicking its card does). False when the
     // source has no active card.
     bool selectSource(ModSource);
+    std::vector<NativeChoiceItem> sourceMenuItems() const;
+    ModSource addSource(SourceFamily family) {
+        if(!canonicalBindings_.snapshot) return ModSource::None;
+        const auto id=canonicalBindings_.snapshot().modulation.nextInstanceId;
+        allocateSource(int(family));
+        return canonicalBindings_.snapshot().modulation.nextInstanceId!=id ? instanceSource(id) : ModSource::None;
+    }
     // The LFO editor's TOOLS / FUNC strip and point canvas (inspection).
     LfoControlStrip& lfoStrip() noexcept { return lfoStrip_; }
     juce::Rectangle<float> lfoCanvas() const noexcept { return selected_>=3 && selected_<=6 ? envCanvas_ : juce::Rectangle<float>{}; }
@@ -98,7 +106,11 @@ private:
     void updateScrollbar();
     void zoomBy(float,juce::Point<float> anchor = {});
 
-    static ModSource sourceForTab(std::size_t) noexcept;
+    ModSource sourceForTab(std::size_t) const noexcept;
+    void selectTab(int);
+    ModulationState projectEditor(ModulationState) const;
+    ModulationBindings canonicalBindings_;
+    int railSelected_=0;
     bool sourceTabActive(std::size_t) const noexcept;
     void showAddSourceMenu();
     void allocateSource(int sourceType);
@@ -114,7 +126,7 @@ private:
     void paintEnvelopeTimeMarkers(juce::Graphics&) const;
     void paintOverChildren(juce::Graphics&) override;
 
-    std::array<std::unique_ptr<ModulationSourceRow>,14> tabs_;
+    std::array<std::unique_ptr<ModulationSourceRow>,14+maxSourceInstances> tabs_;
     juce::TextButton sourceAdd_{"+"},sourceRemove_{"-"};
     juce::Viewport sourceViewport_;
     juce::Component sourceContent_;
@@ -244,7 +256,7 @@ private:
     static constexpr std::size_t visualTraceMaxPoints_=768;
 
     static constexpr std::size_t sourceHistoryLength_=72;
-    std::array<std::deque<float>,14> sourceHistory_{};
+    std::array<std::deque<float>,14+maxSourceInstances> sourceHistory_{};
     // Signed Random output history for the large Random-LFO viewport.
     // Oldest is at the front/left; newest enters on the right and pushes the
     // existing trace leftward.

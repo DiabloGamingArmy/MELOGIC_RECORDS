@@ -665,6 +665,7 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
     for(const auto s:mct::origami::activeMacroSources(state.modulation)) sources.push_back(s); // stable macro ids
     for(const auto s:{S::Random,S::Function,S::Chaos,S::Drift,S::Sequencer}) sources.push_back(s);
     for(const auto s:{S::Velocity,S::ModWheel,S::Keytrack,S::Aftertouch,S::PitchBend,S::NoteGate}) sources.push_back(s);
+    for(const auto& a:state.modulation.instances) if(a.id) sources.push_back(mct::origami::instanceSource(a.id));
     const auto available=[&state](S s) {
         const auto raw=static_cast<std::uint32_t>(s);
         if(raw>=1 && raw<=3) return (state.modulation.envActiveMask&(1u<<(raw-1)))!=0;

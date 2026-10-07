@@ -369,6 +369,15 @@ std::vector<Scenario> matrix() {
     }
     m.push_back({"32 routes + nested all, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){
         oscillators(p,1); routes(p,32,true); for(int k=0;k<4;++k) nested(p,k); }});
+    for(int count:{0,8,32}) m.push_back({"instance pool "+std::to_string(count)+", 16 voices",48000,256,16,[count](OrigamiAudioProcessor& p) {
+        oscillators(p,1);auto state=p.getUiInstrumentState().modulation;
+        for(int i=0;i<count;++i) {
+            const auto source=addSourceInstance(state,static_cast<SourceFamily>(i%7+1));
+            auto& a=state.instances[std::size_t(i)];a.lfo.mode=LfoMode::Loop;
+            state.routes[std::size_t(i)]={state.nextRouteId++,true,source,{ModDestination::Level,firstOscillator(p),0},.01f,false};
+        }
+        p.setUiModulationState(state);
+    }});
     return m;
 }
 }
