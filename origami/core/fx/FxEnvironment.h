@@ -36,6 +36,7 @@ public:
     // mct-origami-manual-qa-ui-wavetable-fixes: the peak (L, R) of the signal
     // entering `bus`'s graph (what its IN node emits) since the last call.
     std::pair<float,float> consumeInputPeaks(FxBusId bus) noexcept;
+    FxRenderer::NodeTelemetrySnapshot consumeNodeTelemetry(FxBusId bus,FxNodeId node) noexcept;
     const FxRenderer& renderer(std::size_t slot) const noexcept { return *renderers_[slot]; }
 
     // ---- realtime. aux: 2*(maxRenderBuses-1) planar pointers (may be null).
