@@ -2634,6 +2634,10 @@ void nodeTelemetryTests() {
     FxRenderer renderer;
     renderer.prepare(48000.0);
     check(renderer.sync(graph),"node telemetry graph compiles");
+    std::array<float,256> silentL{},silentR{};
+    renderer.process(silentL.data(),silentR.data(),int(silentL.size()));
+    check(!renderer.consumeNodeTelemetry(id).valid,"hidden NODES leaves node telemetry unpublished");
+    renderer.setTelemetryEnabled(true);
     std::array<float,256> left{},right{};
     for(std::size_t i=0;i<left.size();++i) {
         left[i]=0.35f*std::sin(float(i)*0.07f);
