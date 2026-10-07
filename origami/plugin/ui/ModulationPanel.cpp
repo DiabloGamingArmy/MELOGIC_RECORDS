@@ -2405,6 +2405,21 @@ void ModulationPanel::paintEnvelopeTimeMarkers(juce::Graphics& g) const {
 
 void ModulationPanel::paintOverChildren(juce::Graphics& g) {
     paintEnvelopeTimeMarkers(g);
+    if(selected_<=2 && !envCanvas_.isEmpty()) {
+        // Who starts this envelope: AUTO (note-on) unless the graph owns it.
+        // ENV 1: a connected ENV TRIGGER owns it (GRAPH). ENV 2 / 3 always
+        // start on note-on; a connected trigger RE-triggers them (AUTO + TRIG).
+        bool graph=false;
+        for(const auto& op:cached_.operators)
+            if(op.id && op.type==ControlOpType::EnvelopeTrigger &&
+               op.inputs[0].kind!=ControlInput::Kind::None &&
+               juce::roundToInt(op.params[0])==int(selected_)+1) graph=true;
+        const bool owned=graph && selected_==0;
+        const juce::String label=owned ? "GRAPH" : graph ? "AUTO + TRIG" : "AUTO";
+        const auto badge=juce::Rectangle<int>(envCanvas_.getRight()-84,envCanvas_.getY()+7,76,16);
+        g.setColour(Palette::panel().withAlpha(.88f));g.fillRect(badge);
+        text(g,label,badge,Type::secondary,graph ? signalSourceColour() : Palette::muted(),juce::Justification::centred);
+    }
     // Route hover label for the source card under the mouse (cards are clipped
     // to the rail, so the label is painted here).
     for(const auto& row:tabs_) {

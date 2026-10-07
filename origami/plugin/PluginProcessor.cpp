@@ -511,6 +511,21 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     continuityCallbacks_.fetch_add(1,std::memory_order_relaxed);
     const auto callbackStartTicks=juce::Time::getHighResolutionTicks();
 
+    if(panicRequested_.exchange(false,std::memory_order_acq_rel)) {
+        // All runtime mutation stays on the audio owner thread. Ignore MIDI in
+        // this callback so a queued note cannot immediately undo the reset.
+        engine_.emergencyResetRuntime();
+        fxEnvironment_.emergencyResetRuntime();
+        resetArpeggiatorRuntime(false);
+        uiMidiRead_.store(uiMidiWrite_.load(std::memory_order_acquire),std::memory_order_release);
+        performanceUiHeldLow_.store(0,std::memory_order_release);
+        performanceUiHeldHigh_.store(0,std::memory_order_release);
+        buffer.clear();
+        runtimeOutputPeak_.store(0.0f,std::memory_order_relaxed);
+        panicCount_.fetch_add(1,std::memory_order_release);
+        return;
+    }
+
     // Wavetable editor commits cross into DSP inside the engine's block
     // boundary (beginHostBlock): a pointer swap, no copy, no free here.
     juce::ScopedNoDenormals noDenormals;

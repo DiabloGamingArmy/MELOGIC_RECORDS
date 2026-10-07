@@ -65,6 +65,9 @@ public:
     void releaseResources() override {}
     bool isBusesLayoutSupported(const BusesLayout&) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    // Thread-safe, coalescing emergency request. The audio callback owns the reset.
+    void requestPanic() noexcept { panicRequested_.store(true,std::memory_order_release); }
+    std::uint64_t panicCount() const noexcept { return panicCount_.load(std::memory_order_acquire); }
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     const juce::String getName() const override { return JucePlugin_Name; }
@@ -295,6 +298,8 @@ private:
     mct::origami::ArpeggiatorState uiArpState_{};
     mct::origami::LatestStateMailbox<mct::origami::ArpeggiatorState> arpMailbox_;
     std::atomic<bool> pendingClearArpLatch_{false};
+    std::atomic<bool> panicRequested_{false};
+    std::atomic<std::uint64_t> panicCount_{0};
     // Audio-thread-owned runtime state.
     mct::origami::ArpeggiatorState arpState_{};
     double sampleRate_=44100.0;

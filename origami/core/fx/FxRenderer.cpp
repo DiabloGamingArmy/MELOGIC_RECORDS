@@ -261,6 +261,28 @@ void FxRenderer::adoptPending() noexcept {
     releaseStaleTelemetry(); // deleted / replaced nodes give their slots back
 }
 
+void FxRenderer::emergencyResetRuntime() noexcept {
+    adoptPending();
+    // The plan's steps (the audio thread's view); `instances` is ownership only.
+    if(active_!=nullptr) for(std::size_t s=0;s<active_->stepCount;++s) {
+        auto* fx=active_->steps[s].instance;
+        if(fx==nullptr || fx->processor==nullptr) continue;
+        fx->processor->reset();
+        fx->wet=fx->enabled.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
+        fx->processing=fx->wet>0.0f;
+        fx->silentSamples=0;
+        fx->modulation.fill(0.0f);
+    }
+    std::fill(pool_.begin(),pool_.end(),0.0f);
+    inputGainNow_=inputGain_.load(std::memory_order_relaxed);
+    dryWetNow_=dryWet_.load(std::memory_order_relaxed);
+    widthNow_=width_.load(std::memory_order_relaxed);
+    outputGainNow_=outputGain_.load(std::memory_order_relaxed);
+    postGainNow_=postGainTarget_; // snap to the current target: no glide after a reset
+    peakLeft_.store(0.0f,std::memory_order_relaxed);
+    peakRight_.store(0.0f,std::memory_order_relaxed);
+}
+
 std::pair<float,float> FxRenderer::consumePeaks() noexcept {
     return {peakLeft_.exchange(0.0f,std::memory_order_acq_rel),peakRight_.exchange(0.0f,std::memory_order_acq_rel)};
 }

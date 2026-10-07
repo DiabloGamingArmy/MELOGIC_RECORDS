@@ -2515,7 +2515,7 @@ private:
         auto area=body.reduced(12,6).withTrimmedTop(6);
         if(!node_) {
             text(g,"NO NODE SELECTED",area.withTrimmedBottom(area.getHeight()/2),11.0f,Palette::secondary(),juce::Justification::centredBottom);
-            text(g,"Select a module in the routing canvas to edit it here.",area.withTrimmedTop(area.getHeight()/2+4),Type::secondary,Palette::muted(),juce::Justification::centredTop);
+            text(g,"No module selected",area.withTrimmedTop(area.getHeight()/2+4),Type::secondary,Palette::muted(),juce::Justification::centredTop);
             return;
         }
         auto row=area.removeFromTop(26);
@@ -2822,7 +2822,7 @@ private:
         void paint(juce::Graphics& g) override {
             auto area=getLocalBounds();
             if(!node || node->kind!=FxNodeKind::Effect) {
-                text(g,node ? "Routing and terminal nodes have no parameters." : "Select a module to edit its parameters.",
+                text(g,node ? "No parameters" : "No module selected",
                      area.removeFromTop(26),Type::label,Palette::muted());
                 return;
             }
@@ -3588,7 +3588,9 @@ FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings h
     controlInspector_=std::make_unique<ControlInspector>(*this);
     modulePanel_=std::make_unique<ModuleParametersPanel>(*selectedPanel_,*parametersPanel_,*controlInspector_);
     addAndMakeVisible(*modulePanel_);
-    addAndMakeVisible(*macrosPanel_);
+    // Macros have one editing home on SYNTH. Keep the legacy component alive
+    // for existing inspector bindings, but do not render duplicate knobs here.
+    addChildComponent(*macrosPanel_);
     // NODES > MATRIX: the canonical Matrix view in its compact layout.
     matrix_=std::make_unique<ModulationMatrix>(bindings_,ModulationMatrix::Layout::Sidebar);
     sidebar_.setMatrixView(matrix_.get());
@@ -3646,12 +3648,12 @@ void FxPage::resized() {
     undo_.setBounds(toolbar.removeFromRight(70).reduced(2,0));
 
     // The sidebar owns the full height down to the keyboard; the graph sits
-    // above MODULE PARAMETERS (+ MACROS) on the right.
+    // above the full-width MODULE PARAMETERS inspector on the right.
     sidebar_.setBounds(area.removeFromLeft(FxSidebar::width));
     auto inspector=area.removeFromBottom(inspectorHeight);
     const bool firstLayout=view_.getWidth()==0;
     view_.setBounds(area);
-    macrosPanel_->setBounds(inspector.removeFromRight(juce::jlimit(200,300,inspector.getWidth()/5)));
+    macrosPanel_->setBounds({});
     modulePanel_->setBounds(inspector);
     overlay_.setBounds(getLocalBounds());
     if(debugInspector_) debugInspector_->setBounds(view_.getBounds().removeFromRight(400).removeFromTop(330).reduced(8));
@@ -4306,45 +4308,48 @@ std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
         for(const auto& d:fxEffectCatalog())
             if(d.processesAudio && d.category==category)
                 // One category (FxCategory), even when its name reads "FILTER / EQ".
-                items.push_back(catalogItem(int(d.type),juce::String(d.label),true,{"EFFECTS",fxCategoryName(category)}));
-    items.push_back(catalogItem(FxModuleMenu::splitId,"Split",true,{"ROUTING"}));
-    items.push_back(catalogItem(FxModuleMenu::mergeId,"Merge",true,{"ROUTING"}));
-    items.push_back(catalogItem(FxModuleMenu::sendId,"Send (pending)",false,{"ROUTING"},"Send / return routing is pending"));
-    items.push_back(catalogItem(FxModuleMenu::returnId,"Return (pending)",false,{"ROUTING"},"Send / return routing is pending"));
+                items.push_back(catalogItem(int(d.type),juce::String(d.label),true,{"AUDIO","EFFECTS",fxCategoryName(category)}));
+    items.push_back(catalogItem(FxModuleMenu::splitId,"Split",true,{"AUDIO","ROUTING"}));
+    items.push_back(catalogItem(FxModuleMenu::mergeId,"Merge",true,{"AUDIO","ROUTING"}));
     if(allowSources) {
         InstrumentState state;
         if(bindings_.snapshot) state=bindings_.snapshot();
         // A bus graph's audio input is its own bus.
         if(graph().sourceForBus(bus_)==invalidFxNodeId)
-            items.push_back(catalogItem(FxModuleMenu::busBase+int(bus_),busName(bus_)+" IN",true,{"SOURCES"}));
+            items.push_back(catalogItem(FxModuleMenu::busBase+int(bus_),busName(bus_)+" IN",true,{"AUDIO","SOURCES"}));
         (void)state;
-        items.push_back(catalogItem(FxModuleMenu::externalId,"External Input (pending)",false,{"SOURCES"},"External input is not available yet"));
         // CONTROL: views of the instrument's own sources, and PARAMETER.
         std::vector<ModSource> primary{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,ModSource::Env1,ModSource::Env2,ModSource::Env3};
         for(const auto s:activeMacroSources(state.modulation)) primary.push_back(s);
         primary.push_back(ModSource::Random);
         for(const auto s:primary)
             if(nodes::controlSourceActive(s,state.modulation))
-                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(state.modulation,s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","SOURCES"},"Already on the canvas"));
+                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(state.modulation,s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","MODULATION SOURCES"},"Already on the canvas"));
         for(const auto s:{ModSource::Function,ModSource::Chaos,ModSource::Drift,ModSource::Sequencer,
                           ModSource::Velocity,ModSource::ModWheel,ModSource::Keytrack,ModSource::Aftertouch,ModSource::PitchBend,ModSource::NoteGate})
             if(nodes::controlSourceActive(s,state.modulation))
-                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(state.modulation,s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","SOURCES"},"Already on the canvas"));
+                items.push_back(catalogItem(FxModuleMenu::controlSourceBase+int(s),sourceName(state.modulation,s),!controlNodeShown(nodes::sourceKey(s)),{"CONTROL","MODULATION SOURCES"},"Already on the canvas"));
         // Processing nodes: family (CONTROL / EVENT / SEQUENCING), then the
         // node's own category from its ControlOpInfo.
         const auto addOps=[&](const auto& catalog,const char* family) {
             for(const auto type:catalog)
                 if(const auto* info=catalogOpInfo(type)) {
                     const bool creatable=nodes::controlOperatorCreatable(state.modulation,type);
+                    juce::StringArray path;
+                    if(type==ControlOpType::Transport) path={"EVENTS","TRANSPORT"};
+                    else if(juce::String(family)=="EVENTS" && juce::String(info->category)=="Sources") path={"EVENTS","NOTE / GATE / TRIGGER"};
+                    else if(juce::String(info->category)=="Targets") path={"EVENTS","TARGETS"};
+                    else if(juce::String(family)=="EVENTS") path={"LOGIC / GENERATIVE",juce::String(info->category).toUpperCase()};
+                    else path={family,juce::String(info->category).toUpperCase()};
                     items.push_back(catalogItem(FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),creatable,
-                                                {family,juce::String(info->category).toUpperCase()},
+                                                path,
                                                 creatable ? juce::String() : juce::String("The instrument has one sequencer: it is already on the canvas")));
                 }
         };
         addOps(controlOpCatalog(),"CONTROL");
-        addOps(controlEventOpCatalog(),"EVENT");
-        addOps(controlSequencingOpCatalog(),"SEQUENCING");
-        items.push_back(catalogItem(FxModuleMenu::parameterPickerId,"Parameter...",true,{"CONTROL"}));
+        addOps(controlEventOpCatalog(),"EVENTS");
+        addOps(controlSequencingOpCatalog(),"LOGIC / GENERATIVE");
+        items.push_back(catalogItem(FxModuleMenu::parameterPickerId,"Parameter...",true,{"CONTROL","UTILITIES"}));
     }
     return items;
 }

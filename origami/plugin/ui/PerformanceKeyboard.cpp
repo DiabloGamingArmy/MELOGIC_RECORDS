@@ -210,7 +210,7 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         const int note=firstMidiNote+(i/7)*12+whiteOffsets[i%7];
         juce::Rectangle<float> key(float(keys.getX())+float(i)*width,float(keys.getY()),width,float(keys.getHeight()));
         const bool down=(note==mouseNote_);
-        g.setColour(down?signalSurfaceColour(0.42f,0.72f):juce::Colour(0xffcdd5d9));g.fillRect(key);
+        g.setColour(down?gTheme.pressedKey.withMultipliedBrightness(0.42f).withAlpha(0.72f):gTheme.keyboard);g.fillRect(key);
         g.setColour(juce::Colour(0xff77838a));g.drawRect(key,.7f);
         if(i%7==0) text(g,"C"+juce::String(3+i/7),key.toNearestInt().removeFromBottom(14),Type::secondary,juce::Colour(0xff596770),juce::Justification::centred);
     }
@@ -219,7 +219,7 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         const int note=firstMidiNote+(i/7)*12+whiteOffsets[degree]+1;
         auto key=juce::Rectangle<float>(float(keys.getX())+(float(i)+1)*width-width*.31f,float(keys.getY()),width*.62f,float(keys.getHeight())*.62f);
         const bool down=(note==mouseNote_);
-        g.setColour(down?signalSurfaceColour(0.55f,0.78f):juce::Colour(0xff0c1115));g.fillRect(key);
+        g.setColour(down?gTheme.pressedKey.withMultipliedBrightness(0.55f).withAlpha(0.78f):juce::Colour(0xff0c1115));g.fillRect(key);
         g.setColour(Palette::border());g.drawRect(key,.8f);
     }
 }

@@ -129,6 +129,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     addChildComponent(globalOverlay_);
     globalFx_->onClose=[this]{globalOverlay_.dismiss();};
     header_.onGlobalFxRequested=[this]{openGlobalFx();};
+    header_.onPanicRequested=[this]{processor_.requestPanic();};
     // mct-origami-content-browser
     {
         using mct::origami::content::ContentType;

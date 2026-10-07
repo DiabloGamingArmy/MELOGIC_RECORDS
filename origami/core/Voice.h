@@ -56,8 +56,8 @@ class Voice {
 public:
     void prepare(double sampleRate) noexcept;
     void reset() noexcept;
-    void start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept;
-    void retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,float glideSeconds,bool retriggerEnvelope) noexcept;
+    void start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,std::uint8_t graphOwnedEnvelopes=0) noexcept;
+    void retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,float glideSeconds,bool retriggerEnvelope,std::uint8_t graphOwnedEnvelopes=0) noexcept;
     void release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept;
     struct Samples {double left=0,right=0,mono=0;};
     Samples nextModules(const std::array<const dsp::Wavetable*,16>&,const ModulationFrame&,float sustain,
@@ -88,6 +88,8 @@ public:
     const AuxSamples& aux() const noexcept { return aux_; }
 private:
     AuxSamples aux_{};
+    dsp::EnvelopeSettings ampSettings_{};   // ENV 1 settings of the current note (graph triggers reuse them)
+    bool oneShotRelease_=false;             // a graph trigger after release: release when it reaches sustain
     std::array<float,CompiledModulation::voiceSourceCount> lastSources_{};
     CompiledModulation::OperatorState operatorState_{}; // N04: this voice's operator state (SMOOTH)
     // N05: note events raised by start / retarget / release, consumed at this
@@ -173,7 +175,13 @@ private:
     std::uint16_t rightFilterLive_=0;
     // mct-origami-dsp-performance-stereo-chain: RIGHT's spectral read hints per
     // module (a stereo OSC CHAIN reads a second spectral table key). Cold.
-    std::array<std::array<dsp::SpectralReadHint,2>,maxOscillatorModules> rightSpectralHints_{};
+    std::array<std::array<dsp::SpectralReadHint,4>,maxOscillatorModules> rightSpectralHints_{};
+    // Wave 1: each oscillator's two random-spectral morph hints (the upper
+    // prepared key), kept here, cold, so the hot oscillator state keeps its
+    // stride. Bound to the oscillators in bindMorphHints() (prepare / reset).
+    std::array<std::array<std::array<dsp::SpectralReadHint,2>,maxUnisonVoices>,maxOscillatorModules> morphHints_{};
+    std::array<std::array<dsp::SpectralReadHint,2>,maxOscillatorModules> blendMorphHints_{};
+    void bindMorphHints() noexcept;
     // mct-origami-nested-modulation-manual-qa: RIGHT cross-oscillator taps.
     // previousOscillatorSamples_ is LEFT; bit m of rightTapMask_ says module
     // m's RIGHT tap differs (then previousOscillatorSamplesRight_[m] holds

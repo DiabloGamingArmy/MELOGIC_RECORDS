@@ -396,7 +396,10 @@ void spectralCacheConcurrentEviction() {
             const float output=oscillator.next(table,1.0,400,1.0f/3.0f,makePlan(key));
             bool valid=std::isfinite(output) && (std::abs(output-lookup(expected[key]))<=1.0e-6f || std::abs(output-lookup(dry))<=1.0e-6f);
             if(valid && std::abs(output-lookup(expected[key]))<=1.0e-6f) exactReads.fetch_add(1,std::memory_order_relaxed);
-            for(std::size_t back=1;!valid && back<=sample/8 && back<=512;++back)
+            // A busy compiler can legitimately hold a reader's last whole
+            // table for longer than 512 key changes. Check every seeded
+            // candidate; the safety property is that no slot is torn.
+            for(std::size_t back=1;!valid && back<=sample/8 && back<keys;++back)
                 valid=std::abs(output-lookup(expected[(key+keys-back)%keys]))<=1.0e-6f;
             if(!valid) failed.store(true,std::memory_order_relaxed);
         }
@@ -407,6 +410,87 @@ void spectralCacheConcurrentEviction() {
     check(exactReads.load()>0,"concurrent eviction still serves requested waveforms");
     // Requests own their source samples; table destruction is safe even if
     // the worker still has queued requests from this temporary generation.
+}
+
+void randomSpectralMorphAudit() {
+    using namespace mct::origami::dsp;
+    const auto table=Wavetable::builtIns();
+    const auto& source=table.frames[1].bands[7].samples;
+    for(const auto type:{OscProcessType::RandAmp,OscProcessType::RandSparse}) {
+        OscProcessPlan low{},high{};
+        low.count=high.count=1;
+        low.stages[0]={type,12.0f/32.0f,0x4242u};
+        high.stages[0]={type,13.0f/32.0f,0x4242u};
+        auto mid=low;mid.stages[0].amount=12.5f/32.0f;
+        std::array<float,2048> a{},b{};
+        renderProcessedFrame2048(source.data(),a.data(),low);
+        renderProcessedFrame2048(source.data(),b.data(),high);
+        constexpr double phase=0.137;
+        const double position=phase*2048.0;
+        const auto index=static_cast<std::size_t>(position);
+        const float fraction=static_cast<float>(position-double(index));
+        const auto read=[&](const auto& wave){return wave[index]+fraction*(wave[(index+1)%2048]-wave[index]);};
+        const float expected=0.5f*(read(a)+read(b));
+        WavetableOscillator osc;
+        std::array<SpectralReadHint,2> morphStorage{}; // a Voice provides this in its cold storage
+        osc.setMorphHints(morphStorage.data());
+        bool ready=false;
+        for(int attempt=0;attempt<500 && !ready;++attempt) {
+            osc.reset(phase);
+            const float actual=osc.next(table,93.75,48000,1.0f/3.0f,mid);
+            ready=std::abs(actual-expected)<1.0e-5f;
+            if(!ready) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        check(ready,"random spectral magnitude blends neighboring prepared frames");
+    }
+}
+
+// A moving random amount crossing a prepared key must stay on the blend of its
+// neighbours: the full-weight endpoint never fades back from the previous key.
+void randomSpectralMorphCrossingAudit() {
+    using namespace mct::origami::dsp;
+    const auto table=Wavetable::builtIns();
+    const auto& source=table.frames[1].bands.back().samples; // the band a near-0 Hz read uses (all harmonics)
+    for(const auto type:{OscProcessType::RandAmp,OscProcessType::RandSparse}) {
+        constexpr double phase=0.137,frequency=1.0e-4; // the read phase holds (5e-5 cycles of drift)
+        const auto planAt=[type](float amount){ OscProcessPlan plan{}; plan.count=1; plan.stages[0]={type,amount,0x4242u}; return plan; };
+        const double position=phase*2048.0;
+        const auto index=static_cast<std::size_t>(position);
+        const float fraction=static_cast<float>(position-double(index));
+        std::array<float,15> reference{};
+        for(int k=10;k<=14;++k) {
+            std::array<float,2048> frame{};
+            renderProcessedFrame2048(source.data(),frame.data(),planAt(float(k)/32.0f));
+            reference[std::size_t(k)]=frame[index]+fraction*(frame[(index+1)%2048]-frame[index]);
+        }
+        WavetableOscillator osc;
+        std::array<SpectralReadHint,2> morphStorage{};
+        osc.setMorphHints(morphStorage.data());
+        bool prepared=true; // every key of the sweep is cached before it is measured
+        for(int k=10;k<=14;++k) {
+            bool ready=false;
+            for(int attempt=0;attempt<500 && !ready;++attempt) {
+                osc.reset(phase);
+                ready=std::abs(osc.next(table,frequency,48000,1.0f/3.0f,planAt(float(k)/32.0f))-reference[std::size_t(k)])<1.0e-5f;
+                if(!ready) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            prepared=prepared && ready;
+        }
+        check(prepared,"random morph crossing: neighbouring keys prepared");
+        float maxStep=0.0f,maxDeviation=0.0f;
+        for(int k=10;k<14;++k) maxStep=std::max(maxStep,std::abs(reference[std::size_t(k+1)]-reference[std::size_t(k)]));
+        osc.reset(phase);
+        constexpr int samples=24000; // 10.5 -> 13.5 keys in 0.5 s: three crossings
+        for(int n=0;n<samples;++n) {
+            const float coordinate=10.5f+3.0f*float(n)/float(samples);
+            const float actual=osc.next(table,frequency,48000,1.0f/3.0f,planAt(coordinate/32.0f));
+            const auto lower=static_cast<std::size_t>(coordinate);
+            const float blend=coordinate-float(lower);
+            const float expected=reference[lower]+blend*(reference[lower+1]-reference[lower]);
+            maxDeviation=std::max(maxDeviation,std::abs(actual-expected));
+        }
+        check(maxStep>1.0e-3f && maxDeviation<0.2f*maxStep,"random morph crossing a key never steps back to the previous frame");
+    }
 }
 
 void oscillatorGenerationCoherenceAudit() {
@@ -1112,12 +1196,13 @@ void nestedModulationRealtimeAudit() {
 // sizes 32 / 256 / 1000, deterministically.
 void optimizedPathGoldenAudit() {
     const bool print=std::getenv("ORIGAMI_PRINT_GOLDEN")!=nullptr;
-    // Scenario 3 re-baselined deliberately by mct-origami-nested-modulation-
-    // manual-qa: a spectral key switch now crossfades over 2 ms instead of
-    // stepping (was 0x0186663dd655c3d1). The other five are unchanged.
+    // Scenario 3 uses interpolated random spectral frames; its old quantized
+    // hash was 0x004177b6dc1873d3 (and 0x8ab144d7b625d5a0 while a key crossing
+    // still faded the full-weight endpoint back from the previous key). The
+    // other five paths are unchanged.
     static constexpr std::uint64_t expected[golden::scenarioCount]{
         0x8b54461996998697ull,0xf2cb0320aab297acull,0x69eb600ae29a68dbull,
-        0x004177b6dc1873d3ull,0x47585a3f316d4135ull,0xa740b1d6675595c3ull};
+        0xf726293442577439ull,0x47585a3f316d4135ull,0xa740b1d6675595c3ull};
     for(int s=0;s<golden::scenarioCount;++s) {
         const auto a=golden::render(s,32),b=golden::render(s,256),c=golden::render(s,1000),again=golden::render(s,256);
         if(print) std::cout<<"GOLDEN "<<golden::scenarioName(s)<<" 0x"<<std::hex<<b.hash<<std::dec<<"\n";
@@ -1233,6 +1318,8 @@ int main() {
         std::cerr<<"random spectral amount\n";randomSpectralAmountResponse();
         std::cerr<<"spectral playback\n";spectralCachePlayback();
         std::cerr<<"spectral concurrent eviction\n";spectralCacheConcurrentEviction();
+        std::cerr<<"random spectral morph\n";randomSpectralMorphAudit();
+        std::cerr<<"random spectral morph crossing\n";randomSpectralMorphCrossingAudit();
         std::cerr<<"realtime thread policy\n";realtimeThreadPolicyAudit();
         std::cerr<<"wavetable handoff\n";wavetableHandoffAudit();
         std::cerr<<"wavetable handoff concurrency\n";wavetableHandoffConcurrencyAudit();

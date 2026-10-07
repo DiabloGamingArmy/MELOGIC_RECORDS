@@ -1758,11 +1758,9 @@ void fxPageAudit() {
     check(!page->connectPorts({page->graph().outputNode(),0},{drive,0}) && page->graph()==snapshot,
           "invalid wire leaves graph unchanged");
 
-    juce::Slider* macro=nullptr;
-    walk(*page,[&](auto& c){if(auto* s=dynamic_cast<juce::Slider*>(&c)) if(s->getName()=="FX Macro 1") macro=s;});
-    check(macro!=nullptr,"FX macro section present");
-    macro->setValue(0.7,juce::sendNotificationSync);
-    check(std::abs(p.getUiInstrumentState().modulation.macros[0]-0.7f)<1.0e-4f,"FX macros drive the canonical synth macros");
+    check(!page->macrosPanel().isVisible(),"NODES omits duplicate macro controls");
+    check(p.setUiMacro(0,0.7f) && std::abs(p.getUiInstrumentState().modulation.macros[0]-0.7f)<1.0e-4f,
+          "the canonical macro remains available to NODES routing");
 
     const auto movedTo=page->graph().findNode(delay)->position;
     editor.reset();
@@ -2271,6 +2269,12 @@ void fxAudioPathAudit() {
     const float neutralTail=blockRms(renderBlocks(neutral,24,{}));
     check(tail>1.0e-4f && tail>neutralTail*10.0f,"delay produces echoes after the dry note has released");
 
+    const auto graphBeforePanic=document.graph();
+    p.requestPanic();
+    const auto stopped=renderBlocks(p,2,{});
+    check(magnitude(stopped)==0.0f && document.graph()==graphBeforePanic,
+          "panic clears delay tail and preserves FX routing");
+
     document.edit([&](FxGraph& g){return g.setEnabled(delay,false)==FxEditResult::Ok;});
     renderBlocks(p,8,{});
     check(blockRms(renderBlocks(p,24,{}))<tail*0.1f,"bypassing delay removes the echo");
@@ -2446,7 +2450,8 @@ void nodesN01Audit() {
     check(sidebar.getBottom()==page->getHeight() && sidebar.getBottom()==page->moduleParametersPanel().getBottom(),
           "sidebar runs to the bottom of the workspace (top of the keyboard)");
     check(page->moduleParametersPanel().getName()=="MODULE PARAMETERS" && page->moduleParametersPanel().getX()>=sidebar.getRight()
-          && page->macrosPanel().getX()>=page->moduleParametersPanel().getRight(),"MODULE PARAMETERS + MACROS sit beside the sidebar");
+          && page->moduleParametersPanel().getRight()==page->getWidth() && !page->macrosPanel().isVisible(),
+          "MODULE PARAMETERS spans the graph width without duplicate macros");
     bool oldPanels=false;
     walk(*page,[&](auto& c){oldPanels|=c.getName()=="SELECTED EFFECT" || c.getName()=="EFFECT PARAMETERS";});
     check(!oldPanels,"no separate SELECTED EFFECT / EFFECT PARAMETERS panels");
@@ -3775,35 +3780,36 @@ void nodesMenuHierarchyAudit() {
         }
     };
     dump(tree,0);
-    check(names(tree)==juce::StringArray("EFFECTS","ROUTING","SOURCES","CONTROL","EVENT","SEQUENCING"),"top level: EFFECTS ROUTING SOURCES CONTROL EVENT SEQUENCING (no slash paths)");
+    check(names(tree)==juce::StringArray("AUDIO","CONTROL","EVENTS","LOGIC / GENERATIVE"),"producer-facing AUDIO CONTROL EVENTS LOGIC / GENERATIVE roots");
     bool slashFree=true,emptyFree=true;
     std::function<void(const ui::NativeChoiceNode&)> walkTree=[&](const ui::NativeChoiceNode& n) {
         for(const auto& c:n.children) { emptyFree&=c.name.trim().isNotEmpty() && !c.empty(); walkTree(c); }
         for(const auto& i:n.items) emptyFree&=i.text.trim().isNotEmpty();
     };
     walkTree(tree);
-    for(const auto& c:tree.children) slashFree&=!c.name.contains("/");
+    for(const auto& c:tree.children) slashFree&=!c.name.contains(" / ") || c.name=="LOGIC / GENERATIVE";
     check(slashFree && emptyFree,"no top-level path labels, no blank category or blank item (the \"CONTROL /\" ghost is gone)");
-    const auto* effects=find(tree,"EFFECTS");
+    const auto* audio=find(tree,"AUDIO");
+    const auto* effects=audio ? find(*audio,"EFFECTS") : nullptr;
     check(effects && names(*effects)==juce::StringArray("DYNAMICS","FILTER / EQ","DISTORTION","MODULATION","SPATIAL","TIME","UTILITY") && effects->items.empty(),
           "EFFECTS > DYNAMICS, FILTER / EQ (one canonical category), DISTORTION, MODULATION, SPATIAL, TIME, UTILITY");
     const auto* control=find(tree,"CONTROL");
-    check(control && names(*control)==juce::StringArray("SOURCES","MATH","SHAPING","UTILITY") && control->items.size()==1 && control->items[0].text=="Parameter...",
-          "CONTROL > [Parameter...] + SOURCES, MATH, SHAPING, UTILITY");
-    const auto* event=find(tree,"EVENT");
-    check(event && names(*event)==juce::StringArray("SOURCES","CONVERSION","LOGIC","STATEFUL","TARGETS") && event->items.empty(),"EVENT > SOURCES, CONVERSION, LOGIC, STATEFUL, TARGETS");
-    const auto* seq=find(tree,"SEQUENCING");
-    check(seq && names(*seq)==juce::StringArray("SEQUENCING","GENERATIVE"),"SEQUENCING > SEQUENCING, GENERATIVE (canonical category names)");
+    check(control && names(*control)==juce::StringArray("MODULATION SOURCES","MATH","SHAPING","UTILITY","UTILITIES"),
+          "CONTROL groups sources, processors, and parameter utility");
+    const auto* event=find(tree,"EVENTS");
+    check(event && names(*event)==juce::StringArray("NOTE / GATE / TRIGGER","TRANSPORT","TARGETS"),"EVENTS groups note, transport, and target nodes");
+    const auto* seq=find(tree,"LOGIC / GENERATIVE");
+    check(seq && names(*seq)==juce::StringArray("CONVERSION","LOGIC","STATEFUL","SEQUENCING","GENERATIVE"),"logic and generative processors are grouped by use");
     int ops=0; for(const auto& i:catalog) ops+=i.id>=ui::FxModuleMenu::controlOperatorBase;
     check(ops==14+21+9,"every catalog node appears exactly once (14 CONTROL + 21 EVENT + 9 SEQUENCING)");
     // 9: search stays flat, with category context.
     page->showNodePalette(fx::FxPoint{600.0f,700.0f});
     auto& palette=page->nodePalette();
     palette.setQuery("prob");
-    check(!palette.results().empty() && palette.results().front().label=="PROBABILITY" && palette.results().front().group=="SEQUENCING > GENERATIVE",
-          "search is flat: \"prob\" -> PROBABILITY directly, with \"SEQUENCING > GENERATIVE\" context");
+    check(!palette.results().empty() && palette.results().front().label=="PROBABILITY" && palette.results().front().group=="LOGIC / GENERATIVE > GENERATIVE",
+          "search is flat: probability has generative context");
     palette.setQuery("distortion");
-    bool drive=false; for(const auto& r:palette.results()) drive|=r.group=="EFFECTS > DISTORTION";
+    bool drive=false; for(const auto& r:palette.results()) drive|=r.group=="AUDIO > EFFECTS > DISTORTION";
     check(drive,"searching a category name finds its modules (EFFECTS > DISTORTION)");
     palette.dismiss();
     // 10: cable-drop filtering before the tree: only compatible, no empty branches.
@@ -3833,7 +3839,7 @@ void nodesMenuHierarchyAudit() {
     page->addControlOperator(T::Sequencer);
     bool disabled=false; juce::String reason;
     const auto after=ui::buildNativeChoiceTree(page->moduleMenuItems(true));
-    if(const auto* family=find(after,"SEQUENCING")) if(const auto* category=find(*family,"SEQUENCING"))
+    if(const auto* family=find(after,"LOGIC / GENERATIVE")) if(const auto* category=find(*family,"SEQUENCING"))
         for(const auto& i:category->items) if(i.text=="SEQUENCER") { disabled=!i.enabled; reason=i.tooltip; }
     check(disabled && reason.contains("one sequencer"),"a second SEQUENCER stays disabled in the tree, with its reason");
 }
@@ -5825,7 +5831,104 @@ void nodesVisualFeedbackAudit() {
     page->setLookAndFeel(nullptr);
 }
 
+void emergencyPanicAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    check(p.setUiParameter(ParameterId::Sustain,1.0f),"panic sustain setup");
+    const auto patch=encodeInstrumentState(p.getUiInstrumentState());
+    juce::AudioBuffer<float> audio(2,256);
+    juce::MidiBuffer midi;
+    midi.addEvent(juce::MidiMessage::noteOn(1,60,.9f),0);
+    for(int i=0;i<8;++i) { audio.clear(); p.processBlock(audio,midi); midi.clear(); }
+    check(magnitude(audio)>1.0e-4f,"panic test has active voice");
+    p.requestPanic();
+    midi.addEvent(juce::MidiMessage::noteOn(1,62,.9f),0);
+    pluginAllocations.store(0,std::memory_order_relaxed);
+    pluginGuardAllocations.store(true,std::memory_order_release);
+    audio.clear(); p.processBlock(audio,midi);
+    pluginGuardAllocations.store(false,std::memory_order_release);
+    check(pluginAllocations.load(std::memory_order_relaxed)==0,"panic callback allocates nothing");
+    check(magnitude(audio)==0.0f && p.panicCount()==1,"panic silences callback and acknowledges reset");
+    check(encodeInstrumentState(p.getUiInstrumentState())==patch,"panic preserves patch");
+    midi.clear(); audio.clear(); p.processBlock(audio,midi);
+    check(magnitude(audio)==0.0f,"panic kills existing voices");
+    midi.addEvent(juce::MidiMessage::noteOn(1,64,.9f),0);
+    for(int i=0;i<8;++i) { audio.clear(); p.processBlock(audio,midi); midi.clear(); }
+    check(magnitude(audio)>1.0e-4f,"new notes work after panic");
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    juce::Button* stop=nullptr;
+    walk(*editor,[&](juce::Component& c) {
+        if(auto* button=dynamic_cast<juce::Button*>(&c))
+            if(button->getName()=="Emergency DSP reset") stop=button;
+    });
+    check(stop!=nullptr && bool(stop->onClick),"header STOP is present on every page");
+    stop->onClick();
+    audio.clear();p.processBlock(audio,midi);
+    check(magnitude(audio)==0.0f && p.panicCount()==2,"header STOP reaches emergency reset");
+}
+
+// Wave 1 PANIC under load: many voices, delay + reverb tails, live modulation
+// routes and a NODES operator. Runtime clears; the creative state does not.
+void panicUnderLoadAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
+    p.prepareToPlay(48000.0,256);
+    p.setUiParameter(ParameterId::Sustain,1.0f);
+    auto& doc=p.getUiFxDocument();
+    doc.edit([](fx::FxGraph& g){ return g.insertEffectBeforeOutput(fx::FxEffectType::Delay)!=fx::invalidFxNodeId; });
+    doc.edit([](fx::FxGraph& g){ return g.insertEffectBeforeOutput(fx::FxEffectType::Reverb)!=fx::invalidFxNodeId; });
+    auto m=p.getUiInstrumentState().modulation;
+    m.lfo1.mode=LfoMode::Free; m.lfo1.rateHz=3.0f;
+    m.routes[0]={m.nextRouteId++,true,ModSource::Lfo1,{ModDestination::Cutoff,0,0},0.3f,true};
+    m.operators[0]=makeControlOperator(ControlOpType::ScaleOffset,m.nextOperatorId++);
+    m.operators[0].inputs[0]={ControlInput::Kind::Source,ModSource::Lfo2,0};
+    check(p.setUiModulationState(m),"panic rig: routes + NODES operator");
+    const auto patch=encodeInstrumentState(p.getUiInstrumentState());
+    const auto graph=doc.graph();
+    const auto level=p.getUiParameter(ParameterId::OscLevel);
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi,none;
+    for(int n=0;n<8;++n) midi.addEvent(juce::MidiMessage::noteOn(1,48+n*3,.9f),0);
+    for(int i=0;i<40;++i) { audio.clear(); p.processBlock(audio,i==0 ? midi : none); }
+    check(magnitude(audio)>1.0e-3f,"8 voices with delay + reverb are sounding");
+    p.requestPanic();
+    audio.clear(); p.processBlock(audio,none);
+    check(magnitude(audio)==0.0f,"PANIC: the very next block is silent");
+    float after=0.0f;
+    for(int i=0;i<200;++i) { audio.clear(); p.processBlock(audio,none); after=std::max(after,magnitude(audio)); }
+    check(after==0.0f,"delay / reverb tails and voices stay cleared (no resurging feedback)");
+    check(encodeInstrumentState(p.getUiInstrumentState())==patch && doc.graph()==graph && p.getUiParameter(ParameterId::OscLevel)==level,
+          "patch, routes, NODES operators, FX graph and parameters are intact");
+    midi.clear(); midi.addEvent(juce::MidiMessage::noteOn(1,60,.9f),0);
+    float played=0.0f;
+    for(int i=0;i<20;++i) { audio.clear(); p.processBlock(audio,i==0 ? midi : none); played=std::max(played,magnitude(audio)); }
+    check(played>1.0e-3f,"a new note plays normally after PANIC (with its delay / reverb)");
+    midi.clear(); midi.addEvent(juce::MidiMessage::noteOff(1,60),0);
+    audio.clear(); p.processBlock(audio,midi);
+    p.requestPanic(); p.requestPanic(); // coalesced
+    audio.clear(); p.processBlock(audio,none);
+    audio.clear(); p.processBlock(audio,none);
+    check(magnitude(audio)==0.0f && p.panicCount()==2,"repeated requests coalesce into one reset per callback");
+}
+
+void declarativeThemeAudit() {
+    using namespace mct::origami::ui;
+    const auto original=gTheme;
+    ThemeDefinition invalid=original;
+    invalid.background=juce::Colours::white;
+    setDeclarativeTheme(invalid);
+    check(Palette::background()==original.background && signalSourceColour()==original.signal,
+          "invalid theme falls back to Origami default");
+    ThemeDefinition valid=original;
+    valid.signal=juce::Colour(0xff40aaff);
+    setDeclarativeTheme(valid);
+    check(signalSourceColour()==valid.signal,"declarative signal token drives visual accent");
+    setDeclarativeTheme(original);
+}
+
 void run() {
+    declarativeThemeAudit();
+    emergencyPanicAudit();
+    panicUnderLoadAudit();
     nodesVisualFeedbackAudit();
     fxPageAudit();
     fxGraphUxAudit();

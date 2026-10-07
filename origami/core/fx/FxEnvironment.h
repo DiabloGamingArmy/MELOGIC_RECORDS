@@ -43,6 +43,7 @@ public:
     // ---- realtime. aux: 2*(maxRenderBuses-1) planar pointers (may be null).
     void process(float* mainLeft,float* mainRight,float* const* aux,std::size_t busCount,int samples,
                  const FxModulationOutput* modulation=nullptr,bool preMaster=false,float masterGain=1.0f) noexcept;
+    void emergencyResetRuntime() noexcept;
 
 private:
     void processChunk(float* mainLeft,float* mainRight,float* const* aux,std::size_t buses,int offset,int n) noexcept;

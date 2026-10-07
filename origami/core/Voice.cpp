@@ -18,21 +18,31 @@
 #include <cmath>
 namespace mct::origami {
 
+void Voice::bindMorphHints() noexcept {
+    for(std::size_t m=0;m<maxOscillatorModules;++m) {
+        for(std::size_t u=0;u<maxUnisonVoices;++u) moduleOscillators_[m][u].setMorphHints(morphHints_[m][u].data());
+        moduleBlendCenters_[m].setMorphHints(blendMorphHints_[m].data());
+    }
+}
 void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset();seedLfos(); }
 // Per-voice LFO streams: a distinct, repeatable ENTROPY stream per voice
 // lifecycle (the NODES voice-seed family); FRACTURE structure per LFO index.
 void Voice::seedLfos() noexcept {
     for(std::size_t i=0;i<noteLfos_.size();++i) noteLfos_[i].setStreams(Lfo::voiceStream(voiceSeed(),i),Lfo::fractureSeed(i));
 }
-void Voice::reset() noexcept { topologyGeneration_=0; for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& hints:rightSpectralHints_)hints={};for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);previousOscillatorSamplesRight_.fill(0.0f);rightTapMask_=rightPhaseModules_=0;envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();for(auto& filter:moduleFiltersRight_)filter.reset();rightFilterLive_=0;operatorState_={};active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
-void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
-    reset();address_=address;velocity_=velocity;order_=order;++lifecycle_;seedLfos();
+void Voice::reset() noexcept { topologyGeneration_=0; bindMorphHints(); for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& hints:rightSpectralHints_)hints={};for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);previousOscillatorSamplesRight_.fill(0.0f);rightTapMask_=rightPhaseModules_=0;oneShotRelease_=false;envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();for(auto& filter:moduleFiltersRight_)filter.reset();rightFilterLive_=0;operatorState_={};active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
+void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,std::uint8_t graphOwnedEnvelopes) noexcept {
+    reset();ampSettings_=settings;address_=address;velocity_=velocity;order_=order;++lifecycle_;seedLfos();
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
-    active_=true;envelope_.noteOn(settings);env2_.noteOn(env2);env3_.noteOn(env3);
+    active_=true;
+    if(!(graphOwnedEnvelopes&1u)) envelope_.noteOn(settings);
+    if(!(graphOwnedEnvelopes&2u)) env2_.noteOn(env2);
+    if(!(graphOwnedEnvelopes&4u)) env3_.noteOn(env3);
     // A fresh (or stolen) voice: NOTE ON, never RETRIGGER; state was reset.
     pendingNoteOn_=true;pendingNoteOff_=false;pendingRetrigger_=false;
 }
-void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,float glideSeconds,bool retriggerEnvelope) noexcept {
+void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,float glideSeconds,bool retriggerEnvelope,std::uint8_t graphOwnedEnvelopes) noexcept {
+    ampSettings_=settings;
     // RETRIGGER: a new note on a voice that is still sounding (mono/legato).
     pendingRetrigger_=active_;pendingNoteOn_=true;pendingNoteOff_=false;
     address_=address;velocity_=velocity;order_=order;active_=true;releasing_=false;
@@ -44,9 +54,10 @@ void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,cons
         glideRemaining_=samples;
         glideRatio_=std::exp(std::log(targetFrequency_/frequency_)/static_cast<double>(samples));
     }
-    if(retriggerEnvelope) {envelope_.noteOn(settings);env2_.noteOn(env2);env3_.noteOn(env3);for(auto& lfo:noteLfos_)lfo.reset();operatorState_={};++lifecycle_;seedLfos();}
+    if(retriggerEnvelope) {if(!(graphOwnedEnvelopes&1u)) envelope_.noteOn(settings);if(!(graphOwnedEnvelopes&2u)) env2_.noteOn(env2);if(!(graphOwnedEnvelopes&4u)) env3_.noteOn(env3);for(auto& lfo:noteLfos_)lfo.reset();operatorState_={};++lifecycle_;seedLfos();}
 }
 void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
+    ampSettings_=settings;
     if(active_){releasing_=true;envelope_.noteOff(settings);env2_.noteOff(env2);env3_.noteOff(env3);pendingNoteOff_=true;}
 }
 Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& tables,const ModulationFrame& global,
@@ -238,6 +249,13 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
     // N05 targets act after this sample's evaluation (effective next sample).
     if(compiled.hasEnvelopeTriggers()) {
         const auto mask=compiled.envelopeTriggers(*effective);
+        if(mask&1u) {
+            // Graph-owned ENV 1. After the note's release a trigger is a
+            // one-shot (attack, decay, then release from sustain): it can
+            // never leave a voice sustaining with no note-off to come.
+            envelope_.noteOn(ampSettings_);
+            oneShotRelease_=releasing_;
+        }
         if(mask&2u) env2_.noteOn(modulation.env2);
         if(mask&4u) env3_.noteOn(modulation.env3);
     }
@@ -625,7 +643,9 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         outputs.mono+=0.5f*(sampleValue+sampleRightOut);
     }
 
-    if(envelope_.stage()==dsp::Envelope::Stage::Idle && filtersQuiet) reset();
+    if(oneShotRelease_ && envelope_.stage()==dsp::Envelope::Stage::Sustain) { envelope_.noteOff(ampSettings_); oneShotRelease_=false; }
+    if(envelope_.stage()==dsp::Envelope::Stage::Idle && filtersQuiet &&
+       (!(compiled.envelopeOwnedMask()&1u) || releasing_)) reset();
     // FX ORDER = PRE MASTER: master gain is applied after the FX graph instead.
     if(effective->applyMaster) {
         outputs.left*=effective->master;outputs.right*=effective->master;outputs.mono*=effective->master;

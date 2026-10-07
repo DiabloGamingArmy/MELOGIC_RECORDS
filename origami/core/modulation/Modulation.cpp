@@ -1126,6 +1126,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     // and execution domains propagated. Fixed arrays; no allocation.
     opCount_=globalOpCount_=voiceOpCount_=0;
     envelopeTriggerCount_=0;
+    envelopeOwnedMask_=0;
     eventOps_=false;
     outputRange_.fill(ControlRange::Unipolar);
     opVoice_.fill(false);
@@ -1194,7 +1195,13 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                 }
                 if(op.type==ControlOpType::EnvelopeTrigger && envelopeTriggerCount_<operatorSlotCount) {
                     envelopeTriggerSlots_[envelopeTriggerCount_]=static_cast<std::uint8_t>(slot);
-                    envelopeTriggerTargets_[envelopeTriggerCount_++]=static_cast<std::uint8_t>(std::lround(op.params[0]));
+                    const auto target=static_cast<std::uint8_t>(std::lround(op.params[0]));
+                    envelopeTriggerTargets_[envelopeTriggerCount_++]=target;
+                    // Default until overridden: a connected trigger OWNS ENV 1 (the
+                    // amp envelope then starts only from the graph). ENV 2 / 3
+                    // keep their established semantics: note-on starts them and
+                    // a trigger RE-triggers (saved patches sound unchanged).
+                    if(connected[0] && target==1) envelopeOwnedMask_|=1u;
                 }
                 for(std::size_t port=0;port<info->outputCount;++port)
                     outputRange_[operatorOutputIndex(slot,port)]=controlOpOutputRangeAt(op,port,c.range[0],connected[0],c.range[1],connected[1]);
@@ -1767,7 +1774,7 @@ const std::array<ControlOpInfo,45>& opTable() noexcept {
         {ControlOpType::Toggle,"TOGGLE","Stateful",2,0,{},{{S::Event,S::Event,S::Control}},S::Gate,{{"TRIG","RESET",nullptr}},false,true},
         {ControlOpType::Counter,"COUNTER","Stateful",2,2,{{P{"LENGTH",2.0f,64.0f,8.0f,true},P{"MODE",0.0f,2.0f,0.0f,true}}},
          {{S::Event,S::Event,S::Control}},S::Control,{{"ADVANCE","RESET",nullptr}},false,true,2,{{S::Event,S::None,S::None}},{{"VALUE","WRAP",nullptr,nullptr}}},
-        {ControlOpType::EnvelopeTrigger,"ENV TRIGGER","Targets",1,1,{{P{"ENVELOPE",2.0f,3.0f,2.0f,true}}},
+        {ControlOpType::EnvelopeTrigger,"ENV TRIGGER","Targets",1,1,{{P{"ENVELOPE",1.0f,3.0f,2.0f,true}}},
          {{S::Event,S::Control,S::Control}},S::None,{{"TRIG",nullptr,nullptr}},true,true},
         // ---- N06 SEQUENCING / GENERATIVE --------------------------------
         {ControlOpType::ClockDivider,"CLOCK DIVIDER","Sequencing",2,0,{},{{S::Event,S::Event,S::Control}},S::Event,{{"CLOCK","RESET",nullptr}},false,true,
@@ -2600,7 +2607,7 @@ void CompiledModulation::evaluateVoiceOperators(ModulationFrame& f,const std::ar
 std::uint8_t CompiledModulation::envelopeTriggers(const ModulationFrame& f) const noexcept {
     std::uint8_t mask=0;
     for(std::size_t i=0;i<envelopeTriggerCount_;++i)
-        if(f.operatorOutputs[operatorOutputIndex(envelopeTriggerSlots_[i],0)]!=0.0f) mask|=std::uint8_t(envelopeTriggerTargets_[i]==3 ? 4u : 2u);
+        if(f.operatorOutputs[operatorOutputIndex(envelopeTriggerSlots_[i],0)]!=0.0f) mask|=std::uint8_t(1u<<(envelopeTriggerTargets_[i]-1));
     return mask;
 }
 

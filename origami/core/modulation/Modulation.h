@@ -203,7 +203,7 @@ enum class ControlOpType : std::uint8_t {
     Threshold=50, Edge=51, Pulse=52,                             // conversion
     Compare=60, And=61, Or=62, Xor=63, Not=64, Switch=65,        // logic
     SampleHold=70, TrackHold=71, RandomTrigger=72, Toggle=73, Counter=74, // stateful
-    EnvelopeTrigger=80,                                          // target: retrigger ENV 2 / ENV 3
+    EnvelopeTrigger=80,                                          // target: trigger ENV 1 / 2 / 3
     // N06 sequencing / generative (multi-output capable).
     ClockDivider=90, EventDelay=91, Probability=92, ChanceSplit=93, EventMerge=94,
     Euclidean=95, Pattern=96, RandomWalk=97,
@@ -847,9 +847,12 @@ public:
     std::uint32_t readStereoGroups() const noexcept { return readGroupsAll_; }
     struct ReadTarget { ModDestination parameter=ModDestination::None; std::uint8_t item=0; };
     const ReadTarget& readTarget(std::size_t group) const noexcept { return readTargets_[group]; }
-    // N05: ENV 2 / ENV 3 retrigger requests produced this sample (bit 1 / 2).
+    // N05: ENV 1 / 2 / 3 trigger requests produced this sample (bit 0 / 1 / 2).
     std::uint8_t envelopeTriggers(const ModulationFrame&) const noexcept;
     bool hasEnvelopeTriggers() const noexcept { return envelopeTriggerCount_!=0; }
+    // Bit 0: ENV 1 is graph-owned (a connected ENV TRIGGER targets it), so a
+    // note-on does not start it automatically. ENV 2 / 3 are never owned.
+    std::uint8_t envelopeOwnedMask() const noexcept { return envelopeOwnedMask_; }
     bool needsEventContext() const noexcept { return eventOps_; }
     // N06: a SEQUENCER node drives the canonical sequencer from the plan (the
     // engine then skips its legacy source-pass advance: never double clocked).
@@ -1046,6 +1049,7 @@ private:
     std::array<std::uint32_t,operatorSlotCount> globalEventCounts_{};
     std::array<std::uint8_t,operatorSlotCount> envelopeTriggerSlots_{},envelopeTriggerTargets_{};
     std::size_t envelopeTriggerCount_=0;
+    std::uint8_t envelopeOwnedMask_=0;
     bool eventOps_=false;
     static float read(const ModulationFrame&,const Group&) noexcept;
     static void write(ModulationFrame&,const Group&,float normalized) noexcept;

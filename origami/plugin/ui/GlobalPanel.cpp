@@ -58,8 +58,8 @@ void GlobalPanel::resized() {
 
 void GlobalPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     auto area=body.reduced(28,22);
-    text(g,"VISUALIZATION",area.removeFromTop(24),Type::title,Palette::text());
-    text(g,"Display only — these switches never change synthesis, modulation, or automation.",
+    text(g,"APPEARANCE / ACTIVITY",area.removeFromTop(24),Type::title,Palette::text());
+    text(g,"Show activity in the instrument views.",
          area.removeFromTop(20),Type::secondary,Palette::muted());
     constexpr int rowHeight=48;
     for(std::size_t i=0;i<names.size();++i) {

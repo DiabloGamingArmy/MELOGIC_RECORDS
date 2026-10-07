@@ -170,6 +170,21 @@ void OrigamiEngine::reset() noexcept {
     pitchBendNormalized_.fill(0.0f);modWheel_.fill(0.0f);aftertouch_.fill(0.0f);
     for (std::size_t i = 0; i < parameterCount; ++i) { const float v = targets_[i].load(std::memory_order_relaxed); smooth_[i] = {v,v,0,0}; }
 }
+void OrigamiEngine::emergencyResetRuntime() noexcept {
+    for(auto& voice:voices_) { voice.reset(); voice.restartLifecycles(); }
+    for(std::size_t i=0;i<globalLfos_.size();++i) {
+        globalLfos_[i].reset();
+        globalLfos_[i].setStreams(Lfo::globalStream(i),Lfo::fractureSeed(i));
+    }
+    globalRandom_.reset(); globalFunction_.reset(); globalChaos_.reset();
+    globalDrift_.reset(); globalSequencer_.reset();
+    compiledModulation_.resetOperatorState();
+    lastVoiceSamples_.fill({}); stealResidual_.fill({});
+    for(auto& a:lastAux_) a.fill(0.0f);
+    for(auto& a:stealAuxResidual_) a.fill(0.0f);
+    tailRemaining_.fill(0); clearHeldNotes();
+    pitchBendNormalized_.fill(0.0f); modWheel_.fill(0.0f); aftertouch_.fill(0.0f);
+}
 bool OrigamiEngine::applyPatchState(const ParameterValues& values) noexcept {
     ParameterValues sanitized {};
     for (std::size_t i = 0; i < parameterCount; ++i) if (!sanitizeParameter(static_cast<ParameterId>(i), values[i], sanitized[i])) return false;
@@ -309,8 +324,8 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
         slot->held=true;slot->address={note,channel,noteId};slot->velocity=std::clamp(velocity,0.f,1.f);slot->order=++order_;
         const auto* selected=selectedMonoHeld();if(!selected) return false;
         const auto current=voices_[0].info();
-        if(!current.active) voices_[0].start(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));
-        else if(!sameAddress(current.address,selected->address)) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),currentPortaTime_,!performance_.legato || !hadHeld || current.releasing);
+        if(!current.active) voices_[0].start(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),compiledModulation_.envelopeOwnedMask());
+        else if(!sameAddress(current.address,selected->address)) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),currentPortaTime_,!performance_.legato || !hadHeld || current.releasing,compiledModulation_.envelopeOwnedMask());
         else if(current.releasing || !performance_.legato)
             // Same pitch during a release tail is a NEW articulation even when
             // mono-legato is enabled. The old code treated "same address" as
@@ -318,7 +333,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
             voices_[0].retarget(selected->address,selected->velocity,selected->order,
                                 envelopeSettings(),modulationEnvelopeSettings(0),
                                 modulationEnvelopeSettings(1),
-                                currentPortaTime_,true);
+                                currentPortaTime_,true,compiledModulation_.envelopeOwnedMask());
         return true;
     }
     std::size_t chosen=voiceCount;
@@ -357,7 +372,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
         stealResidual_[chosen]=lastVoiceSamples_[chosen];stealAuxResidual_[chosen]=lastAux_[chosen];
         tailRemaining_[chosen]=stealFadeSamples_;
     }
-    voices_[chosen].start({note,channel,noteId},std::clamp(velocity,0.f,1.f),++order_,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));return true;
+    voices_[chosen].start({note,channel,noteId},std::clamp(velocity,0.f,1.f),++order_,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),compiledModulation_.envelopeOwnedMask());return true;
 }
 bool OrigamiEngine::noteOff(int note,std::uint8_t channel,std::uint32_t noteId) noexcept {
     if(!prepared_ || note<0 || note>127 || channel>15) return false;
@@ -368,7 +383,7 @@ bool OrigamiEngine::noteOff(int note,std::uint8_t channel,std::uint32_t noteId) 
         const auto removedAddress=removed->address;removed->held=false;if(heldCount_) --heldCount_;
         const auto current=voices_[0].info();
         if(current.active && sameAddress(current.address,removedAddress)) {
-            if(const auto* selected=selectedMonoHeld()) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),currentPortaTime_,!performance_.legato);
+            if(const auto* selected=selectedMonoHeld()) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),currentPortaTime_,!performance_.legato,compiledModulation_.envelopeOwnedMask());
             else voices_[0].release(envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));
         }
         return true;

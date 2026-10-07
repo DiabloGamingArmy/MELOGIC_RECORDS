@@ -10,6 +10,7 @@ public:
     std::function<void(int)> onModeSelected;
     // mct-origami-fx-modulation-graph-ux-p03
     std::function<void()> onGlobalFxRequested;
+    std::function<void()> onPanicRequested;
     void selectSynth();
     // Programmatic page switch (cross-page modulation drag); notifies onModeSelected.
     void selectMode(int mode);
@@ -31,6 +32,26 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 private:
+    // Emergency DSP reset: always visible in the utility strip (an emergency
+    // control must be findable); the product logo is never a control.
+    class PanicButton final : public juce::Button,private juce::Timer {
+    public:
+        PanicButton():juce::Button("Emergency DSP reset") { setTooltip("PANIC: silence every voice and clear effect tails; the patch is kept"); }
+        void confirm() { confirmed_=true; startTimer(500); repaint(); }
+        void paintButton(juce::Graphics& g,bool over,bool down) override {
+            auto bounds=getLocalBounds().toFloat().reduced(.5f);
+            g.setColour(confirmed_ ? signalShade(.55f,.9f) : down ? signalShade(.7f,.95f) : over ? signalShade(.35f,.9f) : Palette::raised());
+            g.fillRect(bounds);
+            g.setColour(confirmed_ || over ? signalSourceColour() : Palette::borderSoft());
+            g.drawRect(bounds,1.0f);
+            g.setColour(Palette::text());
+            g.setFont(juce::FontOptions(Type::control));
+            g.drawText(confirmed_ ? "RESET" : "PANIC",getLocalBounds(),juce::Justification::centred);
+        }
+    private:
+        void timerCallback() override { stopTimer(); confirmed_=false; repaint(); }
+        bool confirmed_=false;
+    } panic_;
     juce::TextButton previous_{"<"},next_{">"},preset_{"Init"},browse_{"BROWSE"},save_{"SAVE"},settings_{"..."};
     std::array<juce::TextButton,5> modes_;
     juce::Image logo_;

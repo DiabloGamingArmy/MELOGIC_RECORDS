@@ -94,6 +94,8 @@ public:
     bool setParameter(ParameterId id, float physicalValue) noexcept;
     bool setParameter(std::string_view id, float physicalValue) noexcept;
     void reset() noexcept;
+    // Audio-thread only: clear sounding state without reading UI-owned patch state.
+    void emergencyResetRuntime() noexcept;
     bool noteOn(int note, float velocity, std::uint8_t channel = 0, std::uint32_t noteId = 0) noexcept;
     bool noteOff(int note, std::uint8_t channel = 0, std::uint32_t noteId = 0) noexcept;
     void allNotesOff() noexcept;

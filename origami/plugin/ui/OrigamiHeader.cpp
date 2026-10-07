@@ -12,6 +12,8 @@ OrigamiHeader::OrigamiHeader() {
     logo_=juce::ImageCache::getFromMemory(BinaryData::oragami_header_png,
                                          BinaryData::oragami_header_pngSize);
     wordmark_={};
+    addAndMakeVisible(panic_);
+    panic_.onClick=[this] { if(onPanicRequested) onPanicRequested(); panic_.confirm(); };
     for(auto* button:{&previous_,&next_,&preset_,&browse_,&save_,&settings_}) addAndMakeVisible(button);
     // mct-origami-content-browser: the preset controls are live.
     preset_.setName("PRESET NAME"); previous_.setName("PRESET PREVIOUS"); next_.setName("PRESET NEXT"); save_.setName("PRESET SAVE"); browse_.setName("PRESET BROWSE");
@@ -83,8 +85,10 @@ void OrigamiHeader::paint(juce::Graphics& g) {
 }
 void OrigamiHeader::resized() {
     auto area=getLocalBounds().withTrimmedLeft(324).reduced(0,10);
-    auto utilities=area.removeFromRight(juce::jmin(170,area.getWidth()/4));
-    settings_.setBounds(utilities.removeFromRight(34).reduced(2,6));save_.setBounds(utilities.removeFromRight(55).reduced(2,6));browse_.setBounds(utilities.reduced(2,6));
+    auto utilities=area.removeFromRight(juce::jmin(236,area.getWidth()/3));
+    settings_.setBounds(utilities.removeFromRight(34).reduced(2,6));
+    panic_.setBounds(utilities.removeFromRight(64).reduced(2,6));
+    save_.setBounds(utilities.removeFromRight(55).reduced(2,6));browse_.setBounds(utilities.reduced(2,6));
     area.removeFromRight(10);auto modes=area.removeFromRight(300);for(auto& mode:modes_)mode.setBounds(modes.removeFromLeft(60).reduced(1,6));
     area.removeFromRight(14);previous_.setBounds(area.removeFromLeft(27).reduced(0,6));next_.setBounds(area.removeFromRight(27).reduced(0,6));preset_.setBounds(area.reduced(3,6));
 }

@@ -241,20 +241,24 @@ public:
     float nextStereo(const Wavetable&,double frequency,double sampleRate,
                      float position,const OscProcessPlan&,double phaseOffsetCycles,double phaseSkew,
                      float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
-                     std::array<SpectralReadHint,2>& rightHints,float& right,double frequencyRight=0.0) noexcept;
+                     std::array<SpectralReadHint,4>& rightHints,float& right,double frequencyRight=0.0) noexcept;
     float nextStereoSimple(const Wavetable&,double frequency,double sampleRate,float position,float positionRight,
-                           std::array<SpectralReadHint,2>& rightHints,float& right) noexcept;
+                           std::array<SpectralReadHint,4>& rightHints,float& right) noexcept;
     double phase() const noexcept { return phase_; }
-    // The next separate RIGHT phase (stereo FM) starts again from LEFT's.
+    // Wave 1: storage for the two extra hints a random spectral morph reads
+    // (its odd prepared keys, per frame). Owned by the caller (a Voice
+    // keeps them in cold storage so the oscillator stays small); without
+    // it a random stage reads its quantized key (no blend).
+    void setMorphHints(SpectralReadHint* two) noexcept { morphHints_=two; }
     void restartRightPhase() noexcept { rightPhaseLive_=false; }
 private:
     void preparePitch(const Wavetable&,double frequency,double sampleRate) noexcept;
     template<bool Simple> float readAt(const Wavetable&,float position,const OscProcessPlan&,double,double,
-                                       std::array<SpectralReadHint,2>&,double phase,std::size_t band,double sampleRate) noexcept;
+                                       SpectralReadHint* hints,SpectralReadHint* morph,double phase,std::size_t band,double sampleRate) noexcept;
     template<bool Simple> float nextImpl(const Wavetable&,double,double,float,
         const OscProcessPlan&,double,double) noexcept;
     template<bool Simple> float nextStereoImpl(const Wavetable&,double,double,float,const OscProcessPlan&,double,double,
-        float,const OscProcessPlan&,double,double,std::array<SpectralReadHint,2>&,float&,double frequencyRight) noexcept;
+        float,const OscProcessPlan&,double,double,std::array<SpectralReadHint,4>&,float&,double frequencyRight) noexcept;
     double phase_ = 0;
     // Pitch metadata is independent of phase and chain amounts. Exact keys
     // keep FM, glide and sample-rate changes audio-rate without rescanning
@@ -264,6 +268,7 @@ private:
     double pitchFrequency_=0,pitchSampleRate_=0,increment_=0;
     std::size_t bandIndex_=0;
     std::array<SpectralReadHint,2> spectralHints_{};
+    SpectralReadHint* morphHints_=nullptr; // two hints, caller-owned (cold)
     double phaseRight_ = 0;      // cold: stereo FM only
     bool rightPhaseLive_=false;
 };

@@ -25,6 +25,19 @@ void FxEnvironment::prepare(double sampleRate) {
     for(auto& r:renderers_) r->prepare(sampleRate);
 }
 
+void FxEnvironment::emergencyResetRuntime() noexcept {
+    for(auto& renderer:renderers_) renderer->emergencyResetRuntime();
+    std::fill(dry_.begin(),dry_.end(),0.0f);
+    inputNow_=inputGain_.load(std::memory_order_relaxed);
+    dryWetNow_=dryWet_.load(std::memory_order_relaxed);
+    widthNow_=width_.load(std::memory_order_relaxed);
+    outputNow_=outputGain_.load(std::memory_order_relaxed);
+    postNow_=postTarget_;
+    peakLeft_.store(0.0f,std::memory_order_relaxed);
+    peakRight_.store(0.0f,std::memory_order_relaxed);
+    for(auto& peak:inputPeak_) peak.store(0.0f,std::memory_order_relaxed);
+}
+
 void FxEnvironment::sync(const std::vector<BusGraph>& slots,const FxGlobalSettings& g) {
     const std::size_t count=std::clamp<std::size_t>(slots.size(),1,maxRenderBuses);
     for(std::size_t b=0;b<count;++b) {

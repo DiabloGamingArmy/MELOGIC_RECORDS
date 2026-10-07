@@ -126,6 +126,7 @@ public:
     // preMaster: FX ORDER = PRE MASTER; masterGain is then applied after the graph.
     void process(float* left,float* right,int samples,const FxModulationOutput* modulation=nullptr,
                  bool preMaster=false,float masterGain=1.0f) noexcept;
+    void emergencyResetRuntime() noexcept;
 
 private:
     static std::vector<std::uint32_t> topologyKey(const FxGraph&);
