@@ -589,6 +589,15 @@ void FxNodeComponent::setMeter(float left,float right) {
     repaint();
 }
 
+void FxNodeComponent::setTelemetry(const FxRenderer::NodeTelemetrySnapshot& telemetry) {
+    if(telemetry.sequence==telemetry_.sequence && telemetry.valid==telemetry_.valid) return;
+    telemetry_=telemetry;
+    // Only the 52 px preview is dynamic. Cached parameter/model art remains
+    // untouched, avoiding expensive response redesign at timer cadence.
+    if(node_.kind==FxNodeKind::Effect && page_.graphZoom()>=0.6f)
+        repaint(12,40,getWidth()-24,52);
+}
+
 float FxNodeComponent::hitRadius() const noexcept {
     // Keep at least ~12 screen pixels of grab area at any zoom.
     return std::max(14.0f,12.0f/std::max(0.1f,page_.graphZoom()));
@@ -667,6 +676,7 @@ void FxNodeComponent::paint(juce::Graphics& g) {
             previewDirty_=false;
         }
         g.drawImageAt(previewImage_,12,40);
+        paintLiveEffectTelemetry(g,{12.0f,40.0f,float(getWidth()-24),52.0f},node_,telemetry_);
         // The preview itself is primary. Keep model/bypass provenance as a quiet
         // caption rather than laying a prominent label over the visualization.
         text(g,node_.enabled ? "MODEL" : "BYPASSED",{18,42,getWidth()-36,12},Type::secondary,
