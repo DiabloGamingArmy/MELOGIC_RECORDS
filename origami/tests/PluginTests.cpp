@@ -5678,7 +5678,12 @@ void nodesVisualFeedbackAudit() {
     auto range=ui::fxKnobModulationRange(.5f,address,state.modulation,ModSource::Lfo1);
     check(!range.anyRoute && !range.hasDepth,"unmodulated FX knob has no overlay");
     state.modulation.routes[0]={1,true,ModSource::Lfo1,address,.4f,true};
+    const auto previousSelectedSource=ui::modulationUiTelemetry().selectedSource;
+    ui::modulationUiTelemetry().selectedSource=ModSource::Lfo1;
     page->syncFromModel();
+    const auto compiledRange=ui::fxKnobModulationRange(float(knob->getValue()),address,page->visualModulation(),ModSource::Lfo1);
+    check(compiledRange.anyRoute && compiledRange.hasDepth && compiledRange.selected,
+          "FX modulation visual model receives canonical route before pixel audit");
     const double base=knob->getValue();
     const auto slot=modulationSourceSlot(ModSource::Lfo1,state.modulation);
     visual.routeSources[slot]=-1;
@@ -5784,6 +5789,7 @@ void nodesVisualFeedbackAudit() {
             }
         }
     }
+    ui::modulationUiTelemetry().selectedSource=previousSelectedSource;
     page->setLookAndFeel(nullptr);
 }
 
