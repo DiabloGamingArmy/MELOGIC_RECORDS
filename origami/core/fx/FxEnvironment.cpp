@@ -60,6 +60,12 @@ FxRenderer::NodeTelemetrySnapshot FxEnvironment::consumeNodeTelemetry(FxBusId bu
     FxRenderer::NodeTelemetrySnapshot empty; empty.node=node; return empty;
 }
 
+void FxEnvironment::setNodeTelemetryEnabled(FxBusId bus,bool enabled) noexcept {
+    const auto count=activeBuses_.load(std::memory_order_acquire);
+    for(std::size_t b=0;b<count && b<maxRenderBuses;++b)
+        renderers_[b]->setTelemetryEnabled(enabled && renderers_[b]->boundBus()==bus);
+}
+
 std::pair<float,float> FxEnvironment::consumePeaks() noexcept {
     return {peakLeft_.exchange(0.0f,std::memory_order_acq_rel),peakRight_.exchange(0.0f,std::memory_order_acq_rel)};
 }
