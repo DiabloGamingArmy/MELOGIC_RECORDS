@@ -2627,6 +2627,38 @@ void consolidationTests() {
     check(true,"memory gates hold (compile-time)");
 }
 
+
+void nodeTelemetryTests() {
+    FxGraph graph=makeDefaultFxGraph();
+    const auto id=graph.addEffect(FxEffectType::Gain,{100,100});
+    FxRenderer renderer;
+    renderer.prepare(48000.0);
+    check(renderer.sync(graph),"node telemetry graph compiles");
+    std::array<float,256> left{},right{};
+    for(std::size_t i=0;i<left.size();++i) {
+        left[i]=0.35f*std::sin(float(i)*0.07f);
+        right[i]=0.2f*std::cos(float(i)*0.11f);
+    }
+    const auto originalL=left,originalR=right;
+    renderer.process(left.data(),right.data(),int(left.size()));
+    const auto beforeReadL=left,beforeReadR=right;
+    const auto snapshot=renderer.consumeNodeTelemetry(id);
+    check(snapshot.valid && snapshot.node==id && snapshot.sequence>0,"node telemetry publishes stable-id snapshot");
+    check(snapshot.peakLeft>0.0f && snapshot.peakRight>0.0f,"node telemetry publishes stereo activity");
+    check(left==beforeReadL && right==beforeReadR,"consuming telemetry cannot mutate rendered audio");
+    const auto second=renderer.consumeNodeTelemetry(id);
+    check(second.valid && second.peakLeft==0.0f && second.peakRight==0.0f,"node peaks consume/reset while sample snapshot remains readable");
+    auto missing=renderer.consumeNodeTelemetry(0xf00du);
+    check(!missing.valid,"unknown node has no fabricated telemetry");
+    (void)originalL;(void)originalR;
+#ifndef ORIGAMI_SANITIZED
+    allocations=0;guardAllocations=true;
+    for(int i=0;i<64;++i) renderer.process(left.data(),right.data(),int(left.size()));
+    guardAllocations=false;
+    check(allocations.load()==0,"node telemetry publication allocates nothing on audio thread");
+#endif
+}
+
 int main() {
     identityTests();
     sourceDomainTests();
@@ -2663,6 +2695,7 @@ int main() {
     multiBusEngineTests();
     workspaceTests();
     environmentTests();
+    nodeTelemetryTests();
     goldenFingerprintTests();
     typedGraphTests();
     graphFuzzTests();

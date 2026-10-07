@@ -53,6 +53,13 @@ std::pair<float,float> FxEnvironment::consumeInputPeaks(FxBusId bus) noexcept {
             return {inputPeak_[2*b].exchange(0.0f,std::memory_order_acq_rel),inputPeak_[2*b+1].exchange(0.0f,std::memory_order_acq_rel)};
     return {0.0f,0.0f};
 }
+FxRenderer::NodeTelemetrySnapshot FxEnvironment::consumeNodeTelemetry(FxBusId bus,FxNodeId node) noexcept {
+    const auto count=activeBuses_.load(std::memory_order_acquire);
+    for(std::size_t b=0;b<count && b<maxRenderBuses;++b)
+        if(renderers_[b]->boundBus()==bus) return renderers_[b]->consumeNodeTelemetry(node);
+    FxRenderer::NodeTelemetrySnapshot empty; empty.node=node; return empty;
+}
+
 std::pair<float,float> FxEnvironment::consumePeaks() noexcept {
     return {peakLeft_.exchange(0.0f,std::memory_order_acq_rel),peakRight_.exchange(0.0f,std::memory_order_acq_rel)};
 }
