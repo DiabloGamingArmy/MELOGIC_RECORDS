@@ -53,6 +53,7 @@ public:
     fx::FxNodeId id() const noexcept { return id_; }
     void update(const fx::FxNode&,bool selected);
     void setMeter(float left,float right);
+    void setTelemetry(const fx::FxRenderer::NodeTelemetrySnapshot&);
     void updateDetail();
     void mouseEnter(const juce::MouseEvent&) override;
     void mouseExit(const juce::MouseEvent&) override;
@@ -79,6 +80,7 @@ private:
     bool selected_=false,hovered_=false;
     std::optional<std::pair<bool,std::uint8_t>> hoveredPort_;
     float meterLeft_=0.0f,meterRight_=0.0f;
+    fx::FxRenderer::NodeTelemetrySnapshot telemetry_{};
     juce::TextButton power_{"PWR"},menu_{"..."},remove_{"X"};
     juce::TextButton accessory_{"+ ADD MODULE"}; // MASTER OUT only: moves with the node
     std::vector<std::unique_ptr<juce::Slider>> quick_;
