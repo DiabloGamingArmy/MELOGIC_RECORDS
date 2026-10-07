@@ -3600,7 +3600,10 @@ juce::Component& FxPage::moduleParametersPanel() noexcept { return *modulePanel_
 juce::Component& FxPage::macrosPanel() noexcept { return *macrosPanel_; }
 
 void FxPage::visibilityChanged() {
-    if(isVisible()) { startTimerHz(30); if(modelDirty_ && document_!=nullptr) syncFromModel(); } else stopTimer();
+    const bool visible=isVisible();
+    if(host_.nodeTelemetryEnabled) host_.nodeTelemetryEnabled(bus_,visible);
+    if(visible) { startTimerHz(30); if(modelDirty_ && document_!=nullptr) syncFromModel(); }
+    else stopTimer();
 }
 
 void FxPage::storeView() {
@@ -3909,6 +3912,7 @@ void FxPage::refreshSidebar(bool includeControl) {
 
 void FxPage::selectBus(BusId bus) {
     if(bus==bus_ && document_==workspace_.find(bus)) return;
+    if(host_.nodeTelemetryEnabled) host_.nodeTelemetryEnabled(bus_,false);
     busViews_[bus_]={view_.zoom(),view_.pan()};
     bus_=bus;
     document_=&workspace_.document(bus);
@@ -3919,6 +3923,7 @@ void FxPage::selectBus(BusId bus) {
     if(const auto it=busViews_.find(bus);it!=busViews_.end()) view_.setView(it->second.first,it->second.second);
     else view_.setView(1.0f,{0.0f,0.0f});
     refreshSidebar();
+    if(host_.nodeTelemetryEnabled && isShowing()) host_.nodeTelemetryEnabled(bus_,true);
 }
 
 BusId FxPage::addBus() {
