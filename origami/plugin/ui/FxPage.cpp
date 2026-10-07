@@ -22,7 +22,13 @@ constexpr int inspectorHeight=250;
 // position comes from the canonical evaluator, sampled on the message thread.
 class FxFeedbackSlider final : public juce::Slider {
 public:
-    explicit FxFeedbackSlider(FxPage& page):page_(page) {}
+    explicit FxFeedbackSlider(FxPage& page):page_(page) {
+        // Reserve physical pixels for the modulation ring. Origami's authored
+        // knob arc is intentionally oversized (0.54 * knob diameter), so an
+        // independent outer track cannot fit inside the component unless the
+        // base knob is drawn slightly smaller.
+        getProperties().set("mct.origami.knobScale",0.82);
+    }
     void paint(juce::Graphics& g) override {
         juce::Slider::paint(g);
         const auto& props=getProperties();
