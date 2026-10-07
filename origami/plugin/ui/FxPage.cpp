@@ -5,6 +5,7 @@
 #include "FxPage.h"
 #include "UserPreferences.h"
 #include "SourceEntity.h"
+#include "ModulationUiTelemetry.h"
 #include "core/fx/FxFilter.h"
 #include <cmath>
 #include <cstring>
@@ -16,6 +17,42 @@ using namespace mct::origami::fx;
 
 constexpr int toolbarHeight=44;
 constexpr int inspectorHeight=250;
+
+// The same painter used by SYNTH's macro/LFO controls. The normalized FX
+// position comes from the canonical evaluator, sampled on the message thread.
+class FxFeedbackSlider final : public juce::Slider {
+public:
+    explicit FxFeedbackSlider(FxPage& page):page_(page) {}
+    void paint(juce::Graphics& g) override {
+        juce::Slider::paint(g);
+        const auto& props=getProperties();
+        const auto node=std::uint32_t(int(props["mct.mod.oscillator"]));
+        const auto item=std::uint32_t(int(props["mct.mod.itemId"]));
+        const ModAddress address{ModDestination::FxParameter,node,item};
+        const auto range=fxKnobModulationRange(float(getValue()),address,page_.visualModulation(),modulationUiTelemetry().selectedSource);
+        float current=float(getValue());
+        const auto& frame=page_.visualFxFrame();
+        for(std::size_t i=0;i<frame.count;++i)
+            if(frame.bus[i]==fxAddressBus(address) && frame.node[i]==node && frame.parameter[i]==fxAddressParameter(address))
+                current=juce::jlimit(0.0f,1.0f,current+frame.offset[i]);
+        if(isRotary())
+            paintKnobModulationOverlay(g,getLocalBounds().toFloat().reduced(3.0f),range.lo,range.hi,
+                                       range.hasDepth,range.anyRoute,true,current,range.selected);
+        else if(range.anyRoute) {
+            const auto r=getLocalBounds().toFloat().reduced(3.0f);
+            g.setColour(signalSourceColour());
+            g.drawLine(r.getX()+r.getWidth()*range.lo,r.getBottom()-2,r.getX()+r.getWidth()*range.hi,r.getBottom()-2,1.5f);
+            g.fillEllipse(juce::Rectangle<float>(4,4).withCentre({r.getX()+r.getWidth()*current,r.getBottom()-2}));
+        }
+        if(isMouseOverOrDragging()) {
+            g.setColour(Palette::text().withAlpha(.32f));
+            if(isRotary()) g.drawEllipse(getLocalBounds().toFloat().reduced(6.0f),1.0f);
+            else g.drawRect(getLocalBounds().toFloat().reduced(.5f),1.0f);
+        }
+    }
+private:
+    FxPage& page_;
+};
 
 void configureKnob(juce::Slider& s) {
     s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -36,6 +73,7 @@ void tagModulationDestination(juce::Slider& s,BusId bus,FxNodeId node,const FxPa
     // Bus-qualified parameter id (FX node IDs are unique per bus graph).
     props.set("mct.mod.itemId",static_cast<int>(fxParameterAddress(bus,node,p.id).itemId));
     props.set("mct.origami.knobDefault",double(p.defaultValue));
+    s.setDoubleClickReturnValue(true,p.defaultValue);
 }
 
 std::vector<const FxParameterDescriptor*> parametersFor(const FxNode& node,bool quickOnly,
@@ -149,7 +187,9 @@ void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode&
     well(g,r.toNearestInt());
     const auto* d=findFxEffect(n.effect);
     if(d==nullptr) return;
-    auto in=r.reduced(8.0f,7.0f);
+    juce::Graphics::ScopedSaveState clipped(g);
+    g.reduceClipRegion(r.toNearestInt());
+    auto in=r.reduced(8.0f,7.0f).withTrimmedTop(12.0f);
     const auto ink=Palette::accent().withAlpha(n.enabled ? .85f : .28f);
     g.setColour(Palette::borderSoft().withAlpha(.8f));
     g.drawHorizontalLine(juce::roundToInt(in.getCentreY()),in.getX(),in.getRight());
@@ -412,6 +452,9 @@ juce::Rectangle<int> FxNodeComponent::sizeFor(const FxNode& n) noexcept {
 
 void FxNodeComponent::update(const FxNode& node,bool selected) {
     const bool effect=node.kind==FxNodeKind::Effect;
+    previewDirty_|=node_.effect!=node.effect || node_.enabled!=node.enabled || node_.parameters.size()!=node.parameters.size();
+    if(!previewDirty_) for(std::size_t i=0;i<node.parameters.size();++i)
+        if(node_.parameters[i].id!=node.parameters[i].id || node_.parameters[i].value!=node.parameters[i].value) { previewDirty_=true; break; }
     node_=node;
     selected_=selected;
     power_.setVisible(effect);
@@ -428,7 +471,7 @@ void FxNodeComponent::update(const FxNode& node,bool selected) {
         quickIds_=ids;
         for(const auto* p:quick) {
             const auto pid=p->id;
-            auto slider=std::make_unique<juce::Slider>();
+            auto slider=std::make_unique<FxFeedbackSlider>(page_);
             configureKnob(*slider);
             slider->setRange(0.0,1.0,0.001);
             slider->setName("FX "+juce::String(id_)+" P"+juce::String(pid));
@@ -445,14 +488,25 @@ void FxNodeComponent::update(const FxNode& node,bool selected) {
         if(!quick_[i]->isMouseButtonDown())
             quick_[i]->setValue(node.parameter(quickIds_[i]).value_or(0.0f),juce::dontSendNotification);
     // Low zoom: drop fine detail rather than drawing microscopic controls.
-    const bool detailed=page_.graphZoom()>=0.6f;
-    for(auto& q:quick_) q->setVisible(detailed);
-    menu_.setVisible(effect && detailed);
+    updateDetail();
 
     if(drag_!=Drag::Move)
         setBounds(sizeFor(node).withPosition(juce::roundToInt(node.position.x),juce::roundToInt(node.position.y)));
     resized();
     repaint();
+}
+
+void FxNodeComponent::updateDetail() {
+    const bool controls=page_.graphZoom()>=0.45f;
+    for(auto& q:quick_) { q->setVisible(controls); q->setAlpha(node_.enabled ? 1.0f : .38f); }
+    menu_.setVisible(node_.kind==FxNodeKind::Effect && page_.graphZoom()>=0.6f);
+    repaint();
+}
+void FxNodeComponent::mouseEnter(const juce::MouseEvent&) { hovered_=true; repaint(); }
+void FxNodeComponent::mouseExit(const juce::MouseEvent&) { hovered_=false; hoveredPort_.reset(); repaint(); }
+void FxNodeComponent::mouseMove(const juce::MouseEvent& e) {
+    const auto port=portAt(e.position);
+    if(port!=hoveredPort_) { hoveredPort_=port; repaint(); }
 }
 
 void FxNodeComponent::setMeter(float left,float right) {
@@ -506,7 +560,7 @@ void FxNodeComponent::paint(juce::Graphics& g) {
     const auto bounds=getLocalBounds().toFloat().reduced(.5f);
     const bool routing=node_.isRouting();
     const bool detailed=page_.graphZoom()>=0.6f;
-    const auto body=routing ? Palette::panel() : Palette::raised();
+    const auto body=routing || !node_.enabled ? Palette::panel() : Palette::raised();
     g.setColour(body);
     g.fillRect(bounds);
     if(!routing) {
@@ -515,7 +569,7 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         g.setColour(Palette::borderStrong().withAlpha(.30f));
         g.drawHorizontalLine(33,8.0f,float(getWidth()-8));
     }
-    g.setColour(selected_ ? signalShade(.80f,.90f) : Palette::border());
+    g.setColour(selected_ ? signalShade(.80f,.90f) : hovered_ ? Palette::borderStrong() : Palette::border());
     g.drawRect(bounds,1.0f);
     if(selected_) {
         g.setColour(signalShade(.80f,.18f));
@@ -531,7 +585,16 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         if(d==nullptr || !d->processesAudio)
             text(g,"NO DSP",title,Type::secondary,Palette::muted().withAlpha(.75f),juce::Justification::centredRight);
         if(!detailed) break;
-        paintEffectPreview(g,juce::Rectangle<float>(12.0f,40.0f,float(getWidth()-24),52.0f),node_);
+        // Parameter previews are cached; a moving modulation dot must not
+        // repeatedly design EQ filters or redraw an unchanged response.
+        if(previewDirty_ || !previewImage_.isValid()) {
+            previewImage_=juce::Image(juce::Image::ARGB,getWidth()-24,52,true);
+            juce::Graphics preview(previewImage_);
+            paintEffectPreview(preview,{0,0,float(getWidth()-24),52},node_);
+            previewDirty_=false;
+        }
+        g.drawImageAt(previewImage_,12,40);
+        text(g,node_.enabled ? "PARAMETER MODEL" : "BYPASSED",{18,42,getWidth()-36,12},10.0f,Palette::muted(),juce::Justification::topRight);
         const auto quick=parametersFor(node_,true,std::nullopt);
         auto labels=local.withTrimmedTop(local.getHeight()-22).reduced(12,0);
         const int width=labels.getWidth()/juce::jmax<int>(1,int(quick.size()));
@@ -616,8 +679,9 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         }
         g.setColour(Palette::inset());
         g.fillEllipse(dot);
-        g.setColour(compatible ? signalSourceColour() : Palette::borderStrong());
-        g.drawEllipse(compatible ? dot.expanded(2.0f) : dot,compatible ? 1.6f : 1.2f);
+        const bool hot=hoveredPort_==std::make_optional(std::make_pair(input,port));
+        g.setColour(compatible ? signalSourceColour() : wire && input ? Palette::borderSoft() : hot || hovered_ ? Palette::text() : Palette::borderStrong());
+        g.drawEllipse(compatible || hot ? dot.expanded(2.0f) : dot,compatible || hot ? 1.6f : 1.2f);
     };
     for(std::uint8_t i=0;i<node_.ports.inputs;++i) paintPort(true,i);
     for(std::uint8_t i=0;i<node_.ports.outputs;++i) paintPort(false,i);
@@ -1022,7 +1086,7 @@ void ControlNodeComponent::paint(juce::Graphics& g) {
     if(kind==nodes::ControlNodeKind::Source) g.fillRect(b.withWidth(2.0f).reduced(0.0f,6.0f));
     if(kind==nodes::ControlNodeKind::Parameter) g.fillRect(b.withX(b.getRight()-2.0f).withWidth(2.0f).reduced(0.0f,6.0f));
     if(op) { g.setColour(Palette::inset()); g.fillRect(b.withHeight(30.0f).reduced(1.0f,1.0f)); }
-    g.setColour(view_.selected ? signalSourceColour() : Palette::borderSoft());
+    g.setColour(view_.selected ? signalSourceColour() : hovered_ ? Palette::borderStrong() : Palette::borderSoft());
     g.drawRoundedRectangle(b,4.0f,view_.selected ? 1.6f : 1.0f);
     // N05 activity: a brief restrained flash when an EVENT fires (UI timer).
     if(activity_>0.02f) {
@@ -1100,7 +1164,7 @@ void ControlNodeComponent::paint(juce::Graphics& g) {
         // A GATE output fills while open; others fill when linked.
         const bool filled=direction==nodes::PortDirection::Output && signal==ControlSignal::Gate ? gateOpen_ : view_.linked;
         paintSocket(g,signal,portCentre(direction,index),compatible ? 6.5f : 5.5f,filled,
-                    compatible ? signalSourceColour() : Palette::borderStrong(),compatible ? 1.6f : 1.2f);
+                    compatible ? signalSourceColour() : hovered_ ? Palette::text() : Palette::borderStrong(),compatible ? 1.6f : 1.2f);
     };
     for(std::uint8_t i=0;i<inputCount();++i) paintPort(nodes::PortDirection::Input,i);
     for(std::uint8_t p=0;p<outputCount();++p) paintPort(nodes::PortDirection::Output,p);
@@ -2318,7 +2382,7 @@ public:
             shownId_=id;
             for(const auto* p:params) {
                 const auto pid=p->id;
-                auto knob=std::make_unique<juce::Slider>();
+                auto knob=std::make_unique<FxFeedbackSlider>(page_);
                 configureKnob(*knob);
                 knob->setRange(0.0,1.0,0.001);
                 knob->setName("FX inspector P"+juce::String(pid));
@@ -2761,7 +2825,7 @@ private:
                 raw->onClick=[this,raw,pid,nodeId]{page_.setParameter(nodeId,pid,raw->getToggleState() ? 1.0f : 0.0f);};
                 rows_.addAndMakeVisible(*raw);
             } else {
-                entry.slider=std::make_unique<juce::Slider>();
+                entry.slider=std::make_unique<FxFeedbackSlider>(page_);
                 auto* raw=entry.slider.get();
                 raw->setSliderStyle(juce::Slider::LinearHorizontal);
                 raw->setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
@@ -3133,7 +3197,7 @@ private:
             op_=id; opType_=op->type;
             for(std::size_t i=0;i<info->parameterCount;++i) {
                 const auto& p=info->parameters[i];
-                auto slider=std::make_unique<juce::Slider>();
+                auto slider=std::make_unique<FxFeedbackSlider>(page_);
                 slider->setName("CONTROL OPERATOR PARAMETER "+juce::String(p.label));
                 slider->setSliderStyle(juce::Slider::LinearHorizontal);
                 slider->setTextBoxStyle(juce::Slider::TextBoxRight,false,72,18);
@@ -3250,7 +3314,7 @@ private:
 
 class FxPage::FxMacrosPanel final : public Panel {
 public:
-    explicit FxMacrosPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {
+    explicit FxMacrosPanel(FxPage& page,ModulationBindings bindings):Panel("MACROS"),page_(page),bindings_(std::move(bindings)) {
         for(std::size_t i=0;i<sliders_.size();++i) {
             auto& s=sliders_[i];
             configureKnob(s);
@@ -3277,6 +3341,18 @@ public:
         }
         if(changed) repaint();
     }
+    void paintOverChildren(juce::Graphics& g) override {
+        for(std::size_t i=0;i<sliders_.size();++i) {
+            if(ids_[i]==0 || !sliders_[i].isVisible()) continue;
+            const auto range=fxKnobModulationRange(float(sliders_[i].getValue()),macroValueAddress(ids_[i]),
+                                                   page_.visualModulation(),modulationUiTelemetry().selectedSource);
+            const auto& runtime=page_.visualRuntime();
+            const float current=(runtime.modulatedMacros & (1u<<(ids_[i]-1)))!=0
+                ? runtime.effectiveMacros[ids_[i]-1] : float(sliders_[i].getValue());
+            paintKnobModulationOverlay(g,sliders_[i].getBounds().toFloat().reduced(3),range.lo,range.hi,
+                                       range.hasDepth,range.anyRoute,true,current,range.selected);
+        }
+    }
     void resized() override {
         auto area=contentBounds().reduced(12,6).withTrimmedTop(26);
         const int cell=area.getWidth()/4;
@@ -3295,6 +3371,7 @@ private:
             text(g,labels_[std::size_t(i)],r.removeFromBottom(16),Type::label,Palette::muted(),juce::Justification::centred);
         }
     }
+    FxPage& page_;
     ModulationBindings bindings_;
     std::array<juce::Slider,4> sliders_;
     std::array<juce::String,4> labels_; // custom macro names (stable id)
@@ -3409,11 +3486,12 @@ FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings h
         // N07 semantic zoom: level of detail follows the zoom (view only).
         const auto detail=ControlNodeComponent::detailFor(view_.zoom());
         canvas_.setControlDetail(detail);
+        for(const auto& n:graph().nodes()) if(auto* c=canvas_.nodeComponent(n.id)) c->updateDetail();
         if(detail==ControlNodeComponent::Detail::Minimal) for(auto* node:canvas_.controlNodes()) node->repaint();
     };
     selectedPanel_=std::make_unique<SelectedPanel>(*this);
     parametersPanel_=std::make_unique<ParametersPanel>(*this,bindings_);
-    macrosPanel_=std::make_unique<FxMacrosPanel>(bindings_);
+    macrosPanel_=std::make_unique<FxMacrosPanel>(*this,bindings_);
     confirmPanel_=std::make_unique<ConfirmPanel>(*this);
     controlInspector_=std::make_unique<ControlInspector>(*this);
     modulePanel_=std::make_unique<ModuleParametersPanel>(*selectedPanel_,*parametersPanel_,*controlInspector_);
@@ -3494,7 +3572,42 @@ void FxPage::paint(juce::Graphics& g) {
 
 namespace { juce::Rectangle<float> nodeRect(FxCanvas&,const nodes::ControlNodeKey&); }
 
+void FxPage::refreshVisualFeedback() {
+    if(!isShowing()) return;
+    ++visualRefreshCount_;
+    if(bindings_.visualization) visualRuntime_=bindings_.visualization();
+    if(visualPlan_->hasFxRoutes()) {
+        const auto& snapshot=visualRuntime_;
+        std::array<float,CompiledModulation::globalSourceCount> global{};
+        std::array<float,CompiledModulation::voiceSourceCount> voice{};
+        std::array<float,operatorOutputSlotCount> operators{};
+        std::copy_n(snapshot.routeSources.begin(),global.size(),global.begin());
+        std::copy_n(snapshot.routeSources.begin()+global.size(),voice.size(),voice.begin());
+        std::copy_n(snapshot.routeSources.begin()+global.size()+voice.size(),operators.size(),operators.begin());
+        visualPlan_->fxFrame(visualFxFrame_,global,&voice,&operators);
+    } else visualFxFrame_.count=0;
+    // Repaint only visible tagged controls. Static response previews do not
+    // animate or recompute at timer cadence; the selected inspector is 30 Hz,
+    // graph controls 15 Hz. At minimal zoom there are no visible graph knobs.
+    const auto visit=[&](auto&& self,juce::Component& c)->void {
+        if(!c.isVisible()) return;
+        if(auto* slider=dynamic_cast<FxFeedbackSlider*>(&c)) {
+            const auto visible=getLocalArea(slider,slider->getLocalBounds()).getIntersection(getLocalBounds());
+            if(!visible.isEmpty()) slider->repaint();
+            return;
+        }
+        for(auto* child:c.getChildren()) self(self,*child);
+    };
+    if((visualRefreshCount_&1u)==0 && graphZoom()>=.45f)
+        for(const auto& n:graph().nodes()) if(auto* c=canvas_.nodeComponent(n.id))
+            if(view_.getLocalArea(c,c->getLocalBounds()).intersects(view_.getLocalBounds())) visit(visit,*c);
+    visit(visit,*modulePanel_);
+    if(visualRuntime_.modulatedMacros!=0) macrosPanel_->repaint();
+}
+
 void FxPage::timerCallback() {
+    if(!isShowing()) return;
+    refreshVisualFeedback();
     updateMeters();
     sampleControlMonitor();
     if(feedback_.isNotEmpty() && juce::Time::getMillisecondCounterHiRes()>feedbackUntil_) { feedback_.clear(); repaint(view_.getBounds()); }
@@ -4197,6 +4310,7 @@ void FxPage::refreshControl() {
     InstrumentState state;
     if(bindings_.snapshot) state=bindings_.snapshot();
     controlModulation_=state.modulation;
+    visualPlan_->compile(state.modulation,state.oscillators,true);
     destinationCatalog_=modulationDestinationCatalog(state,bindings_);
     auto& layout=controlLayout();
     controlGraph_=nodes::deriveControlGraph(state.modulation,layout);
