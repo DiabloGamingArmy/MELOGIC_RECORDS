@@ -279,14 +279,14 @@ inline float modulationUiAllRoutesValue(ModDestination destination,
 // any knob: positions are proportions of the knob's travel (0..1).
 inline void paintKnobModulationOverlay(juce::Graphics& g,juce::Rectangle<float> knob,float lo,float hi,
                                        bool hasDepth,bool anyRoute,bool showEffective,float effective,bool selected) {
-    // Modulation owns a distinct outer radial track. The normal knob painter
-    // uses roughly a 0.54*diameter arc; keeping this ring outside that radius
-    // prevents the red range/effective dot from obscuring the authored white
-    // magnitude arc or pointer.
+    // Modulation owns a distinct outer radial track. FxFeedbackSlider reserves
+    // that lane by drawing its authored knob at 82% scale. Keep the modulation
+    // centreline inside the component clip (including the 5 px effective dot)
+    // while still outside the authored white arc.
     auto circle=knob.reduced(1.0f);
     const float d=juce::jmin(circle.getWidth(),circle.getHeight());
     circle=juce::Rectangle<float>(d,d).withCentre(circle.getCentre());
-    constexpr float modulationRadiusScale=0.585f;
+    constexpr float modulationRadiusScale=0.46f;
     const float start=juce::MathConstants<float>::pi*1.20f;
     const float end=juce::MathConstants<float>::pi*2.80f;
     const auto angle=[&](float n){ return start+juce::jlimit(0.0f,1.0f,n)*(end-start); };
