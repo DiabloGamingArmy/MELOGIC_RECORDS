@@ -379,6 +379,79 @@ void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode&
     g.strokePath(path,juce::PathStrokeType(1.4f));
 }
 
+
+// P03: live overlays consume the bounded P02 snapshot on the message thread.
+// They never feed values back into DSP. Frequency displays use a deliberately
+// tiny direct DFT (64 input samples / 24 bins) only while a node is visible.
+void paintLiveEffectTelemetry(juce::Graphics& g,juce::Rectangle<float> r,const FxNode& n,
+                              const FxRenderer::NodeTelemetrySnapshot& t) {
+    if(!t.valid || !n.enabled) return;
+    const auto* d=findFxEffect(n.effect);
+    if(d==nullptr) return;
+    auto in=r.reduced(8.0f,7.0f).withTrimmedTop(12.0f);
+    juce::Graphics::ScopedSaveState clipped(g);
+    g.reduceClipRegion(in.toNearestInt());
+    const auto live=signalShade(.88f,.72f);
+    const float activity=juce::jlimit(0.0f,1.0f,std::max(t.peakLeft,t.peakRight)*1.4f);
+    if(activity<=1.0e-4f) return;
+
+    if(d->visual==FxVisual::Spatial || (d->visual==FxVisual::Utility && n.effect!=FxEffectType::Gain)) {
+        // Actual post-node stereo relationship: L on X, R on Y.
+        g.setColour(live.withAlpha(.20f+.45f*activity));
+        for(std::size_t i=1;i<FxRenderer::telemetrySamples;++i) {
+            const auto p0=juce::Point<float>{in.getCentreX()+t.left[i-1]*in.getWidth()*.42f,
+                                             in.getCentreY()-t.right[i-1]*in.getHeight()*.42f};
+            const auto p1=juce::Point<float>{in.getCentreX()+t.left[i]*in.getWidth()*.42f,
+                                             in.getCentreY()-t.right[i]*in.getHeight()*.42f};
+            g.drawLine({p0,p1},.8f);
+        }
+        return;
+    }
+
+    const bool spectral=d->visual==FxVisual::EqResponse || d->visual==FxVisual::FilterResponse
+                     || d->visual==FxVisual::Comb || d->visual==FxVisual::Phaser
+                     || d->visual==FxVisual::Transfer;
+    if(spectral) {
+        constexpr int bins=24;
+        std::array<float,bins> mag{};
+        float maximum=1.0e-6f;
+        for(int k=1;k<bins;++k) {
+            float re=0.0f,im=0.0f;
+            for(std::size_t i=0;i<FxRenderer::telemetrySamples;++i) {
+                const float x=.5f*(t.left[i]+t.right[i]);
+                const float w=.5f-.5f*std::cos(juce::MathConstants<float>::twoPi*float(i)/float(FxRenderer::telemetrySamples-1));
+                const float phase=juce::MathConstants<float>::twoPi*float(k)*float(i)/float(FxRenderer::telemetrySamples);
+                re+=x*w*std::cos(phase); im-=x*w*std::sin(phase);
+            }
+            mag[k]=std::sqrt(re*re+im*im);
+            maximum=std::max(maximum,mag[k]);
+        }
+        juce::Path spectrum;
+        for(int k=1;k<bins;++k) {
+            const float x=in.getX()+float(k-1)/float(bins-2)*in.getWidth();
+            const float normalized=std::sqrt(juce::jlimit(0.0f,1.0f,mag[k]/maximum));
+            const float y=in.getBottom()-normalized*in.getHeight()*.82f;
+            if(k==1) spectrum.startNewSubPath(x,y); else spectrum.lineTo(x,y);
+        }
+        auto fill=spectrum; fill.lineTo(in.getRight(),in.getBottom()); fill.lineTo(in.getX(),in.getBottom()); fill.closeSubPath();
+        g.setColour(live.withAlpha(.07f+.10f*activity)); g.fillPath(fill);
+        g.setColour(live.withAlpha(.18f+.22f*activity)); g.strokePath(spectrum,juce::PathStrokeType(.9f));
+        return;
+    }
+
+    // Time-domain activity for delay/reverb/modulation/dynamics/gain. The
+    // parameter-derived model remains the bright foreground reference.
+    juce::Path wave;
+    for(std::size_t i=0;i<FxRenderer::telemetrySamples;++i) {
+        const float x=in.getX()+float(i)/float(FxRenderer::telemetrySamples-1)*in.getWidth();
+        const float mono=.5f*(t.left[i]+t.right[i]);
+        const float y=in.getCentreY()-juce::jlimit(-1.0f,1.0f,mono)*in.getHeight()*.43f;
+        if(i==0) wave.startNewSubPath(x,y); else wave.lineTo(x,y);
+    }
+    g.setColour(live.withAlpha(.18f+.28f*activity));
+    g.strokePath(wave,juce::PathStrokeType(.9f));
+}
+
 juce::String kindLabel(FxNodeKind kind) {
     switch(kind) {
     case FxNodeKind::Source: return "AUDIO SOURCE";
