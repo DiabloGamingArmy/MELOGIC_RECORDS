@@ -101,6 +101,17 @@ public:
     // ---- UI telemetry: bounded, lock-free, consumed with reset.
     std::pair<float,float> consumePeaks() noexcept;
 
+    static constexpr std::size_t telemetrySamples=64;
+    struct NodeTelemetrySnapshot {
+        FxNodeId node=invalidFxNodeId;
+        std::array<float,telemetrySamples> left{},right{};
+        float peakLeft=0.0f,peakRight=0.0f;
+        std::uint64_t sequence=0;
+        bool valid=false;
+    };
+    NodeTelemetrySnapshot consumeNodeTelemetry(FxNodeId) noexcept;
+    void setTelemetryEnabled(bool enabled) noexcept { telemetryEnabled_.store(enabled); }
+
     // ---- realtime
     // modulation: FX destinations of the canonical modulation system (may be null).
     // preMaster: FX ORDER = PRE MASTER; masterGain is then applied after the graph.
