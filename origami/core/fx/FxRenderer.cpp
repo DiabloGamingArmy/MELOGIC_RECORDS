@@ -263,6 +263,48 @@ std::pair<float,float> FxRenderer::consumePeaks() noexcept {
     return {peakLeft_.exchange(0.0f,std::memory_order_acq_rel),peakRight_.exchange(0.0f,std::memory_order_acq_rel)};
 }
 
+void FxRenderer::publishNodeTelemetry(FxNodeId node,const float* left,const float* right,int n) noexcept {
+    if(!telemetryEnabled_.load(std::memory_order_acquire) || node==invalidFxNodeId || left==nullptr || right==nullptr || n<=0) return;
+    NodeTelemetrySlot* slot=nullptr;
+    for(auto& candidate:nodeTelemetry_) {
+        const auto id=candidate.node.load(std::memory_order_relaxed);
+        if(id==node) { slot=&candidate; break; }
+        if(id==invalidFxNodeId && slot==nullptr) slot=&candidate;
+    }
+    if(slot==nullptr) return;
+    if(slot->node.load(std::memory_order_relaxed)!=node) slot->node.store(node,std::memory_order_relaxed);
+    float pl=0.0f,pr=0.0f;
+    for(int i=0;i<n;++i) { pl=std::max(pl,std::abs(left[i])); pr=std::max(pr,std::abs(right[i])); }
+    if(pl>slot->peakLeft.load(std::memory_order_relaxed)) slot->peakLeft.store(pl,std::memory_order_relaxed);
+    if(pr>slot->peakRight.load(std::memory_order_relaxed)) slot->peakRight.store(pr,std::memory_order_relaxed);
+    for(std::size_t i=0;i<telemetrySamples;++i) {
+        const int source=std::min(n-1,int((i*std::size_t(n))/telemetrySamples));
+        slot->left[i].store(left[source],std::memory_order_relaxed);
+        slot->right[i].store(right[source],std::memory_order_relaxed);
+    }
+    slot->sequence.fetch_add(1,std::memory_order_release);
+}
+
+FxRenderer::NodeTelemetrySnapshot FxRenderer::consumeNodeTelemetry(FxNodeId node) noexcept {
+    NodeTelemetrySnapshot out; out.node=node;
+    for(auto& slot:nodeTelemetry_) {
+        if(slot.node.load(std::memory_order_acquire)!=node) continue;
+        for(int attempt=0;attempt<2;++attempt) {
+            const auto before=slot.sequence.load(std::memory_order_acquire);
+            for(std::size_t i=0;i<telemetrySamples;++i) {
+                out.left[i]=slot.left[i].load(std::memory_order_relaxed);
+                out.right[i]=slot.right[i].load(std::memory_order_relaxed);
+            }
+            const auto after=slot.sequence.load(std::memory_order_acquire);
+            if(before==after) { out.sequence=after; out.valid=after!=0; break; }
+        }
+        out.peakLeft=slot.peakLeft.exchange(0.0f,std::memory_order_acq_rel);
+        out.peakRight=slot.peakRight.exchange(0.0f,std::memory_order_acq_rel);
+        return out;
+    }
+    return out;
+}
+
 void FxRenderer::applyModulation(const FxModulationOutput* mod) noexcept {
     const std::uint64_t generation=mod!=nullptr ? mod->generation : 0;
     if(generation!=modulationGeneration_ || active_!=modulationPlan_) {
