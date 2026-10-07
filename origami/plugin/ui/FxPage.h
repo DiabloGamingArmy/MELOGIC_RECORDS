@@ -53,6 +53,10 @@ public:
     fx::FxNodeId id() const noexcept { return id_; }
     void update(const fx::FxNode&,bool selected);
     void setMeter(float left,float right);
+    void updateDetail();
+    void mouseEnter(const juce::MouseEvent&) override;
+    void mouseExit(const juce::MouseEvent&) override;
+    void mouseMove(const juce::MouseEvent&) override;
     juce::Point<float> portCentre(bool input,std::uint8_t port) const noexcept;
     std::optional<std::pair<bool,std::uint8_t>> portAt(juce::Point<float>) const noexcept;
     static juce::Rectangle<int> sizeFor(const fx::FxNode&) noexcept;
@@ -70,7 +74,10 @@ private:
     FxPage& page_;
     fx::FxNodeId id_;
     fx::FxNode node_;
-    bool selected_=false;
+    juce::Image previewImage_;
+    bool previewDirty_=true;
+    bool selected_=false,hovered_=false;
+    std::optional<std::pair<bool,std::uint8_t>> hoveredPort_;
     float meterLeft_=0.0f,meterRight_=0.0f;
     juce::TextButton power_{"PWR"},menu_{"..."},remove_{"X"};
     juce::TextButton accessory_{"+ ADD MODULE"}; // MASTER OUT only: moves with the node
@@ -158,6 +165,8 @@ public:
     void paint(juce::Graphics&) override;
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;
+    void mouseEnter(const juce::MouseEvent&) override { hovered_=true; repaint(); }
+    void mouseExit(const juce::MouseEvent&) override { hovered_=false; repaint(); }
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
@@ -168,7 +177,7 @@ private:
     FxPage& page_;
     ControlNodeView view_;
     float activity_=0.0f;
-    bool gateOpen_=false;
+    bool gateOpen_=false,hovered_=false;
     int sequencerStep_=-1;
     Detail detail_=Detail::Full;
     juce::Point<int> groupDragOrigin_{};
@@ -458,6 +467,13 @@ public:
     void paint(juce::Graphics&) override;
     bool keyPressed(const juce::KeyPress&) override;
     void visibilityChanged() override;
+    // Read-only message-thread visualization. No renderer or parameter writes.
+    void refreshVisualFeedback();
+    const ModulationState& visualModulation() const noexcept { return controlModulation_; }
+    const RuntimeVisualizationSnapshot& visualRuntime() const noexcept { return visualRuntime_; }
+    const FxModulationOutput& visualFxFrame() const noexcept { return visualFxFrame_; }
+    std::uint32_t visualRefreshCount() const noexcept { return visualRefreshCount_; }
+
     void syncFromModel();
     void modelChanged(); // N07: hidden-aware (stale flag) model-change notification
     std::function<void()> onOpenSynthFilter;
@@ -713,6 +729,10 @@ private:
     BusId bus_=mainBusId;
     fx::FxGraphDocument* document_=nullptr;
     ModulationBindings bindings_;
+    std::unique_ptr<CompiledModulation> visualPlan_=std::make_unique<CompiledModulation>();
+    FxModulationOutput visualFxFrame_{};
+    RuntimeVisualizationSnapshot visualRuntime_{};
+    std::uint32_t visualRefreshCount_=0;
     PeakSource peaks_;
     std::map<fx::FxNodeId,std::pair<float,float>> inputMeters_; // IN-node ballistics (UI thread)
     HostBindings host_;

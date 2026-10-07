@@ -310,6 +310,41 @@ inline void paintKnobModulationOverlay(juce::Graphics& g,juce::Rectangle<float> 
 // the destination's normalized space), from the selected source's routes or
 // else all routes, as the SYNTH knobs show it.
 struct KnobModulationRange { float lo=0.0f,hi=0.0f; bool hasDepth=false,anyRoute=false,selected=false; };
+// FX ranges sum each route's possible interval, never signed depths (which
+// would hide two opposing sources). One aggregate arc, with selected-source
+// emphasis; exact routes remain in Matrix. Polarity uses the canonical helper.
+inline KnobModulationRange fxKnobModulationRange(float base,const ModAddress& address,
+                                                const ModulationState& state,ModSource selected) noexcept {
+    KnobModulationRange result;
+    float lo=0.0f,hi=0.0f;
+    ModulationSourceSlots extremes{};
+    for(const auto& route:state.routes) {
+        if(!route.id || !route.enabled || !routeComplete(route) || !(route.destination==address)) continue;
+        result.anyRoute=true;
+        result.selected|=route.source==selected;
+        const auto slot=modulationSourceSlot(route.source,state);
+        if(slot>=extremes.size()) continue;
+        auto unit=route;
+        bool nested=false;
+        for(const auto& depth:state.routes)
+            if(depth.id && depth.enabled && depth.destination==routeDepthAddress(route.id)) { nested=true; break; }
+        // A modulated depth can span -1..1. Show its possible envelope rather
+        // than promising the authored depth is its live limit.
+        if(nested) unit.amount=1.0f;
+        extremes[slot]=sourceRange(route.source,state)==ControlRange::Bipolar ? -1.0f : 0.0f;
+        const float a=routeContribution(unit,state,extremes);
+        extremes[slot]=1.0f;
+        const float b=routeContribution(unit,state,extremes);
+        if(nested) { const float extent=std::max(std::abs(a),std::abs(b)); lo-=extent; hi+=extent; }
+        else { lo+=std::min(a,b); hi+=std::max(a,b); }
+        extremes[slot]=0.0f;
+    }
+    result.lo=juce::jlimit(0.0f,1.0f,base+lo);
+    result.hi=juce::jlimit(0.0f,1.0f,base+hi);
+    result.hasDepth=result.hi-result.lo>=1.0e-4f;
+    return result;
+}
+
 inline KnobModulationRange knobModulationRange(float base,ModDestination destination,OscillatorModuleId oscillator=0,std::uint32_t itemId=0) noexcept {
     KnobModulationRange r;
     const float selectedDepth=modulationUiSelectedRouteAmount(destination,oscillator,itemId);

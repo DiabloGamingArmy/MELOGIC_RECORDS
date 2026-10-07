@@ -2658,15 +2658,29 @@ void deterministicRenderAudit() {
         b->getUiFxDocument().edit([](fx::FxGraph& g){return g.insertEffectBeforeOutput(fx::FxEffectType::Filter)!=0;});
         auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(a->createEditor());
         auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+        editor->addToDesktop(0);editor->setVisible(true);
+        ui::FxPage* nodesPage=nullptr;
+        walk(*editor,[&](auto& c) {
+            if(auto* p=dynamic_cast<ui::FxPage*>(&c)) nodesPage=p;
+            if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="NODES" && b->onClick) b->onClick();
+        });
+        for(auto* processor:{a.get(),b.get()}) {
+            const auto routeId=processor->addUiRoute();
+            fx::FxNodeId filterId=0;
+            for(const auto& n:processor->getUiFxDocument().graph().nodes()) if(n.effect==fx::FxEffectType::Filter) filterId=n.id;
+            ModRoute route{routeId,true,ModSource::Lfo1,fxParameterAddress(mainBusId,filterId,1),.4f,true};
+            check(processor->setUiRoute(route),"identical modulated FX filter for visual transparency");
+        }
         std::vector<ui::ModulationMatrix*> matrices;
         walk(*editor,[&](auto& c){if(auto* m=dynamic_cast<ui::ModulationMatrix*>(&c)) matrices.push_back(m);});
         const auto observed=render(*a,48,[&]{
             editor->refreshModulationViews();
             for(auto* m:matrices) m->sampleMonitors();
+            if(nodesPage) { nodesPage->syncFromModel();nodesPage->refreshVisualFeedback(); }
             (void)a->getUiRuntimeVisualizationSnapshot(); (void)a->getUiEnvelopeTraceSnapshot();
         });
         const auto plain=render(*b,48);
-        check(!matrices.empty() && observed==plain,"UI observation (editor, telemetry, Matrix monitors) leaves audio bit-identical");
+        check(nodesPage && nodesPage->visualRefreshCount()>0 && !matrices.empty() && observed==plain,"UI observation including live NODES modulation leaves float audio bit-identical");
     }
     {   // N01 observation: live edit vs the same state restored.
         auto live=make();
@@ -5629,7 +5643,137 @@ void typographyAudit() {
     }
 }
 
+// NODES visual feedback: sampled canonical modulation, real pixel changes,
+// visibility/zoom gates, unchanged authoring values and bounded paint costs.
+void nodesVisualFeedbackAudit() {
+    using namespace mct::origami::fx;
+    InstrumentState state{};
+    RuntimeVisualizationSnapshot visual{};
+    FxWorkspace workspace;
+    auto graph=makeDefaultFxGraph();
+    const auto id=graph.addEffect(FxEffectType::Gain,{40,40});
+    workspace.document(mainBusId).replace(graph);
+    const auto address=fxParameterAddress(mainBusId,id,1);
+    ui::ModulationBindings bindings;
+    bindings.snapshot=[&]{return state;};
+    int reads=0;
+    bindings.visualization=[&]{++reads;return visual;};
+    auto page=std::make_unique<ui::FxPage>(workspace,bindings);
+    ui::OrigamiLookAndFeel look;
+    page->setLookAndFeel(&look);
+    page->setBounds(0,0,1440,900);page->addToDesktop(0);page->setVisible(true);
+    auto* node=page->canvas().nodeComponent(id);
+    check(node!=nullptr,"visual feedback node exists");
+    juce::Slider* knob=nullptr;
+    walk(*node,[&](juce::Component& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)) if(int(k->getProperties()["mct.mod.itemId"])==int(address.itemId)) knob=k;});
+    check(knob!=nullptr,"FX gain quick knob has canonical address");
+    const auto hash=[](juce::Component& c) {
+        const auto image=c.createComponentSnapshot(c.getLocalBounds());
+        std::uint64_t value=1469598103934665603ull;
+        for(int y=0;y<image.getHeight();++y) for(int x=0;x<image.getWidth();++x)
+            value=(value^image.getPixelAt(x,y).getARGB())*1099511628211ull;
+        return value;
+    };
+    const auto bare=hash(*knob);
+    auto range=ui::fxKnobModulationRange(.5f,address,state.modulation,ModSource::Lfo1);
+    check(!range.anyRoute && !range.hasDepth,"unmodulated FX knob has no overlay");
+    state.modulation.routes[0]={1,true,ModSource::Lfo1,address,.4f,true};
+    page->syncFromModel();
+    const double base=knob->getValue();
+    const auto slot=modulationSourceSlot(ModSource::Lfo1,state.modulation);
+    visual.routeSources[slot]=-1;
+    page->refreshVisualFeedback();
+    const auto negative=hash(*knob);
+    const auto saveNode=[&](const char* name) {
+        if(const char* folder=std::getenv("ORIGAMI_NODES_VISUAL_REPORT")) {
+            const auto image=node->createComponentSnapshot(node->getLocalBounds(),true,2.0f);
+            juce::FileOutputStream out(juce::File(juce::String(folder)+"/"+name+".png"));
+            juce::PNGImageFormat{}.writeImageToStream(image,out);
+        }
+    };
+    saveNode("modulation-negative");
+    visual.routeSources[slot]=1;
+    page->refreshVisualFeedback();
+    check(negative!=bare && negative!=hash(*knob),"FX modulation arc appears and effective dot moves");
+    check(knob->getValue()==base,"visual feedback never changes authored knob value");
+    saveNode("modulation-positive");
+    state.modulation.routes[1]={2,true,ModSource::Lfo2,address,-.4f,true};
+    range=ui::fxKnobModulationRange(.5f,address,state.modulation,ModSource::Lfo1);
+    check(range.anyRoute && range.selected && std::abs(range.lo-.1f)<1e-6f && std::abs(range.hi-.9f)<1e-6f,
+          "opposing routes retain one aggregate interval instead of cancelling");
+    state.modulation.routes[1].enabled=false;
+    range=ui::fxKnobModulationRange(.5f,address,state.modulation,ModSource::None);
+    check(!range.selected && std::abs(range.lo-.3f)<1e-6f && std::abs(range.hi-.7f)<1e-6f,"disabled routes excluded and bipolar span canonical");
+    state.modulation.routes[2]={3,true,ModSource::Macro1,routeDepthAddress(1),.25f,false};
+    visual.routeSources[modulationSourceSlot(ModSource::Macro1,state.modulation)]=1;
+    page->syncFromModel();page->refreshVisualFeedback();
+    check(page->visualFxFrame().count==1 && std::abs(page->visualFxFrame().offset[0]-.45f)<1e-5f,
+          "FX dot follows canonical nested route depth");
+    const auto beforeHover=hash(*node);
+    node->mouseEnter(event(*node));
+    check(hash(*node)!=beforeHover,"node hover strengthens outline");
+    node->mouseExit(event(*node));
+    check(node->portAt(node->portCentre(true,0)+juce::Point<float>(10,0)).has_value(),"port hit target exceeds drawn dot");
+    page->canvas().beginWire(graph.sourceForBus(mainBusId),0);
+    check(hash(*node)!=beforeHover,"compatible audio target is emphasized while dragging");
+    page->canvas().cancelWire();
+    page->graphView().setView(.5f,{0,0});check(knob->isVisible(),"moderate zoom preserves modulation controls");
+    page->graphView().setView(.3f,{0,0});check(!knob->isVisible(),"minimal zoom removes subpixel controls immediately");
+    page->graphView().setView(1,{0,0});check(knob->isVisible(),"zoom restoration needs no graph edit");
+    auto disabled=*page->graph().findNode(id); disabled.enabled=false;
+    node->update(disabled,false);
+    check(knob->getAlpha()<.5f && hash(*node)!=beforeHover,"bypass dims controls and labels preview");
+    page->setVisible(false);const auto count=page->visualRefreshCount();const auto readCount=reads;
+    page->refreshVisualFeedback();
+    check(page->visualRefreshCount()==count && reads==readCount,"hidden NODES does no visual sampling or refresh");
+    page->setVisible(true);
+    // Diagnostic benchmark: warmed software snapshots (not compositor/GPU).
+    if(const char* folder=std::getenv("ORIGAMI_NODES_VISUAL_REPORT")) {
+        const FxEffectType effects[]{FxEffectType::Equalizer,FxEffectType::Filter,FxEffectType::Compressor,FxEffectType::Drive,FxEffectType::Spatial,FxEffectType::Gain};
+        page->setVisible(false);
+        const auto hiddenStart=std::chrono::steady_clock::now();
+        for(int i=0;i<10000;++i) page->refreshVisualFeedback();
+        std::cout<<"NODES_VISUAL hidden_tick_us="<<std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-hiddenStart).count()/10000.0<<"\n";
+        page->setVisible(true);
+        for(const int total:{5,20,60}) {
+            auto many=makeDefaultFxGraph();
+            for(int i=0;i<total;++i) many.addEffect(effects[i%6],{float((i%5)*240),float((i/5)*200)});
+            state.modulation.routes={};std::size_t routeIndex=0;
+            for(const auto& n:many.nodes()) if(const auto* d=findFxEffect(n.effect)) {
+                for(std::size_t j=0;j<d->parameterCount && routeIndex<state.modulation.routes.size();++j)
+                    if(d->parameters[j].quick && d->parameters[j].curve!=FxParameterCurve::Choice) {
+                        state.modulation.routes[routeIndex]={std::uint32_t(routeIndex+1),true,ModSource::Lfo1,fxParameterAddress(mainBusId,n.id,d->parameters[j].id),.4f,true};
+                        ++routeIndex;break;
+                    }
+            }
+            workspace.document(mainBusId).replace(many);page->syncFromModel();
+            for(const float zoom:{1.0f,.3f}) {
+                page->graphView().setView(zoom,{0,0});
+                auto warm=page->createComponentSnapshot(page->getLocalBounds());
+                const auto tickStart=std::chrono::steady_clock::now();
+                for(int i=0;i<1000;++i) page->refreshVisualFeedback();
+                const auto tickUs=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-tickStart).count()/1000.0;
+                const auto begin=std::chrono::steady_clock::now();
+                for(int frame=0;frame<12;++frame) {page->refreshVisualFeedback();auto image=page->createComponentSnapshot(page->getLocalBounds());}
+                const auto ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count()/12.0;
+                std::cout<<"NODES_VISUAL nodes="<<total<<" zoom="<<zoom<<" tick_us="<<tickUs<<" software_frame_ms="<<ms<<" cached_preview_bytes_max="<<total*192*52*4<<" plan_bytes="<<sizeof(CompiledModulation)<<"\n";
+                juce::File file(juce::String(folder)+"/nodes-"+juce::String(total)+"-"+juce::String(zoom,1)+".png");
+                juce::FileOutputStream out(file);juce::PNGImageFormat{}.writeImageToStream(warm,out);
+            }
+            if(total==20) {
+                page->selectNode(many.nodes()[2].id);
+                page->graphView().setView(1,{0,0});
+                const auto start=std::chrono::steady_clock::now();
+                for(int i=0;i<12;++i) {page->refreshVisualFeedback();auto image=page->createComponentSnapshot(page->getLocalBounds());}
+                std::cout<<"NODES_VISUAL selected_eq_frame_ms="<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/12.0<<"\n";
+            }
+        }
+    }
+    page->setLookAndFeel(nullptr);
+}
+
 void run() {
+    nodesVisualFeedbackAudit();
     fxPageAudit();
     fxGraphUxAudit();
     fxAudioPathAudit();
