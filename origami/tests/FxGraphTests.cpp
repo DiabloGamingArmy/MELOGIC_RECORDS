@@ -2633,32 +2633,60 @@ void nodeTelemetryTests() {
     const auto id=graph.addEffect(FxEffectType::Gain,{100,100});
     FxRenderer renderer;
     renderer.prepare(48000.0);
-    renderer.setTelemetryEnabled(true);
     check(renderer.sync(graph),"node telemetry graph compiles");
-    std::array<float,256> silentL{},silentR{};
-    renderer.process(silentL.data(),silentR.data(),int(silentL.size()));
+
+    const auto makeSignal=[] {
+        std::pair<std::array<float,256>,std::array<float,256>> signal;
+        for(std::size_t i=0;i<signal.first.size();++i) {
+            signal.first[i]=0.35f*std::sin(float(i)*0.07f);
+            signal.second[i]=0.2f*std::cos(float(i)*0.11f);
+        }
+        return signal;
+    };
+
+    // Telemetry is opt-in. A hidden NODES page must leave the renderer silent.
+    auto disabled=makeSignal();
+    const auto disabledOriginal=disabled;
+    renderer.process(disabled.first.data(),disabled.second.data(),int(disabled.first.size()));
     check(!renderer.consumeNodeTelemetry(id).valid,"hidden NODES leaves node telemetry unpublished");
+
+    // Enabling visualization publishes a stable-id stereo snapshot.
     renderer.setTelemetryEnabled(true);
-    std::array<float,256> left{},right{};
-    for(std::size_t i=0;i<left.size();++i) {
-        left[i]=0.35f*std::sin(float(i)*0.07f);
-        right[i]=0.2f*std::cos(float(i)*0.11f);
-    }
-    const auto originalL=left,originalR=right;
-    renderer.process(left.data(),right.data(),int(left.size()));
-    const auto beforeReadL=left,beforeReadR=right;
+    auto enabled=makeSignal();
+    renderer.process(enabled.first.data(),enabled.second.data(),int(enabled.first.size()));
+    const auto beforeRead=enabled;
     const auto snapshot=renderer.consumeNodeTelemetry(id);
     check(snapshot.valid && snapshot.node==id && snapshot.sequence>0,"node telemetry publishes stable-id snapshot");
     check(snapshot.peakLeft>0.0f && snapshot.peakRight>0.0f,"node telemetry publishes stereo activity");
-    check(left==beforeReadL && right==beforeReadR,"consuming telemetry cannot mutate rendered audio");
+    check(enabled==beforeRead,"consuming telemetry cannot mutate rendered audio");
+
+    // Peak meters are consume/reset, while the sample snapshot remains readable.
     const auto second=renderer.consumeNodeTelemetry(id);
-    check(second.valid && second.peakLeft==0.0f && second.peakRight==0.0f,"node peaks consume/reset while sample snapshot remains readable");
+    check(second.valid && second.sequence==snapshot.sequence
+          && second.peakLeft==0.0f && second.peakRight==0.0f,
+          "node peaks consume/reset while sample snapshot remains readable");
+
     auto missing=renderer.consumeNodeTelemetry(0xf00du);
     check(!missing.valid,"unknown node has no fabricated telemetry");
-    (void)originalL;(void)originalR;
+
+    // Turning telemetry back off freezes the published sequence. Rendering is
+    // observationally identical whether telemetry collection is enabled or not.
+    renderer.setTelemetryEnabled(false);
+    auto offAgain=makeSignal();
+    renderer.process(offAgain.first.data(),offAgain.second.data(),int(offAgain.first.size()));
+    const auto afterDisable=renderer.consumeNodeTelemetry(id);
+    check(afterDisable.valid && afterDisable.sequence==snapshot.sequence,
+          "disabled node telemetry does not publish a new snapshot");
+    check(disabledOriginal.first==enabled.first && disabledOriginal.second==enabled.second
+          && disabledOriginal.first==offAgain.first && disabledOriginal.second==offAgain.second,
+          "node telemetry on/off is bit-identical for rendered audio");
+
 #ifndef ORIGAMI_SANITIZED
+    renderer.setTelemetryEnabled(true);
+    auto allocationSignal=makeSignal();
     allocations=0;guardAllocations=true;
-    for(int i=0;i<64;++i) renderer.process(left.data(),right.data(),int(left.size()));
+    for(int i=0;i<64;++i)
+        renderer.process(allocationSignal.first.data(),allocationSignal.second.data(),int(allocationSignal.first.size()));
     guardAllocations=false;
     check(allocations.load()==0,"node telemetry publication allocates nothing on audio thread");
 #endif
