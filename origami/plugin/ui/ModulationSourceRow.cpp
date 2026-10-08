@@ -88,7 +88,7 @@ void paintModulationRouteTooltip(juce::Graphics& g,const juce::String& label,
 }
 
 ModulationSourceRow::ModulationSourceRow(ModSource source,const juce::String& title,const juce::String& componentName)
-    :juce::TextButton(title),source_(source) {
+    :SourceEntityButton(title),source_(source) {
     // "MOD SOURCE TAB" selects the source-card look in OrigamiLookAndFeel.
     setName(componentName);
 }
@@ -136,10 +136,8 @@ std::uint32_t ModulationSourceRow::routeAt(juce::Point<float> p) const noexcept 
 }
 
 void ModulationSourceRow::paintButton(juce::Graphics& g,bool over,bool down) {
-    juce::TextButton::paintButton(g,over,down);
+    SourceEntityButton::paintButton(g,over,down);
     const auto card=getLocalBounds().toFloat();
-    // Six-dot grip: every source card is draggable onto any knob, on any page.
-    paintDragGrip(g,card.withWidth(sourceEntityGripWidth+6.0f).withTrimmedLeft(4.0f).withHeight(std::min(card.getHeight(),18.0f)));
     if(routes_.empty()) return;
 
     const auto inner=card.reduced(4.0f,1.0f);

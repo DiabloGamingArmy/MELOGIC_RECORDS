@@ -6312,8 +6312,31 @@ void synthFilterCompletionUi() {
     const ModAddress resonance{ModDestination::SynthResonance,0,f};
     check(page && page->addParameterNode(resonance) && page->connectControl(ModSource::Lfo2,resonance).creatable(),"Nodes authors same per-voice filter destination");
     panel->syncFromModel();bool tagged=false;walk(*panel,[&](auto& c){if(auto* knob=dynamic_cast<juce::Slider*>(&c)) if(knob->getProperties().contains("mct.mod.itemId")) {check(int(knob->getProperties()["mct.mod.itemId"])==int(third),"knob assignment targets selected stable filter identity");tagged=true;}});check(tagged,"filter knob assignments tagged");
-    // Paint the actual panel for inspection; analytic response derives from DSP.
-    panel->setSize(700,280);juce::Image image(juce::Image::ARGB,700,280,true);juce::Graphics g(image);panel->paintEntireComponent(g,true);juce::File file("/tmp/origami-synth-filter-ui.png");file.deleteFile();if(auto out=file.createOutputStream()) {juce::PNGImageFormat png;png.writeImageToStream(image,*out);}
+    // The source-card chrome and all rail metrics are the modulation reference.
+    std::vector<ui::SourceEntityButton*> rows;juce::TextButton* add=nullptr;juce::TextButton* remove=nullptr;
+    walk(*panel,[&](auto& c){if(auto* row=dynamic_cast<ui::SourceEntityButton*>(&c)) if(row->isVisible()) rows.push_back(row);if(auto* b=dynamic_cast<juce::TextButton*>(&c)) {if(b->getButtonText()=="+") add=b;if(b->getButtonText()=="-") remove=b;}});
+    check(rows.size()==3 && add && remove,"filter rail uses shared source-card primitive and collection buttons");
+    rows[0]->onClick();check(panel->selectedFilter()==f && rows[0]->getToggleState() && !rows[1]->getToggleState(),"rail selection preserves stable FilterId");
+    juce::Slider* cutoff=nullptr;walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)) if(k->getName()=="CUTOFF") cutoff=k;});
+    cutoff->setValue(1300,juce::sendNotificationSync);check(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.cutoff==1300 && p.getUiInstrumentState().modulation.synthFilters.filters[1].values.cutoff==8000,"selected row edits its own working cutoff control");
+    rows[2]->onClick();
+    ui::ModulationSourceRow reference(ModSource::Lfo1,"FILTER 1","MOD SOURCE TAB LFO 1");reference.setLookAndFeel(&panel->getLookAndFeel());
+    for(bool selected:{false,true}) {
+        reference.setSize(100,ui::SourceEntityButton::baseHeight-ui::sourceRowGap);reference.setToggleState(selected,juce::dontSendNotification);
+        ui::SourceEntityButton filterRow("FILTER 1");filterRow.setName("MOD SOURCE TAB FILTER");filterRow.setLookAndFeel(&panel->getLookAndFeel());filterRow.setSize(reference.getWidth(),reference.getHeight());filterRow.setToggleState(selected,juce::dontSendNotification);
+        for(bool hover:{false,true}) {juce::Image a(juce::Image::ARGB,100,34,true),b(juce::Image::ARGB,100,34,true);juce::Graphics ga(a),gb(b);reference.paintButton(ga,hover,false);filterRow.paintButton(gb,hover,false);bool same=true;for(int y=0;y<34;++y) for(int x=0;x<100;++x) same &= a.getPixelAt(x,y)==b.getPixelAt(x,y);check(same,"filter/modulation chrome, typography, grip and selection/hover paint identically");}
+    }
+    const auto paintPanel=[&](int width,int height,const char* path) {
+        panel->setSize(width,height);const auto layout=ui::sourceRailLayout(panel->contentBounds());
+        check(panel->sourceRailBounds()==layout.rail && layout.rail.getWidth()==116,"persistent filter rail uses canonical Modulation width");
+        for(auto* row:rows) check(row->getWidth()==layout.list.getWidth() && row->getHeight()==ui::ModulationSourceRow::baseHeight-ui::sourceRowGap,"filter row geometry matches unrouted Modulation row");
+        bool contained=true;walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)) contained &= layout.editor.contains(k->getBounds());});check(contained && panel->responseBounds().getHeight()>30,"right editor contains knobs and a usable graph");
+        juce::Image image(juce::Image::ARGB,width,height,true);juce::Graphics g(image);panel->paintEntireComponent(g,true);
+        const auto response=panel->responseBounds();check(image.getPixelAt(response.getCentreX(),response.getBottom()-2)==ui::signalSourceColour(),"graph bottom edge uses current theme accent");
+        juce::File file(path);file.deleteFile();if(auto out=file.createOutputStream()) {juce::PNGImageFormat png;png.writeImageToStream(image,*out);}
+    };
+    paintPanel(662,355,"/tmp/origami-synth-filter-ui.png");paintPanel(532,300,"/tmp/origami-synth-filter-ui-compact.png");
+    const auto originalTheme=ui::gTheme;auto alternate=originalTheme;alternate.signal=juce::Colour(0xff40aaff);ui::setDeclarativeTheme(alternate);paintPanel(662,355,"/tmp/origami-synth-filter-ui-blue.png");ui::setDeclarativeTheme(originalTheme);
     juce::MemoryBlock saved;p.getStateInformation(saved);OrigamiAudioProcessor restored;restored.setStateInformation(saved.getData(),int(saved.getSize()));
     auto decoded=restored.getUiInstrumentState();check(decoded.modulation.synthFilters.filters[0].next==third && decoded.modulation.routes[0].destination.itemId==f,"plugin binary wrapper restores serial chain and modulation");
     check(restored.getUiControlLayout().find(nodes::parameterKey(resonance))!=nullptr,"placed Synth parameter node survives wrapper restore");
@@ -6321,6 +6344,9 @@ void synthFilterCompletionUi() {
     page->syncFromModel();check(!p.getUiControlLayout().find(nodes::parameterKey(resonance)) && !page->controlGraph().find(nodes::parameterKey(resonance)),"deleted filter leaves no placed Nodes destination or cable");
     check(p.removeUiBus(bus),"bus deletion handles Synth filter output");check(validInstrumentState(p.getUiInstrumentState()),"no dangling Synth bus destination");
     check(p.removeUiOscillator(2),"oscillator deletion preserves valid filter model");
+    for(int n=2;n<8;++n) {add->onClick();check(panel->selectedFilter()!=0,"Add creates and selects a stable filter");}
+    check(!add->isEnabled() && add->getTooltip().contains("8") && panel->addFilter()==0,"eight-filter capacity disables Add truthfully");
+    const auto selected=panel->selectedFilter();remove->onClick();check(synthFilterSlot(p.getUiInstrumentState().modulation.synthFilters,selected)==maxSynthFilters && add->isEnabled() && panel->selectedFilter()!=selected,"Remove splices selected filter and leaves valid selection/capacity");
     check(p.loadUiInitPreset(),"Init loads after explicit filter patch");for(const auto& filter:p.getUiInstrumentState().modulation.synthFilters.filters) check(!filter.id,"Init contains zero Synth instances");
 }
 

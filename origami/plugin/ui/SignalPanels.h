@@ -4,6 +4,7 @@
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 #pragma once
 #include "OrigamiStyle.h"
+#include "SourceEntity.h"
 #include "ModulationBindings.h"
 #include "core/ParameterRegistry.h"
 namespace mct::origami::ui {
@@ -22,6 +23,8 @@ public:
     bool removeFilter(SynthFilterId);
     bool dropFilterOnOscillator(SynthFilterId,OscillatorModuleId);
     bool dropFilterAfter(SynthFilterId,SynthFilterId);
+    juce::Rectangle<int> sourceRailBounds() const noexcept {return sourceRailLayout(contentBounds()).rail;}
+    juce::Rectangle<int> responseBounds() const noexcept;
     SynthFilterId selectedFilter() const noexcept {return selectedId_;}
     bool isInterestedInDragSource(const SourceDetails&) override;
     void itemDragEnter(const SourceDetails&) override;
@@ -39,7 +42,7 @@ private:
     InstrumentState state_{};
     SynthFilterId selectedId_=0;
     bool legacy_=false,dragStarted_=false,dropOver_=false,syncing_=false;
-    std::array<juce::TextButton,maxSynthFilters+1> tabs_{};
+    std::array<SourceEntityButton,maxSynthFilters+1> tabs_{};
     std::array<SynthFilterId,maxSynthFilters+1> tabIds_{};
     std::size_t tabCount_=0;
     std::array<juce::Slider,5> knobs_{};

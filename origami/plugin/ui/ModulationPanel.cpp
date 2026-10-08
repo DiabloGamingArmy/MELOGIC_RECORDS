@@ -1325,7 +1325,6 @@ void ModulationPanel::layoutSourceRail() {
     // the clip while preserving the rail width established by the surrounding UI.
     const int contentWidth=juce::jmax(1,sourceViewport_.getWidth());
     // Small breathing gap below the fixed SOURCE header before the first row.
-    constexpr int sourceListTopGap=3;
     int y=sourceListTopGap;
     for(std::size_t i=0;i<tabs_.size();++i) {
         auto& row=*tabs_[i];
@@ -1335,7 +1334,7 @@ void ModulationPanel::layoutSourceRail() {
             continue;
         }
         const int h=row.preferredHeight();
-        row.setBounds(0,y,contentWidth,h-2);
+        row.setBounds(0,y,contentWidth,h-sourceRowGap);
         y+=h;
     }
     sourceContent_.setSize(contentWidth,juce::jmax(y,sourceViewport_.getHeight()));
@@ -1343,40 +1342,12 @@ void ModulationPanel::layoutSourceRail() {
 }
 
 void ModulationPanel::resized() {
-    auto body=contentBounds();
-    // Keep the MODULATION title band visually isolated from all working surfaces.
-    constexpr int panelContentTopGap=4;
-    body.removeFromTop(panelContentTopGap);
-    // Keep the editor's right boundary inside the panel so its stroke remains visible.
-    constexpr int editorRightInset=4;
-    body.removeFromRight(editorRightInset);
-    performanceCurveCanvas_={};
-    sequenceCanvas_={};
-
-    // Mixed modulation-source collection. ENV + LFO + generator sources share
-    // one vertical rail so the editor area always represents ONE selected source.
-    constexpr int railWidth=116;
-    sourceRail_=body.removeFromLeft(railWidth);
-    body.removeFromLeft(6);
-
-    auto rail=sourceRail_.reduced(4,5);
-    auto collectionControls=rail.removeFromBottom(24);
-    sourceRemove_.setBounds(collectionControls.removeFromLeft(
-        (collectionControls.getWidth()-3)/2));
-    collectionControls.removeFromLeft(3);
-    sourceAdd_.setBounds(collectionControls);
-    rail.removeFromBottom(5);
-
-    // SOURCE is a fixed rail header, identical in structure to OSC CHAIN:
-    // reserve its geometry outside the scrolling viewport so the first source
-    // can never scroll underneath it.
-    constexpr int sourceHeaderHeight=18;
-    rail.removeFromTop(sourceHeaderHeight);
-
-    // V32.2: source cards no longer shrink to fit the rail. The list is a real
-    // scrolling collection with stable item geometry. A route-bearing item gets
-    // additional height only for its divider + magnitude-circle chamber.
-    sourceViewport_.setBounds(rail);
+    const auto railLayout=sourceRailLayout(contentBounds());
+    auto body=railLayout.editor;
+    performanceCurveCanvas_={};sequenceCanvas_={};
+    sourceRail_=railLayout.rail;
+    sourceRemove_.setBounds(railLayout.remove);sourceAdd_.setBounds(railLayout.add);
+    sourceViewport_.setBounds(railLayout.list);
     layoutSourceRail();
 
     const bool lfoEditor=selected_>=3 && selected_<=6;
@@ -1789,15 +1760,7 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     paintSourceHistoryBackgrounds(g);
     // Match the fixed SOURCE header to the exact horizontal inset used by the
     // scrolling source viewport below it, rather than the full structural rail.
-    auto sourceTitle=rail.reduced(4,5).removeFromTop(18);
-    // Match the list well exactly: the header begins at the scroll viewport's
-    // top edge and uses the same 2.5 px corner radius instead of a square fill.
-    auto sourceTitleBox=sourceTitle.toFloat().reduced(.5f);
-    g.setColour(juce::Colours::black);
-    g.fillRoundedRectangle(sourceTitleBox,2.5f);
-    g.setColour(Palette::borderSoft());
-    g.drawRoundedRectangle(sourceTitleBox,2.5f,1.0f);
-    text(g,"SOURCE",sourceTitle,Type::label,Palette::secondary(),juce::Justification::centred);
+    paintSourceRailHeader(g,sourceRailLayout(contentBounds()).header);
 
     body.removeFromBottom(selected_>=3 && selected_<=6 ? lfoStripHeight+4 : 66);auto caption=body.removeFromTop(17);
     juce::String title;
