@@ -75,6 +75,7 @@ private:
                    float modWheel,float aftertouch,const OscillatorRenderPlan&,const OscillatorProcessPlans&,bool observe) noexcept;
 public:
     VoiceInfo info() const noexcept;
+    void setCombPool(SynthCombPool* pool) noexcept {combPool_=pool;}
     void setSlot(std::uint32_t slot) noexcept { slot_=slot; }
     void restartLifecycles() noexcept { lifecycle_=0; } // engine reset: renders repeat
     bool active() const noexcept { return active_; }
@@ -92,6 +93,7 @@ public:
     const AuxSamples& aux() const noexcept { return aux_; }
 private:
     AuxSamples aux_{};
+    SynthCombPool* combPool_=nullptr;
     std::array<SynthFilterRuntime,maxSynthFilters> synthFilterRuntime_{};
     float filterSmoothing_=1;
     dsp::EnvelopeSettings ampSettings_{};   // ENV 1 settings of the current note (graph triggers reuse them)

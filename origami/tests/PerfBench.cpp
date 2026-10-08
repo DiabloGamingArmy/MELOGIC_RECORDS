@@ -325,6 +325,10 @@ std::vector<Scenario> matrix() {
             if(previous) insertSynthFilterAfter(mod,id,previous);else insertSynthFilter(mod,state.oscillators,id,state.oscillators[0].id);previous=id;
         }p.setUiModulationState(mod);
     }});
+    for(double rate:{48000.,192000.}) for(int voices:{1,8,16}) for(int mode:{0,1,2,4,8}) m.push_back({"Comb audit "+std::string(mode==0?"zero filters":mode==1?"one ordinary":std::to_string(mode==2?1:mode)+" Comb")+", "+std::to_string(voices)+" voices",rate,256,voices,[mode](OrigamiAudioProcessor& p){
+        oscillators(p,1);auto state=p.getUiInstrumentState();auto mod=state.modulation;SynthFilterId previous=0;
+        for(int i=0;i<(mode==2?1:mode);++i) {const auto id=addSynthFilter(mod);auto& f=mod.synthFilters.filters[std::size_t(i)];f.type=mode==1?dsp::FilterType::LowPass:dsp::FilterType::Comb;f.values={370,.85f,0,1,0,0};if(previous) insertSynthFilterAfter(mod,id,previous);else insertSynthFilter(mod,state.oscillators,id,state.oscillators[0].id);previous=id;}p.setUiModulationState(mod);
+    }});
     const auto typical=[](OrigamiAudioProcessor& p){ oscillators(p,2,4); chain(p,false); routes(p,8,false); };
     m.push_back({"idle (no notes)",48000,256,0,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});
     for(int v:{1,8,16}) m.push_back({"1 osc, "+std::to_string(v)+" voices",48000,256,v,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});
@@ -484,6 +488,7 @@ void browseStress() {
 
 // B40 memory budget: the realtime objects' fixed footprints.
 void memoryReport() {
+    std::printf("Exact bytes: Voice=%zu Engine=%zu Processor=%zu\n",sizeof(Voice),sizeof(OrigamiEngine),sizeof(OrigamiAudioProcessor));
     const auto kb=[](std::size_t b){ return double(b)/1024.0; };
     std::printf("OrigamiAudioProcessor  %10.1f KB\n",kb(sizeof(OrigamiAudioProcessor)));
     std::printf("  OrigamiEngine        %10.1f KB\n",kb(sizeof(OrigamiEngine)));
@@ -496,6 +501,7 @@ void memoryReport() {
     std::printf("WavetableOscillator    %10zu B   SpectralReadHint %zu B\n",sizeof(dsp::WavetableOscillator),sizeof(dsp::SpectralReadHint));
     std::printf("Lfo                    %10zu B   LowPassFilter %zu B   Envelope %zu B\n",sizeof(Lfo),sizeof(dsp::LowPassFilter),sizeof(dsp::Envelope));
     std::printf("OscillatorModuleState  %10zu B   InstrumentState %.1f KB\n",sizeof(OscillatorModuleState),kb(sizeof(InstrumentState)));
+    std::printf("SynthCombPool metadata %zu B, CombState %zu B, ring samples/channel @48k=2404; lazy bytes/slot=307712, max16x8=2461696\n",sizeof(SynthCombPool),sizeof(dsp::CombState));
     std::printf("SynthFilterRuntime %zu B (x8 per voice), SynthFilterPlan %zu B, SynthFilterCollection %zu B\n",sizeof(SynthFilterRuntime),sizeof(SynthFilterPlan),sizeof(SynthFilterCollection));
     const auto table=dsp::Wavetable::builtIns(); std::size_t samples=0;
     for(const auto& f:table.frames) for(const auto& b:f.bands) samples+=b.samples.size();

@@ -1,0 +1,17 @@
+Exact bytes: Voice=136064 Engine=2571008 Processor=2852096
+OrigamiAudioProcessor      2785.2 KB
+  OrigamiEngine            2510.8 KB
+    Voice                   132.9 KB  (x16 = 2126.0 KB)
+    CompiledModulation      103.7 KB
+    ModulationState          25.1 KB
+    ModulationFrame          11.9 KB  (stereo part 640 B)
+    OscillatorRenderPlan      7.5 KB
+  fx::FxEnvironment           0.2 KB
+WavetableOscillator           208 B   SpectralReadHint 64 B
+Lfo                           144 B   LowPassFilter 16 B   Envelope 72 B
+OscillatorModuleState         632 B   InstrumentState 35.6 KB
+SynthCombPool metadata 152 B, CombState 48 B, ring samples/channel @48k=2404; lazy bytes/slot=307712, max16x8=2461696
+SynthFilterRuntime 272 B (x8 per voice), SynthFilterPlan 1444 B, SynthFilterCollection 5124 B
+built-in table data         320.0 KB  (4 frames x 10 bands x 2048)
+256-frame custom table    20480.0 KB  (x10 bands x 2048, per oscillator)
+spectral cache (global)    4178.0 KB  (512 slots x 2048 floats + keys)

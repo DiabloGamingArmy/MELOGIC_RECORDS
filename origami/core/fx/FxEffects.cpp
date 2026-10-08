@@ -9,6 +9,7 @@
 // block boundaries.
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxFilter.h"
+#include "core/dsp/Comb.h"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -477,13 +478,14 @@ class CombFx final : public FxProcessor {
 public:
     void prepare(double sampleRate) override {
         sampleRate_=sampleRate;
-        for(auto& l:lines_) l.prepare(static_cast<std::size_t>(sampleRate/15.0));
+        std::size_t size=1;while(size<std::size_t(sampleRate/15.0)+4) size<<=1;
+        for(int c=0;c<2;++c) {storage_[c].assign(size,0);state_[c].bind(storage_[c].data(),size);}
         period_.setTime(sampleRate,0.05);
         for(auto* s:{&feedback_,&mix_,&damp_}) s->setTime(sampleRate,0.02);
         reset();
         primed_=false;
     }
-    void reset() noexcept override { for(auto& l:lines_) l.reset(); lp_[0]=lp_[1]=0.0f; }
+    void reset() noexcept override {for(auto& state:state_) state.reset();}
     void process(float* left,float* right,int samples,const float* p) noexcept override {
         period_.target=float(sampleRate_)/param(combParameters,0,p);
         feedback_.target=param(combParameters,1,p);
@@ -493,21 +495,14 @@ public:
         float* channels[2]{left,right};
         for(int i=0;i<samples;++i) {
             const float d=period_.next(),f=feedback_.next(),m=mix_.next(),a=damp_.next();
-            const float normalize=std::sqrt(1.0f-std::abs(f));
-            for(int c=0;c<2;++c) {
-                const float x=sane(channels[c][i]);
-                lp_[c]+=a*(lines_[c].read(d)-lp_[c]);
-                const float y=softLimit(x+f*lp_[c]);
-                lines_[c].push(y);
-                channels[c][i]=x+m*(y*normalize-x);
-            }
+            const dsp::CombCoefficients coefficients{d,f,std::sqrt(1.f-std::abs(f)),a};
+            for(int c=0;c<2;++c) {const float x=sane(channels[c][i]);channels[c][i]=x+m*(state_[c].next(x,coefficients)-x);}
         }
     }
 private:
     double sampleRate_=48000.0;
-    DelayLine lines_[2];
+    std::vector<float> storage_[2];dsp::CombState state_[2];
     Smoothed period_,feedback_,mix_,damp_;
-    float lp_[2]{};
     bool primed_=false;
 };
 

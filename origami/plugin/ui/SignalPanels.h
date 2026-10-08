@@ -51,7 +51,7 @@ private:
     void mouseExit(const juce::MouseEvent&) override;
     void editValues();
     bool editResponseParameters(juce::Point<float>,float verticalValue);
-    bool peakHandle() const;
+    dsp::FilterHandleVertical handleVertical() const;
     SynthFilterValues responseValues(const RuntimeVisualizationSnapshot&) const;
     void showOutputMenu();
     bool commit(ModulationState);

@@ -42,8 +42,8 @@ bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, uns
     dezipModules_=hostModules_; dezipActive_=0;
     rebuildHostWavetables();
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
-    for (auto& voice : voices_) voice.prepare(sampleRate);
-    for (std::size_t v=0;v<voices_.size();++v) voices_[v].setSlot(std::uint32_t(v));
+    synthCombPool_.prepare(sampleRate);if(!synthCombPool_.ensure(modulation_.synthFilters)) return false;
+    for(std::size_t v=0;v<voices_.size();++v) {voices_[v].setSlot(std::uint32_t(v));voices_[v].setCombPool(&synthCombPool_);voices_[v].prepare(sampleRate);}
     prepared_ = true; reset(); return true;
 }
 bool OrigamiEngine::installWavetable(dsp::Wavetable table) {
@@ -210,6 +210,7 @@ InstrumentState OrigamiEngine::instrumentState() const noexcept {
 }
 bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcept {
     if(!validInstrumentState(state)) return false;
+    if(!synthCombPool_.ready(state.modulation.synthFilters)) return false;
     modulation_=state.modulation;publishModEnvelopeTargets(modulation_);
     performance_=state.performance;
     buses_=state.buses;
@@ -234,7 +235,7 @@ bool OrigamiEngine::setBusState(const BusState& state) noexcept {
 }
 bool OrigamiEngine::setModulationState(const ModulationState& state) noexcept {
     auto candidate=instrumentState();candidate.modulation=state;
-    if(!validInstrumentState(candidate)) return false;
+    if(!validInstrumentState(candidate) || !synthCombPool_.ensure(state.synthFilters)) return false;
     modulation_=state;publishModEnvelopeTargets(state);publishModulation();return true;
 }
 void OrigamiEngine::publishModulation() noexcept {

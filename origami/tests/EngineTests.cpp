@@ -1393,6 +1393,36 @@ void oscillatorRouteMixerAudit() {
     auto s=smooth->instrumentState();auto routing=s.oscillators[0];routing.busRoutes[0].level=0;check(setOscillatorOutputRouting(s.modulation,routing) && smooth->setModulationState(s.modulation),"zero gain publishes");check(control->process(x,2,256) && smooth->process(y,2,256),"smoothed gain renders");for(int n=0;n<256;++n) check(std::abs(b[n]-a[n]*std::max(0.f,1-float(n+1)/240))<3e-6f,"bus gain follows continuous five millisecond ramp");
 }
 
+void synthCombStorageLifecycleAudit() {
+    auto engine=std::make_unique<OrigamiEngine>();check(engine->prepare(48000,256,2),"Comb pool prepares without a delay bank");check(engine->synthCombStorageBytes()==0,"zero Comb uses zero heap delay bytes");
+    auto state=engine->instrumentState();SynthFilterId previous=0;
+    for(int i=0;i<8;++i) {const auto id=addSynthFilter(state.modulation);auto& f=state.modulation.synthFilters.filters[i];f.type=dsp::FilterType::Comb;f.values={370,.85f,0,1,1,0};if(previous) insertSynthFilterAfter(state.modulation,id,previous);else insertSynthFilter(state.modulation,state.oscillators,id,1);previous=id;
+        check(engine->setModulationState(state.modulation),"Comb writer allocates each newly used slot before publication");check(engine->synthCombStorageBytes()==std::size_t(i+1)*307712,"Comb banks grow by exact bounded per-slot budget");}
+    std::array<float,256> left{},right{};float* output[]{left.data(),right.data()};allocations.store(0);frees.store(0);guardAllocations.store(true);
+    bool okay=true;for(int i=0;i<32;++i) {okay=engine->noteOn(48+i,.1f) && okay;okay=engine->process(output,2,256) && okay;}const auto tracked=engine->runtimeVisualizationSnapshot();const bool tracking=std::abs(tracked.synthFilters[0].cutoff-370.f*std::pow(2.f,19.f/12.f))<1.f;engine->allNotesOff();for(int i=0;i<32;++i) okay=engine->process(output,2,256) && okay;engine->emergencyResetRuntime();okay=engine->process(output,2,256) && okay;guardAllocations.store(false);
+    check(tracking,"Comb note keytracking reaches actual effective delay-frequency telemetry");check(okay && !engine->activeVoiceCount(),"maximum Comb bank voice steals, releases and Panic are deterministic");
+#ifndef ORIGAMI_SANITIZED
+    check(!allocations.load() && !frees.load(),"128 stereo Comb stages lifecycle allocates/frees nothing on audio");
+#endif
+    for(float sample:left) check(sample==0,"Comb Panic clears all tails exactly");
+    check(engine->synthCombStorageBytes()==2461696,"Panic retains bounded banks without freeing them");
+    for(int pass=0;pass<3;++pass) for(const auto& info:dsp::filterTypes) {
+        for(auto& f:state.modulation.synthFilters.filters) f.type=info.id;
+        check(engine->setModulationState(state.modulation),"rapid canonical type switches preserve topology and identities");allocations.store(0);frees.store(0);guardAllocations.store(true);engine->noteOn(60,.1f);const bool rendered=engine->process(output,2,256);guardAllocations.store(false);check(rendered,"rapid all-type adoption renders finite initialized state");
+#ifndef ORIGAMI_SANITIZED
+        check(!allocations.load() && !frees.load(),"type adoption never allocates or frees delay storage on audio");
+#endif
+        for(float value:left) check(std::isfinite(value) && std::abs(value)<8,"type switches do not explode");
+    }
+    for(auto& f:state.modulation.synthFilters.filters) f.type=dsp::FilterType::LowPass;
+    check(engine->setModulationState(state.modulation) && engine->prepare(48000,256,2) && engine->synthCombStorageBytes()==0,"stopped reprepare releases unused Comb banks");
+    std::vector<float> l(2404),r(2404);SynthFilterRuntime runtime;runtime.adopt(1,dsp::FilterType::Comb);runtime.comb[0].bind(l.data(),l.size());runtime.comb[1].bind(r.data(),r.size());runtime.combCoefficients=dsp::combDesign(48000,370,.9f);
+    for(int i=0;i<10000;++i) {runtime.process(i==0?.1f:0.f,{},0,1,false);check(runtime.process(0,{},0,1,true)==0,"stereo Comb histories stay independent");}
+    for(int n=0;n<100000;++n) runtime.process(0,{},0,1,false);check(runtime.quiet(),"Comb silence naturally drains the damped feedback tail");
+    runtime.comb[0].lowpass=std::numeric_limits<float>::quiet_NaN();check(std::isfinite(runtime.process(0,{},0,1,false)),"Comb invalid recursive state recovers to finite output");
+    runtime.adopt(2,dsp::FilterType::Comb);for(int i=0;i<3000;++i) check(runtime.process(0,{},0,1,false)==0,"new identity/retrigger cannot inherit a Comb tail");
+}
+
 void multimodeSynthLifecycleAudit() {
     const auto make=[](const ModulationState& mod) {auto engine=std::make_unique<OrigamiEngine>();check(engine->prepare(48000,256,2) && engine->setModulationState(mod),"multimode engine prepares");engine->setMasterAfterFx(true);return engine;};
     for(const auto& info:dsp::filterTypes) if(info.synth) {
@@ -1408,7 +1438,7 @@ void multimodeSynthLifecycleAudit() {
 #ifndef ORIGAMI_SANITIZED
         check(!allocations.load() && !frees.load(),"every type adoption/render/Panic has zero allocations and frees");
 #endif
-        mod.synthFilters.filters[0].type=info.id==dsp::FilterType::HighShelf?dsp::FilterType::LowPass:static_cast<dsp::FilterType>(int(info.id)+1);check(poly->setModulationState(mod),"held voices publish bounded type change");poly->noteOn(60,.1f);allocations.store(0);frees.store(0);guardAllocations.store(true);const bool changed=poly->process(output,2,256);guardAllocations.store(false);check(changed,"held type change adopts independent reset state");
+        mod.synthFilters.filters[0].type=info.id==dsp::FilterType::Comb?dsp::FilterType::LowPass:static_cast<dsp::FilterType>(int(info.id)+1);check(poly->setModulationState(mod),"held voices publish bounded type change");poly->noteOn(60,.1f);allocations.store(0);frees.store(0);guardAllocations.store(true);const bool changed=poly->process(output,2,256);guardAllocations.store(false);check(changed,"held type change adopts independent reset state");
 #ifndef ORIGAMI_SANITIZED
         check(!allocations.load() && !frees.load(),"type switching has no callback allocation or free");
 #endif
@@ -1477,7 +1507,7 @@ int main() {
     // test runner cannot overflow before it reaches its first diagnostic.
     // Production engine ownership already follows this pattern.
     try {
-        filter_response_audit::run(check);multimodeSynthLifecycleAudit();oscillatorRouteMixerAudit();synthFilterRoutingAudit();
+        filter_response_audit::run(check);synthCombStorageLifecycleAudit();multimodeSynthLifecycleAudit();oscillatorRouteMixerAudit();synthFilterRoutingAudit();
         correctiveSpectralPreview();
         sourceInstanceRealtimeAudit();
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();

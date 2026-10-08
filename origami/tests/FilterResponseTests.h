@@ -50,7 +50,7 @@ template<class Check> void run(Check check) {
         }
     }
     std::cout<<"[PEAK response] 360 Synth/Nodes probe pairs; worst Synth error "<<peakWorst<<" dB\n";
-    for(const auto& info:dsp::filterTypes) if(info.synth) for(double rate:{44100.,48000.,96000.,192000.}) {
+    for(const auto& info:dsp::filterTypes) if(info.synth && info.id!=dsp::FilterType::Comb) for(double rate:{44100.,48000.,96000.,192000.}) {
         for(float cutoff:{20.f,100.f,500.f,1000.f,5000.f,10000.f,20000.f}) for(float res:{0.f,.1f,.6f,1.f}) for(float gain:info.gain?std::vector<float>{-24,0,24}:std::vector<float>{0}) measure(info.id,rate,cutoff,res,gain,1);
         for(float mix:{0.f,.35f,1.f}) measure(info.id,rate,1000,.1f,info.gain?6.f:0.f,mix);
         for(float cutoff:{20.f,20000.f}) for(float res:{0.f,1.f}) for(float gain:info.gain?std::vector<float>{-24,24}:std::vector<float>{0}) {
@@ -65,6 +65,24 @@ template<class Check> void run(Check check) {
             const auto c=fx::svfDesign(info.id,cutoff,.85,info.gain?6:0,rate);fx::SvfState state;const auto p=sine(rate,std::min(double(cutoff)*ratio,rate*.47),cutoff,[&](float x){return state.process(x,c);});const double expected=fx::svfMagnitude(c,p.hz,rate);if(expected>1e-5 && std::abs(20*std::log10(p.magnitude/expected))>=.02) std::cout<<"FX discrepancy "<<info.name<<" fs="<<rate<<" cutoff="<<cutoff<<" hz="<<p.hz<<" measured="<<p.magnitude<<" analytic="<<expected<<" db="<<20*std::log10(p.magnitude/expected)<<std::endl;check(expected>1e-5?std::abs(20*std::log10(p.magnitude/expected))<.02:std::abs(p.magnitude-expected)<1e-4,"Nodes SVF shares correct transfer provider for its own coefficients");
         }
     }
+    std::ofstream combCsv("/tmp/origami-comb-response.csv");combCsv<<"rate,frequency,resonance,mix,probe,measured_db,analytic_db,error_db\n";double combWorst=0;unsigned combProbes=0;
+    for(double rate:{44100.,48000.,96000.,192000.}) for(float frequency:{40.f,370.f,2000.f}) for(float res:{0.f,.5f,1.f}) for(float mix:{0.f,.5f,1.f}) {
+        const auto c=dsp::combDesign(rate,frequency,dsp::combFeedback(res));
+        for(double requested:{double(frequency)*.5,double(frequency),double(frequency)*1.5,rate*.43}) {
+            std::vector<float> storage(std::size_t(std::ceil(rate/20))+4);SynthFilterRuntime runtime;runtime.adopt(1,dsp::FilterType::Comb);runtime.comb[0].bind(storage.data(),storage.size());runtime.combCoefficients=c;
+            const auto measured=sine(rate,requested,frequency*.2,[&](float x){return runtime.process(x,{},0,mix,false);},128);
+            const double expected=dsp::filterResponseMagnitude(dsp::FilterType::Comb,{},frequency,res,0,measured.hz,rate,mix),error=std::abs(20*std::log10(measured.magnitude/expected));combWorst=std::max(combWorst,error);++combProbes;
+            check(std::isfinite(measured.magnitude) && error<.03,"canonical Comb DSP agrees with fractional-delay/damping/coherent-Mix response");
+            combCsv<<rate<<','<<frequency<<','<<res<<','<<mix<<','<<measured.hz<<','<<20*std::log10(measured.magnitude)<<','<<20*std::log10(expected)<<','<<error<<'\n';
+        }
+    }
+    // Golden recurrence from pre-refactor CombFx, independent of shared kernel.
+    {const auto c=dsp::combDesign(48000,370,.8f);std::vector<float> old(4096),data(2404);dsp::CombState state;state.bind(data.data(),data.size());std::size_t write=0;float lp=0;
+        for(int n=0;n<20000;++n) {const float x=n%97==0?.02f:0.f;const auto whole=std::size_t(c.period);const float fraction=c.period-whole,a=old[(write-whole)&4095],b=old[(write-whole-1)&4095];lp+=c.damping*(a+(b-a)*fraction-lp);const float sum=x+c.feedback*lp,abs=std::abs(sum),y=abs<=1?sum:std::copysign(1.f+std::tanh(abs-1),sum);old[write]=y;write=(write+1)&4095;check(state.next(x,c)==y*c.normalize,"extracted Comb kernel matches original Nodes recurrence exactly");}
+        state.reset();for(int n=0;n<5000;++n) check(state.next(0,c)==0,"logical Comb reset silences all retained delay memory");
+        check(std::isfinite(state.next(std::numeric_limits<float>::quiet_NaN(),c)),"Comb input finite protection");
+    }
+    std::cout<<"[Comb response] "<<combProbes<<" measured probes, worst error "<<combWorst<<" dB\n";
     std::ofstream sweep("/tmp/origami-filter-cutoff-sweep.csv");sweep<<"rate,authored,effective_transition,graph_x,endpoint_db\n";
     for(double rate:{44100.,48000.,96000.,192000.}) {dsp::LowPassCoefficientTable table;table.prepare(rate);const dsp::FilterResponseAxis axis{rate};double previous=0,previousX=-1;
         for(float cutoff:{20.f,50.f,100.f,200.f,500.f,1000.f,2000.f,5000.f,10000.f,15000.f,20000.f}) {

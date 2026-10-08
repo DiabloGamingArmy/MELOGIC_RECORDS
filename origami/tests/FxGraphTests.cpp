@@ -2624,8 +2624,9 @@ void consolidationTests() {
     static_assert(sizeof(CompiledModulation::OperatorState)<=2048,"per-voice operator state");
     // v37 typed sends add 4 KiB/voice (two fixed oscillator snapshots).
     static_assert(sizeof(Voice)<=133*1024,"voice footprint including source pool and sixteen typed output sends");
-    // Measured 2496.6 KiB: fixed voice snapshots, topology plans and mailboxes.
-    static_assert(sizeof(OrigamiEngine)<=2504*1024,"engine footprint including bounded typed routing and source pools");
+    // Comb adds non-owning state only (~14 KiB/engine); delay banks are lazy,
+    // writer-owned and bounded separately, never embedded in Voice.
+    static_assert(sizeof(OrigamiEngine)<=2512*1024,"engine footprint including bounded typed routing and source pools");
     check(true,"memory gates hold (compile-time)");
 }
 

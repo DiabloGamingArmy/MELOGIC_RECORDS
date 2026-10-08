@@ -6,6 +6,7 @@
 #include <complex>
 #include "FilterTypes.h"
 #include "FilterResponse.h"
+#include "Comb.h"
 #include "FastMath.h"
 namespace mct::origami::dsp {
 // Topology-preserving state variable low-pass; shared coefficients, per-voice state.
@@ -37,7 +38,7 @@ inline FilterCoefficients filterDesign(FilterType type,const LowPassCoefficients
     case FilterType::Bell:k/=A;m0=1;m1=k*(A*A-1);m2=0;break;
     case FilterType::LowShelf:g/=std::sqrt(A);m0=1;m1=k*(A-1);m2=A*A-1;break;
     case FilterType::HighShelf:g*=std::sqrt(A);m0=A*A;m1=k*(1-A)*A;m2=1-A*A;break;
-    case FilterType::Comb:break; // unavailable in Synth; validated before publication
+    case FilterType::Comb:break; // Comb dispatches its shared fractional-delay kernel
     }
     return {{g,type==FilterType::LowPass?base.a1:1/(1+g*(g+k))},m0,m1,m2};
 }
@@ -46,6 +47,9 @@ inline double filterMagnitude(const FilterCoefficients& c,double hz,double rate,
     return std::abs((1-mix)+mix*svfTransfer(i.g,k,c.m0,c.m1,c.m2,hz,rate));
 }
 
+inline double filterResponseMagnitude(FilterType type,const LowPassCoefficients& base,float cutoff,float resonance,float gain,double hz,double rate,double mix=1) noexcept {
+    return type==FilterType::Comb?combMagnitude(combDesign(rate,cutoff,combFeedback(resonance)),hz,rate,mix):filterMagnitude(filterDesign(type,base,gain),hz,rate,mix);
+}
 class LowPassCoefficientTable {
 public:
     static constexpr std::size_t size=4097;

@@ -150,6 +150,7 @@ void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     if(!(highResolutionTicksPerSecond_>0.0)) highResolutionTicksPerSecond_=1.0;
     renderBudget_.reset();
     prepared_ = engine_.prepare(sampleRate_, static_cast<std::size_t>(juce::jmax(1, samplesPerBlock)), 2u);
+    prepared_=prepared_ && engine_.prepareSynthFilterStorage(getUiInstrumentState().modulation.synthFilters);
     {
         // Audio is stopped here: effect memory is (re)allocated for this rate.
         const juce::ScopedLock lock(fxCompileLock_);
@@ -949,6 +950,7 @@ bool OrigamiAudioProcessor::restoreState(const void* data, int size) {
 
     {
     const juce::ScopedLock lock(stateLock_);
+    if(!engine_.prepareSynthFilterStorage(state.modulation.synthFilters)) return false;
     uiInstrumentState_=state;
     bumpUiModelRevision();
     uiOscillatorRevision_.fetch_add(1,std::memory_order_release);

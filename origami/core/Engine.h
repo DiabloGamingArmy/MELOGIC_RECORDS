@@ -74,6 +74,8 @@ public:
     OrigamiEngine& operator=(const OrigamiEngine&)=delete;
     bool applyPatchState(const ParameterValues& values) noexcept; // exclusive, resets voices
     InstrumentState instrumentState() const noexcept; // serialize writers externally
+    bool prepareSynthFilterStorage(const SynthFilterCollection& filters) noexcept {return synthCombPool_.ensure(filters);} // writer only, before restore publication
+    std::size_t synthCombStorageBytes() const noexcept {return synthCombPool_.bytes();}
     bool restoreInstrumentState(const InstrumentState&) noexcept; // exclusive, transactional
     // mct-origami-fx-graph-dsp-bus-routing-p02: canonical bus list (Mixer-owned later).
     bool setBusState(const BusState&) noexcept;
@@ -212,6 +214,7 @@ private:
     float globalSwingBase_=0.0f,currentSwing_=0.0f;
     unsigned hostChannels_ = 0;
     bool hostBlockActive_ = false;
+    SynthCombPool synthCombPool_;
     std::array<Voice, voiceCount> voices_;
     // Patch 09/19: voice stealing must not clone and double-render a complete
     // wavetable/modulation/filter Voice at the exact moment polyphony is saturated.

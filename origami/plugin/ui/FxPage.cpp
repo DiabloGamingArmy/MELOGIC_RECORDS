@@ -7,6 +7,7 @@
 #include "SourceEntity.h"
 #include "ModulationUiTelemetry.h"
 #include "core/fx/FxFilter.h"
+#include "core/dsp/Comb.h"
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -287,11 +288,11 @@ void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode&
     case FxVisual::FilterResponse: {
         const int type=int(physicalById(n,5));
         if(type==8) { // COMB
-            const float f0=physicalById(n,1),fb=physicalById(n,2),scale=std::sqrt(1.0f-std::abs(fb));
-            plot(160,[&](float t){
-                const float w=juce::MathConstants<float>::twoPi*20.0f*std::pow(1000.0f,t)/f0;
-                const float mag=scale/std::sqrt(std::max(1.0e-4f,1.0f-2.0f*fb*std::cos(w)+fb*fb));
-                return 0.5f+0.5f*juce::jlimit(-1.0f,1.0f,std::log10(mag)*0.6f);
+            const auto coefficients=dsp::combDesign(sampleRate,physicalById(n,1),physicalById(n,2),physicalById(n,4));
+            plot(1024,[&](float t){
+                const double hz=20.*std::pow(std::min(20000.,sampleRate*.499)/20.,t);
+                const double magnitude=dsp::combMagnitude(coefficients,hz,sampleRate,physicalById(n,3));
+                return .5f+juce::jlimit(-30.f,30.f,float(20*std::log10(std::max(magnitude,1e-6))))/60.f;
             });
             break;
         }

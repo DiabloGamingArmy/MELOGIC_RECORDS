@@ -24,7 +24,7 @@ void Voice::bindMorphHints() noexcept {
         moduleBlendCenters_[m].setMorphHints(blendMorphHints_[m].data());
     }
 }
-void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;filterSmoothing_=float(1-std::exp(-1/(.005*sampleRate)));for(auto& r:instanceRuntime_) r.envelope.prepare(sampleRate);envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset();seedLfos(); }
+void Voice::prepare(double sampleRate) noexcept {for(std::size_t f=0;f<maxSynthFilters;++f) synthFilterRuntime_[f].bindComb(combPool_?combPool_->stage(f,slot_):nullptr,combPool_?combPool_->length:0); sampleRate_=sampleRate;filterSmoothing_=float(1-std::exp(-1/(.005*sampleRate)));for(auto& r:instanceRuntime_) r.envelope.prepare(sampleRate);envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset();seedLfos(); }
 // Per-voice LFO streams: a distinct, repeatable ENTROPY stream per voice
 // lifecycle (the NODES voice-seed family); FRACTURE structure per LFO index.
 void Voice::seedLfos() noexcept {
@@ -55,7 +55,7 @@ void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,cons
         glideRatio_=std::exp(std::log(targetFrequency_/frequency_)/static_cast<double>(samples));
     }
     instanceRetrigger_=retriggerEnvelope;
-    if(retriggerEnvelope) {if(!(graphOwnedEnvelopes&1u)) envelope_.noteOn(settings);if(!(graphOwnedEnvelopes&2u)) env2_.noteOn(env2);if(!(graphOwnedEnvelopes&4u)) env3_.noteOn(env3);for(auto& lfo:noteLfos_)lfo.reset();operatorState_={};++lifecycle_;seedLfos();}
+    if(retriggerEnvelope) {for(auto& f:synthFilterRuntime_) if(f.type==dsp::FilterType::Comb) f.reset();if(!(graphOwnedEnvelopes&1u)) envelope_.noteOn(settings);if(!(graphOwnedEnvelopes&2u)) env2_.noteOn(env2);if(!(graphOwnedEnvelopes&4u)) env3_.noteOn(env3);for(auto& lfo:noteLfos_)lfo.reset();operatorState_={};++lifecycle_;seedLfos();}
 }
 void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     ampSettings_=settings;
@@ -721,14 +721,23 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         auto values=runtime.smooth(target,filterSmoothing_);
         if(runtime.noteKey!=address_.note || runtime.keytrackKey!=values.keytrack) {runtime.noteKey=address_.note;runtime.keytrackKey=values.keytrack;runtime.keytrackRatio=float(dsp::fastExp2Audio((address_.note-60)*values.keytrack/12.0));}
         values.cutoff=std::clamp(values.cutoff*runtime.keytrackRatio,20.0f,20000.0f);
+        if(authored.type==dsp::FilterType::Comb) {
+            values.cutoff=std::clamp(values.cutoff,dsp::combMinimumFrequency,dsp::combMaximumFrequency);
+            if(!runtime.comb[0].delay.bound() && combPool_) runtime.bindComb(combPool_->stage(slot,slot_),combPool_->length);
+            if(runtime.cutoffKey!=values.cutoff || runtime.resonanceKey!=values.resonance) {
+                runtime.cutoffKey=values.cutoff;runtime.resonanceKey=values.resonance;
+                const float feedback=dsp::combFeedback(values.resonance);
+                runtime.combCoefficients={float(sampleRate_)/values.cutoff,feedback,std::sqrt(1.f-std::abs(feedback)),combPool_?combPool_->damping:dsp::combDamping(sampleRate_)};
+            }
+        }
         auto signal=filterInputs[slot];
         if(authored.power || values.mix>1e-5f) {
-            if(runtime.cutoffKey!=values.cutoff || runtime.resonanceKey!=values.resonance || runtime.gainKey!=values.gain) {runtime.cutoffKey=values.cutoff;runtime.resonanceKey=values.resonance;runtime.gainKey=values.gain;runtime.coefficients=compiled.synthFilterCoefficients(values.cutoff,values.resonance);if(authored.type!=dsp::FilterType::LowPass) runtime.typedCoefficients=dsp::filterDesign(authored.type,runtime.coefficients,values.gain);}
+            if(authored.type!=dsp::FilterType::Comb && (runtime.cutoffKey!=values.cutoff || runtime.resonanceKey!=values.resonance || runtime.gainKey!=values.gain)) {runtime.cutoffKey=values.cutoff;runtime.resonanceKey=values.resonance;runtime.gainKey=values.gain;runtime.coefficients=compiled.synthFilterCoefficients(values.cutoff,values.resonance);if(authored.type!=dsp::FilterType::LowPass) runtime.typedCoefficients=dsp::filterDesign(authored.type,runtime.coefficients,values.gain);}
             const auto& coefficients=runtime.coefficients;
             signal.left=runtime.process(float(signal.left),coefficients,values.drive,values.mix,false);
             signal.right=runtime.process(float(signal.right),coefficients,values.drive,values.mix,true);
-            filtersQuiet=filtersQuiet && runtime.left.quiet() && runtime.right.quiet();
-        } else {runtime.left.reset();runtime.right.reset();}
+            filtersQuiet=filtersQuiet && runtime.quiet();
+        } else {runtime.left.reset();runtime.right.reset();for(auto& c:runtime.comb) c.reset();}
         if(observe) {visualization_.synthFilters[slot]=values;visualization_.synthFilterIds[slot]=authored.id;}
         if(stage.next>=0) {auto& next=filterInputs[static_cast<std::size_t>(stage.next)];next.left+=signal.left;next.right+=signal.right;}
         else {
