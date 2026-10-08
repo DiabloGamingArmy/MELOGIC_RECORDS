@@ -319,6 +319,12 @@ std::vector<Scenario> matrix() {
             }p.setUiModulationState(mod);
         }});
     }
+    for(int voices:{1,8,16}) for(bool serial:{false,true}) m.push_back({std::string("Synth multimode ")+(serial?"mixed eight serial":"band pass")+", "+std::to_string(voices)+" voices",48000,256,voices,[serial](OrigamiAudioProcessor& p){
+        oscillators(p,1);auto state=p.getUiInstrumentState();auto mod=state.modulation;SynthFilterId previous=0;
+        for(int i=0;i<(serial?8:1);++i) {const auto id=addSynthFilter(mod);auto& f=mod.synthFilters.filters[std::size_t(i)];f.type=serial?static_cast<dsp::FilterType>(i):dsp::FilterType::BandPass;f.values.cutoff=1200+400*float(i);f.values.gain=dsp::filterTypeInfo(f.type)->gain?6.f:0.f;
+            if(previous) insertSynthFilterAfter(mod,id,previous);else insertSynthFilter(mod,state.oscillators,id,state.oscillators[0].id);previous=id;
+        }p.setUiModulationState(mod);
+    }});
     const auto typical=[](OrigamiAudioProcessor& p){ oscillators(p,2,4); chain(p,false); routes(p,8,false); };
     m.push_back({"idle (no notes)",48000,256,0,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});
     for(int v:{1,8,16}) m.push_back({"1 osc, "+std::to_string(v)+" voices",48000,256,v,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});

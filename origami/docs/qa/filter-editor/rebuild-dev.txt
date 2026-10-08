@@ -1,0 +1,403 @@
+-- Configuring juceaide
+-- Building juceaide
+-- Exporting juceaide
+-- Testing juceaide
+-- Finished setting up juceaide
+-- Configuring done (1.6s)
+-- Generating done (0.1s)
+-- Build files have been written to: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+[  1%] Building VST3 manifest helper for OrigamiPlugin
+[  6%] Built target OrigamiAssets
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/vst3_helpers/OrigamiPlugin
+[  7%] Building CXX object CMakeFiles/origami_core.dir/core/fx/FxEffects.cpp.o
+[100%] Built target vst3_helper
+[  7%] Built target OrigamiPlugin_vst3_helper
+[  8%] Linking CXX static library liborigami_core.a
+[ 13%] Built target origami_core
+[ 13%] Linking CXX executable origami_nodes_bench
+[ 15%] Linking CXX executable origami_wavetable_bank_tests
+[ 15%] Linking CXX executable origami_dsp_profile
+[ 17%] Built target origami_patch
+[ 17%] Built target origami_wavetable_bank_tests
+[ 17%] Built target origami_dsp_profile
+[ 17%] Linking CXX executable origami_modulation_tests
+[ 18%] Built target origami_nodes_bench
+[ 19%] Linking CXX executable origami_state_tests
+[ 19%] Linking CXX executable origami_render
+[ 20%] Linking CXX executable origami_tests
+[ 21%] Linking CXX executable origami_fx_tests
+[ 21%] Built target origami_modulation_tests
+[ 22%] Built target origami_tests
+[ 22%] Built target origami_state_tests
+[ 22%] Built target origami_render
+[ 22%] Built target origami_fx_tests
+[ 44%] Built target OrigamiPlugin
+[ 45%] Linking CXX executable "OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app/Contents/MacOS/MCT Origami"
+[ 45%] Linking CXX CFBundle shared module "OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/MacOS/MCT Origami"
+[ 46%] Linking CXX CFBundle shared module "OrigamiPlugin_artefacts/Release/AU/MCT Origami.component/Contents/MacOS/MCT Origami"
+[ 46%] Linking CXX executable origami_plugin_tests
+[ 48%] Linking CXX executable origami_content_tests
+[ 48%] Linking CXX executable origami_perf_bench
+[ 60%] Built target origami_content_tests
+[ 72%] Built target origami_perf_bench
+[ 85%] Built target origami_plugin_tests
+[ 90%] Built target OrigamiPlugin_Standalone
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: code has no resources but signature indicates they must be present
+-- Replacing invalid signature with ad-hoc signature
+[ 95%] Built target OrigamiPlugin_AU
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: replacing existing signature
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: code object is not signed at all
+In subcomponent: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/PkgInfo 2
+removing moduleinfo.json
+creating /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/Resources/moduleinfo.json
+[100%] Built target OrigamiPlugin_VST3
+===== RUNNING MCT ORIGAMI PLUGIN REGRESSION GATE =====
+[N07 ui] timer sync unchanged 0.00375 us | model change + rebuild 577.915 us | hidden model change 27.9736 us | graph paint 100% 265.954 us, 50% 975.579 us, 40% 1402.43 us
+[menu] AUDIO >  (0 items)
+[menu]     EFFECTS >  (0 items)
+[menu]         DYNAMICS >  (2 items)
+[menu]         FILTER / EQ >  (2 items)
+[menu]         DISTORTION >  (1 items)
+[menu]         MODULATION >  (3 items)
+[menu]         SPATIAL >  (1 items)
+[menu]         TIME >  (3 items)
+[menu]         UTILITY >  (2 items)
+[menu]     ROUTING >  (2 items)
+[menu] CONTROL >  (0 items)
+[menu]     MODULATION SOURCES >  (22 items)
+[menu]     MATH >  (5 items)
+[menu]     SHAPING >  (6 items)
+[menu]     UTILITY >  (3 items)
+[menu]     UTILITIES >  (1 items)
+[menu] EVENTS >  (0 items)
+[menu]     NOTE / GATE / TRIGGER >  (5 items)
+[menu]     TRANSPORT >  (1 items)
+[menu]     TARGETS >  (1 items)
+[menu] LOGIC / GENERATIVE >  (0 items)
+[menu]     CONVERSION >  (3 items)
+[menu]     LOGIC >  (6 items)
+[menu]     STATEFUL >  (5 items)
+[menu]     SEQUENCING >  (6 items)
+[menu]     GENERATIVE >  (3 items)
+[menu] cable-drop root EVENT
+[content] preset load during held notes: max sample step 0.0369981 (the held notes' own max step 0.0599174)
+[content] 10000 records: cached index 48.4301 ms, browser open 3.26762 ms, search keystroke 0.881292 ms, clear search + full paint 8.10567 ms
+[qa] MAIN IN peaks hard-left: L 0.145682 R 0.0260573
+[qa] MAIN IN peaks hard-right: L 0 R 0.126595
+[Origami P0 timing] oscillators=1 avgMs=0.0341133 medianMs=0.034375 worstMs=0.03825 activeModules=1
+[Origami P0 topology] oscillators=1 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=2 avgMs=0.0425352 medianMs=0.0419792 worstMs=0.047125 activeModules=2
+[Origami P0 topology] oscillators=2 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=3 avgMs=0.0505443 medianMs=0.0499167 worstMs=0.0532083 activeModules=3
+[Origami P0 topology] oscillators=3 freq=439.453 rms=0.069983 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=4 avgMs=0.0633802 medianMs=0.0616042 worstMs=0.0744167 activeModules=4
+[Origami P0 topology] oscillators=4 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+PASS: 1607862 plugin/UI checks
+===== RUNNING MCT ORIGAMI CORE REGRESSION GATE =====
+[filter response] 6656 independent Synth probes; worst meaningful dB error 0.00577907216882; worst absolute magnitude error 1.41515030094e-06
+dynamic topology
+oscillator control cache
+simple playback + visualization policy
+clean sine simple path P0
+performance visualization sources
+voice observation
+visualization cadence
+performance source curves
+QoS voice admission
+audio-rate fast math
+oscillator generation
+spectral preparation
+random spectral amount
+spectral playback
+spectral concurrent eviction
+random spectral morph
+random spectral morph crossing
+realtime thread policy
+wavetable handoff
+wavetable handoff concurrency
+optimised-path golden renders
+spectral transitions
+manual-edit dezipper
+nested modulation realtime
+registry and patches
+envelope timing
+pitch and blocks
+voices and realtime
+performance modes
+signal behavior
+oscillator and filter
+PASS: 1355116 checks
+===== RUNNING MCT ORIGAMI FX GRAPH REGRESSION GATE =====
+[N07 stress] 32-node x16 voices / empty x16 voices CPU ratio 4.22638
+PASS: 648 FX graph/DSP/bus checks
+===== RUNNING MCT ORIGAMI CONTENT LIBRARY GATE =====
+[content scale] 100 records: sort(name) 0.045459 ms, search "metallic" 0.024667 ms (28), search "met" 0.024 ms, filter 0.007 ms (25), sort(date) 0.02375 ms, facets 0.059792 ms, index ~52 KB
+[content scale] 1000 records: sort(name) 0.621083 ms, search "metallic" 0.405708 ms (300), search "met" 0.394459 ms, filter 0.121375 ms (211), sort(date) 0.201292 ms, facets 0.560959 ms, index ~487 KB
+[content scale] 10000 records: sort(name) 5.63387 ms, search "metallic" 2.79312 ms (2931), search "met" 2.7425 ms, filter 1.36158 ms (2040), sort(date) 1.15983 ms, facets 3.25529 ms, index ~5882 KB
+[content scale] cached index of 10000 records loaded in 44.3834 ms
+[content scale] rescan of a folder whose files are gone: 3.18917 ms
+[content scale] 1000 preset files: cold scan 49.3022 ms, rescan with index 30.5696 ms
+PASS: 98 content library checks
+===== RUNNING MCT ORIGAMI AUDIO UNIT VALIDATION GATE =====
+
+    AU Validation Tool
+    Version: 1.10.0
+    Copyright 2003-2019, Apple Inc. All Rights Reserved.
+    Specify -h (-help) for command options
+
+--------------------------------------------------
+VALIDATING AUDIO UNIT: 'aumu' - 'Orig' - 'Mctg'
+--------------------------------------------------
+Manufacturer String: Melogic Creative Technologies
+AudioUnit Name: Origami
+Component Version: 0.1.0 (0x100)
+
+* * PASS
+--------------------------------------------------
+TESTING OPEN TIMES:
+COLD:
+Time to open AudioUnit:         345.924 ms
+WARM:
+Time to open AudioUnit:         0.791  ms
+This AudioUnit is a version 2 implementation.
+FIRST TIME:
+Time for initialization:        0.159 ms
+
+* * PASS
+--------------------------------------------------
+VERIFYING DEFAULT SCOPE FORMATS:
+Input Scope Bus Configuration:
+ Default Bus Count:0
+
+Output Scope Bus Configuration:
+ Default Bus Count:1
+    Bus Name: Output
+    Default Format: AudioStreamBasicDescription:  2 ch,  44100 Hz, Float32, deinterleaved
+    Has Channel Layouts: 0x650002 0x660002 0x670002 0x6A0002
+    Default Layout:
+	Tag=0x650002, Num Chan Descs=0
+
+* * PASS
+--------------------------------------------------
+VERIFYING REQUIRED PROPERTIES:
+
+* * PASS
+--------------------------------------------------
+VERIFYING RECOMMENDED PROPERTIES:
+  VERIFYING PROPERTY: Latency
+    PASS
+
+* * PASS
+--------------------------------------------------
+VERIFYING OPTIONAL PROPERTIES:
+  VERIFYING PROPERTY: Tail Time
+    PASS
+  VERIFYING PROPERTY: Bypass Effect
+    PASS
+
+* * PASS
+--------------------------------------------------
+VERIFYING SPECIAL PROPERTIES:
+
+VERIFYING CUSTOM UI
+Cocoa Views Available: 1
+  JUCE_AUCocoaViewClass_c749f3d5846d3009
+    PASS
+
+HAS FACTORY PRESETS
+    ID:   0    Name: Init
+
+VERIFYING CLASS INFO
+    PASS
+
+TESTING HOST CALLBACKS
+    PASS
+
+* * PASS
+--------------------------------------------------
+PUBLISHED PARAMETER INFO:
+
+# # # 16 Global Scope Parameters:
+Parameter ID:825613967
+Name: Macro 1
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:825613968
+Name: Macro 2
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:825613969
+Name: Macro 3
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:825613970
+Name: Macro 4
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:825613971
+Name: Macro 5 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:825613972
+Name: Macro 6 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:825613973
+Name: Macro 7 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:825613974
+Name: Macro 8 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:825613975
+Name: Macro 9 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:1971712897
+Name: Macro 10 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:1971712898
+Name: Macro 11 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:1971712899
+Name: Macro 12 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:1971712900
+Name: Macro 13 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:1971712901
+Name: Macro 14 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:1971712902
+Name: Macro 15 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Parameter ID:1971712903
+Name: Macro 16 (inactive)
+Parameter Type: Generic
+Values: Minimum = 0.0000000, Default = 0.0000000, Maximum = 1.0000000
+Flags: Values Have Strings, High Resolution, Can Ramp, Readable, Writable
+  -parameter PASS
+
+Testing that parameters retain value across reset and initialization
+  PASS
+
+* * PASS
+--------------------------------------------------
+FORMAT TESTS:
+
+Reported Channel Capabilities (explicit):
+      [0, 2]
+
+No Input, Output Chans:
+0-1   0-2   0-4   0-5   0-6   0-7   0-8
+      X
+
+# # AudioChannelLayouts (4), Output Scope:
+ChannelLayout is Writable: T
+The Unit publishes the following Channel Layouts:
+  0x650002, 0x660002, 0x670002, 0x6A0002,
+
+Is Audio Channel Layout Available:
+Mono    Stereo  Binau.  AU_4    Ambi.   AU_5    AU_5_0  AU_6    AU_6_0  AU_7_0  AU_7_0F AU_8    AU_5_1  AU_6_1  AU_7_1  AU_7_1F
+        X       X
+
+Current Format:AudioStreamBasicDescription:  2 ch,  44100 Hz, Float32, deinterleaved
+Current Format Tag = 0x650002, New Format Tag = 0x650002, Successsful
+
+Current Format:AudioStreamBasicDescription:  2 ch,  44100 Hz, Float32, deinterleaved
+Current Format Tag = 0x650002, New Format Tag = 0x6A0002, Successsful
+
+* * PASS
+--------------------------------------------------
+RENDER TESTS:
+
+Output Format: AudioStreamBasicDescription:  2 ch,  44100 Hz, Float32, deinterleaved
+Render Test at 512 frames
+Slicing Render Test at 64 frames
+  PASS
+
+
+Render Test at 64 frames, sample rate: 22050 Hz
+Render Test at 137 frames, sample rate: 96000 Hz
+Render Test at 4096 frames, sample rate: 48000 Hz
+Render Test at 4096 frames, sample rate: 192000 Hz
+Render Test at 4096 frames, sample rate: 11025 Hz
+Render Test at 512 frames, sample rate: 44100 Hz
+  PASS
+
+Bad Max Frames - Render should fail
+  PASS
+
+Checking parameter setting
+Using AudioUnitSetParameter
+Using AudioUnitScheduleParameter
+  PASS
+
+Checking ramped parameter scheduling
+  PASS
+
+Test MIDI
+  PASS
+
+* * PASS
+--------------------------------------------------
+AU VALIDATION SUCCEEDED.
+--------------------------------------------------
+===== MCT ORIGAMI DEV BUILD DEPLOYED + VALIDATED =====
+Standalone: /Applications/MCT Origami.app
+AU: /Users/ginobarnes/Library/Audio/Plug-Ins/Components/MCT Origami.component
+VST3: /Users/ginobarnes/Library/Audio/Plug-Ins/VST3/MCT Origami.vst3

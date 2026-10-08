@@ -8,14 +8,14 @@ using SynthFilterId=std::uint32_t;
 inline constexpr std::size_t maxSynthFilters=8;
 inline constexpr SynthFilterId maxSynthFilterId=0x7fffffffu;
 struct SynthFilterValues {
-    float cutoff=8000,resonance=.1f,drive=0,mix=1,keytrack=0;
+    float cutoff=8000,resonance=.1f,drive=0,mix=1,keytrack=0,gain=0;
 };
 struct SynthFilterState {
     SynthFilterId id=0;
     SynthFilterValues values{};
     bool power=true;
-    // The supported Synth algorithm is the existing TPT low-pass. Nodes/FX
-    // retain their own multimode/COMB algorithms and mutable runtimes.
+    dsp::FilterType type=dsp::FilterType::LowPass;
+    // Canonical type IDs; every voice owns its independent integrator state.
     SynthFilterId next=0;
     std::array<OscBusRoute,maxOscBusRoutes> buses{{OscBusRoute{mainBusId,1}}};
     std::uint8_t busCount=1;
@@ -60,14 +60,15 @@ struct SynthFilterRuntime {
     SynthFilterValues current{};
     bool primed=false;
     float driveKey=-1,driveGain=1,cutoffKey=-1,resonanceKey=-1,keytrackKey=-1,keytrackRatio=1;int noteKey=-1;
-    dsp::LowPassCoefficients coefficients{};
-    void reset() noexcept {left.reset();right.reset();id=0;primed=false;driveKey=cutoffKey=resonanceKey=keytrackKey=-1;noteKey=-1;}
-    void adopt(SynthFilterId identity) noexcept {if(id!=identity) {reset();id=identity;}}
+    dsp::LowPassCoefficients coefficients{};dsp::FilterCoefficients typedCoefficients{};
+    dsp::FilterType type=dsp::FilterType::LowPass;float gainKey=-100;
+    void reset() noexcept {left.reset();right.reset();id=0;primed=false;driveKey=cutoffKey=resonanceKey=keytrackKey=-1;noteKey=-1;gainKey=-100;type=dsp::FilterType::LowPass;}
+    void adopt(SynthFilterId identity,dsp::FilterType selected=dsp::FilterType::LowPass) noexcept {if(id!=identity || type!=selected) {reset();id=identity;type=selected;}}
     SynthFilterValues smooth(const SynthFilterValues& target,float alpha) noexcept {
         if(!primed) {current=target;primed=true;}
         else {
             const auto glide=[alpha](float& value,float wanted) {const float delta=wanted-value;value=std::abs(delta)<1e-6f?wanted:value+alpha*delta;};
-            glide(current.cutoff,target.cutoff);glide(current.resonance,target.resonance);glide(current.drive,target.drive);glide(current.mix,target.mix);glide(current.keytrack,target.keytrack);
+            glide(current.cutoff,target.cutoff);glide(current.resonance,target.resonance);glide(current.drive,target.drive);glide(current.mix,target.mix);glide(current.keytrack,target.keytrack);glide(current.gain,target.gain);
         }
         return current;
     }
@@ -76,7 +77,7 @@ struct SynthFilterRuntime {
         if(driveKey!=drive) {driveKey=drive;driveGain=static_cast<float>(dsp::fastExp2Audio(drive/6.020599913));}
         const float gain=driveGain;
         const float input=drive>.001f ? std::tanh(gain*x)/std::sqrt(gain) : x;
-        const float wet=(isRight ? right : left).next(input,c);
+        auto& state=isRight ? right : left;const float wet=type==dsp::FilterType::LowPass ? state.next(input,c) : state.next(input,typedCoefficients);
         return x+mix*(wet-x);
     }
 };

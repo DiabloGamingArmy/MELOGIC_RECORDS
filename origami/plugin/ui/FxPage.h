@@ -78,6 +78,7 @@ private:
     fx::FxNode node_;
     juce::Image previewImage_;
     bool previewDirty_=true;
+    double previewRate_=0;
     bool selected_=false,hovered_=false;
     std::optional<std::pair<bool,std::uint8_t>> hoveredPort_;
     float meterLeft_=0.0f,meterRight_=0.0f;
@@ -464,6 +465,7 @@ struct FxPageHost {
 
 class FxPage final : public juce::Component, private juce::Timer {
 public:
+    double responseSampleRate() const {const auto v=bindings_.visualization?bindings_.visualization():RuntimeVisualizationSnapshot{};return v.sampleRate>0?v.sampleRate:48000.;}
     using PeakSource=std::function<std::pair<float,float>()>;
     using HostBindings=FxPageHost;
     FxPage(fx::FxWorkspace&,ModulationBindings,FxPageHost host=FxPageHost{});

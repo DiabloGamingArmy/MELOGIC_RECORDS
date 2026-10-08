@@ -131,13 +131,13 @@ constexpr FxParameterDescriptor limiterParameters[]{
 
 
 // P04 tables. Ids are persistent; descriptor order is the latched order.
-constexpr const char* filterTypes[]{"LOW PASS","HIGH PASS","BAND PASS","NOTCH","PEAK","ALL PASS","LOW SHELF","HIGH SHELF","COMB"};
+
 // FILTER keeps COMB's ids 1-4 (freq, feedback, mix, damp) for migration.
 constexpr FxParameterDescriptor filterParameters[]{
     {1,"frequency","FREQ",0.566f,P::Main,true,20.0f,20000.0f,C::Exponential,"Hz"},
     {6,"resonance","RES",0.109f,P::Main,true,0.5f,12.0f,C::Exponential,"",0,nullptr,5,0xFFu},
     {3,"mix","MIX",1.0f,P::Main,true,0.0f,1.0f,C::Linear,"%"},
-    {5,"type","TYPE",0.0f,P::Main,false,0.0f,8.0f,C::Choice,"",9,filterTypes},
+    {5,"type","TYPE",0.0f,P::Main,false,0.0f,float(dsp::filterTypeLabels.size()-1),C::Choice,"",int(dsp::filterTypeLabels.size()),dsp::filterTypeLabels.data()},
     {7,"gain","GAIN",0.5f,P::Main,false,-24.0f,24.0f,C::Linear,"dB",0,nullptr,5,0xD0u},
     {8,"drive","DRIVE",0.0f,P::Advanced,false,0.0f,24.0f,C::Linear,"dB",0,nullptr,5,0xFFu},
     {2,"feedback","FB",0.938f,P::Main,true,-0.97f,0.97f,C::Linear,"%",0,nullptr,5,0x100u},

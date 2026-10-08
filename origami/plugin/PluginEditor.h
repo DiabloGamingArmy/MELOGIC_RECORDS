@@ -32,6 +32,8 @@ class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
 public:
     explicit OrigamiAudioProcessorEditor(OrigamiAudioProcessor&);
     ~OrigamiAudioProcessorEditor() override;
+    void dragOperationStarted(const juce::DragAndDropTarget::SourceDetails&) override;
+    void dragOperationEnded(const juce::DragAndDropTarget::SourceDetails&) override;
     void paint(juce::Graphics&) override;
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;

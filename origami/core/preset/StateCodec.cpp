@@ -107,7 +107,8 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     v34|=!(up>=1.0f && up<=48.0f && down<=-1.0f && down>=-48.0f);
     for(const auto& name:s.modulation.macroNames) v34|=name[0]!='\0';
     const bool outputMixer=std::any_of(s.modulation.synthFilters.inputs.begin(),s.modulation.synthFilters.inputs.end(),[](const auto& in){return in.oscillator && in.busCount;});
-    const std::uint32_t version=outputMixer ? 37u : (s.modulation.synthFilters.nextId!=1 || std::any_of(s.modulation.synthFilters.inputs.begin(),s.modulation.synthFilters.inputs.end(),[](const auto& in){return in.oscillator!=0;})) ? 36u : s.modulation.nextInstanceId!=1 ? 35u : v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
+    const bool typedFilters=std::any_of(s.modulation.synthFilters.filters.begin(),s.modulation.synthFilters.filters.end(),[](const auto& f){return f.id && (f.type!=dsp::FilterType::LowPass || f.values.gain!=0);});
+    const std::uint32_t version=typedFilters ? 38u : outputMixer ? 37u : (s.modulation.synthFilters.nextId!=1 || std::any_of(s.modulation.synthFilters.inputs.begin(),s.modulation.synthFilters.inputs.end(),[](const auto& in){return in.oscillator!=0;})) ? 36u : s.modulation.nextInstanceId!=1 ? 35u : v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
     Writer w;w.word(magic);w.word(version);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
@@ -299,7 +300,7 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(version>=36) {
         const auto& c=mod.synthFilters;w.word(c.nextId);w.word(maxSynthFilters);
         for(const auto& f:c.filters) {w.word(f.id);if(!f.id) continue;w.word(f.power?1u:0u);w.word(f.next);
-            for(float v:{f.values.cutoff,f.values.resonance,f.values.drive,f.values.mix,f.values.keytrack}) w.real(v);
+            for(float v:{f.values.cutoff,f.values.resonance,f.values.drive,f.values.mix,f.values.keytrack}) w.real(v);if(version>=38) {w.word(static_cast<unsigned>(f.type));w.real(f.values.gain);}
             w.word(f.busCount);for(std::size_t b=0;b<f.busCount;++b) {w.word(f.buses[b].bus);w.real(f.buses[b].level);}}
         for(const auto& in:c.inputs) {
             w.word(in.oscillator);
@@ -317,7 +318,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>37) return false;
+    if(version<1 || version>38) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     // Formats before collection flags implicitly contained the filter.
@@ -602,6 +603,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         auto& c=s.modulation.synthFilters;c.nextId=r.word();if(r.word()!=maxSynthFilters) return false;
         for(auto& f:c.filters) {f={};f.id=r.word();if(!f.id) continue;const auto power=r.word();if(power>1) return false;f.power=power==1;f.next=r.word();
             for(float* v:{&f.values.cutoff,&f.values.resonance,&f.values.drive,&f.values.mix,&f.values.keytrack}) *v=r.real();
+            if(version>=38) {const auto type=r.word();if(type>=dsp::filterTypes.size() || !dsp::filterTypes[type].synth) return false;f.type=static_cast<dsp::FilterType>(type);f.values.gain=r.real();}
             const auto count=r.word();if(count>(version>=37?maxOscBusRoutes:8)) return false;f.busCount=static_cast<std::uint8_t>(count);
             for(std::size_t b=0;b<f.busCount;++b) {f.buses[b].bus=r.word();f.buses[b].level=r.real();}}
         for(auto& in:c.inputs) {in={};in.oscillator=r.word();in.filter=r.word();if(version>=37 && in.filter) return false;const auto count=r.word();if(count>(version>=37?maxOscBusRoutes:8)) return false;in.busCount=static_cast<std::uint8_t>(count);for(std::size_t b=0;b<in.busCount;++b) {in.buses[b].bus=r.word();in.buses[b].level=r.real();if(version>=37) {const auto kind=r.word();if(kind>1) return false;in.buses[b].filter=kind==1;}}}

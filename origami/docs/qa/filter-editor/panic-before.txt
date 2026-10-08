@@ -1,0 +1,6 @@
+ENV: focus after drag-image destruction=Emergency DSP reset panic=1
+LFO: focus after drag-image destruction=Emergency DSP reset panic=1
+MACRO: focus after drag-image destruction=Emergency DSP reset panic=1
+FILTER: focus after drag-image destruction=Emergency DSP reset panic=1
+CANCEL: focus after drag-image destruction=Emergency DSP reset panic=1
+VALID DROP: focus after drag-image destruction=Emergency DSP reset panic=1

@@ -716,14 +716,14 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
 
     if constexpr(Synth) for(std::size_t n=0;n<filterPlan.count;++n) {
         const auto& stage=filterPlan.stages[n];const auto slot=stage.slot;
-        const auto& authored=modulation.synthFilters.filters[slot];auto& runtime=synthFilterRuntime_[slot];runtime.adopt(authored.id);
+        const auto& authored=modulation.synthFilters.filters[slot];auto& runtime=synthFilterRuntime_[slot];runtime.adopt(authored.id,authored.type);
         auto target=effective->synthFilters[slot];if(!authored.power) target.mix=0;
         auto values=runtime.smooth(target,filterSmoothing_);
         if(runtime.noteKey!=address_.note || runtime.keytrackKey!=values.keytrack) {runtime.noteKey=address_.note;runtime.keytrackKey=values.keytrack;runtime.keytrackRatio=float(dsp::fastExp2Audio((address_.note-60)*values.keytrack/12.0));}
         values.cutoff=std::clamp(values.cutoff*runtime.keytrackRatio,20.0f,20000.0f);
         auto signal=filterInputs[slot];
         if(authored.power || values.mix>1e-5f) {
-            if(runtime.cutoffKey!=values.cutoff || runtime.resonanceKey!=values.resonance) {runtime.cutoffKey=values.cutoff;runtime.resonanceKey=values.resonance;runtime.coefficients=compiled.synthFilterCoefficients(values.cutoff,values.resonance);}
+            if(runtime.cutoffKey!=values.cutoff || runtime.resonanceKey!=values.resonance || runtime.gainKey!=values.gain) {runtime.cutoffKey=values.cutoff;runtime.resonanceKey=values.resonance;runtime.gainKey=values.gain;runtime.coefficients=compiled.synthFilterCoefficients(values.cutoff,values.resonance);if(authored.type!=dsp::FilterType::LowPass) runtime.typedCoefficients=dsp::filterDesign(authored.type,runtime.coefficients,values.gain);}
             const auto& coefficients=runtime.coefficients;
             signal.left=runtime.process(float(signal.left),coefficients,values.drive,values.mix,false);
             signal.right=runtime.process(float(signal.right),coefficients,values.drive,values.mix,true);

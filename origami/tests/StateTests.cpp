@@ -153,7 +153,7 @@ void nestedStateV34() {
     bool truncated=true;
     for(std::size_t n=0;n<bytes.size();++n) { InstrumentState t; truncated&=!decodeInstrumentState(bytes.data(),n,t); }
     check(truncated,"every truncation of a v34 state is rejected");
-    { auto future=bytes; word(future,4,38); check(!decodeInstrumentState(future.data(),future.size(),out),"an unknown future version (38) is rejected"); }
+    { auto future=bytes; word(future,4,39); check(!decodeInstrumentState(future.data(),future.size(),out),"an unknown future version (39) is rejected"); }
     // The state ends with the names: per macro a length word and one word per
     // character. MACRO 2 is "Wobble" (6), MACRO 3..16 are empty (14 words).
     const std::size_t tail=14*4,name2=bytes.size()-tail-6*4;
@@ -267,6 +267,12 @@ void synthFiltersV36() {
     check(removeBus(state,bus) && validInstrumentState(state),"bus deletion preserves typed filters");roundtrip();
 }
 
+void synthFilterTypesV38() {
+    OrigamiEngine e;auto state=e.instrumentState();const auto f=addSynthFilter(state.modulation);check(insertSynthFilter(state.modulation,state.oscillators,f,1),"typed state route");
+    for(const auto& info:dsp::filterTypes) if(info.synth) {auto& filter=state.modulation.synthFilters.filters[0];filter.type=info.id;filter.values.gain=info.gain?6.f:0.f;const auto bytes=encodeInstrumentState(state);InstrumentState decoded;check(decodeInstrumentState(bytes.data(),bytes.size(),decoded) && decoded.modulation.synthFilters.filters[0].type==info.id && decoded.modulation.synthFilters.filters[0].values.gain==filter.values.gain && encodeInstrumentState(decoded)==bytes,"each canonical Synth type and gain roundtrips");if(info.id!=dsp::FilterType::LowPass) {check(bytes[7]==38,"type requires schema38");const auto first=bytes.size()-(8+52+7*4+16*12+24)+8;for(unsigned badType:{8u,9u,0xffffffffu}) {auto bad=bytes;word(bad,first+32,badType);auto before=encodeInstrumentState(decoded);check(!decodeInstrumentState(bad.data(),bad.size(),decoded) && encodeInstrumentState(decoded)==before,"unsupported Synth type rejects atomically");}}}
+    state.modulation.synthFilters.filters[0].type=dsp::FilterType::Comb;check(!validInstrumentState(state),"Comb unavailable until independently budgeted runtime exists");
+}
+
 void patches() {
     Patch p,out;std::string error;
     p.parameters[0]=.625f;
@@ -281,4 +287,4 @@ void patches() {
     check(!parsePatch(partial,out,error),"partial historical set rejected");
 }
 }
-int main() {try {states();nestedStateV34();instanceStateV35();synthFiltersV36();patches();std::cout<<"PASS: "<<checks<<" state checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
+int main() {try {states();nestedStateV34();instanceStateV35();synthFiltersV36();synthFilterTypesV38();patches();std::cout<<"PASS: "<<checks<<" state checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

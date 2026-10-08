@@ -52,6 +52,9 @@ void OrigamiHeader::setPresetName(const juce::String& name) {
     const auto label=name.isNotEmpty() ? name : juce::String("UNTITLED");
     if(preset_.getButtonText()!=label) preset_.setButtonText(label);
 }
+void OrigamiHeader::assignmentDragStarted() {panic_.beginDrag();}
+void OrigamiHeader::assignmentDragEnded() {panic_.endDrag();}
+void OrigamiHeader::reconcileAssignmentDragFocus() {panic_.reconcileDragFocus();}
 void OrigamiHeader::selectSynth() {
     for(std::size_t i=0;i<modes_.size();++i)
         modes_[i].setToggleState(i==0,juce::dontSendNotification);

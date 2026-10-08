@@ -11,6 +11,7 @@
 #include "core/preset/Patch.h"
 #include "core/preset/StateCodec.h"
 #include "tests/OptimizedPathGolden.h"
+#include "tests/FilterResponseTests.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -1392,6 +1393,27 @@ void oscillatorRouteMixerAudit() {
     auto s=smooth->instrumentState();auto routing=s.oscillators[0];routing.busRoutes[0].level=0;check(setOscillatorOutputRouting(s.modulation,routing) && smooth->setModulationState(s.modulation),"zero gain publishes");check(control->process(x,2,256) && smooth->process(y,2,256),"smoothed gain renders");for(int n=0;n<256;++n) check(std::abs(b[n]-a[n]*std::max(0.f,1-float(n+1)/240))<3e-6f,"bus gain follows continuous five millisecond ramp");
 }
 
+void multimodeSynthLifecycleAudit() {
+    const auto make=[](const ModulationState& mod) {auto engine=std::make_unique<OrigamiEngine>();check(engine->prepare(48000,256,2) && engine->setModulationState(mod),"multimode engine prepares");engine->setMasterAfterFx(true);return engine;};
+    for(const auto& info:dsp::filterTypes) if(info.synth) {
+        auto fixture=std::make_unique<OrigamiEngine>();auto state=fixture->instrumentState();const auto id=addSynthFilter(state.modulation);check(insertSynthFilter(state.modulation,state.oscillators,id,1),"multimode route authors");auto& filter=state.modulation.synthFilters.filters[0];filter.type=info.id;filter.values={600,.2f,0,1,1,info.gain?6.f:0.f};
+        auto poly=make(state.modulation);std::array<std::unique_ptr<OrigamiEngine>,3> solo;std::array<std::array<float,256>,3> left{},right{};std::array<float,256> pl{},pr{};float* output[]{pl.data(),pr.data()};
+        for(int i=0;i<3;++i) {solo[i]=make(state.modulation);solo[i]->noteOn(60+i*4,.1f);poly->noteOn(60+i*4,.1f);}
+        for(int block=0;block<6;++block) {check(poly->process(output,2,256),"multimode poly renders");for(int i=0;i<3;++i){float* out[]{left[i].data(),right[i].data()};check(solo[i]->process(out,2,256),"multimode solo renders");}for(int n=0;n<256;++n) check(std::abs(pl[n]-left[0][n]-left[1][n]-left[2][n])<4e-6f && std::abs(pr[n]-right[0][n]-right[1][n]-right[2][n])<4e-6f,"every Synth type owns independent polyphonic state");}
+        auto mod=state.modulation;const auto env=addSourceInstance(mod,SourceFamily::Envelope);const auto lfo=addSourceInstance(mod,SourceFamily::Lfo);mod.instances[sourceInstanceSlot(mod,lfo)].lfo.mode=LfoMode::Loop;mod.routes[0]={mod.nextRouteId++,true,env,{ModDestination::SynthCutoff,0,id},-.4f,false};mod.routes[1]={mod.nextRouteId++,true,lfo,{ModDestination::SynthResonance,0,id},.2f,false};check(poly->setModulationState(mod),"all types retain canonical modulation");for(int i=0;i<24;++i) poly->noteOn(48+i,.1f);
+        allocations.store(0);frees.store(0);guardAllocations.store(true);bool ok=true;for(int i=0;i<8;++i) ok=poly->process(output,2,256) && ok;poly->emergencyResetRuntime();guardAllocations.store(false);check(ok && poly->activeVoiceCount()==0,"multimode adoption, voice steal and Panic complete");
+#ifndef ORIGAMI_SANITIZED
+        check(!allocations.load() && !frees.load(),"every type adoption/render/Panic has zero allocations and frees");
+#endif
+        mod.synthFilters.filters[0].type=info.id==dsp::FilterType::HighShelf?dsp::FilterType::LowPass:static_cast<dsp::FilterType>(int(info.id)+1);check(poly->setModulationState(mod),"held voices publish bounded type change");poly->noteOn(60,.1f);allocations.store(0);frees.store(0);guardAllocations.store(true);const bool changed=poly->process(output,2,256);guardAllocations.store(false);check(changed,"held type change adopts independent reset state");
+#ifndef ORIGAMI_SANITIZED
+        check(!allocations.load() && !frees.load(),"type switching has no callback allocation or free");
+#endif
+        mod.synthFilters.filters[0].type=info.id;check(poly->setModulationState(mod),"mono legato returns to audited type");poly->emergencyResetRuntime();
+        auto perf=poly->performanceState();perf.voiceMode=VoiceMode::Mono;perf.legato=true;check(poly->setPerformanceState(perf),"multimode mono mode");poly->noteOn(60,.1f);poly->process(output,2,256);poly->noteOn(64,.1f);check(poly->process(output,2,256) && poly->activeVoiceCount()==1,"every type supports mono legato retarget");for(float x:pl) check(std::isfinite(x),"multimode modulation remains finite");
+    }
+}
+
 void synthFilterRoutingAudit() {
     const auto make=[](int oscillators) {
         auto e=std::make_unique<OrigamiEngine>();check(e->prepare(48000,256,2),"Synth filter engine prepares");
@@ -1452,7 +1474,7 @@ int main() {
     // test runner cannot overflow before it reaches its first diagnostic.
     // Production engine ownership already follows this pattern.
     try {
-        oscillatorRouteMixerAudit();synthFilterRoutingAudit();
+        filter_response_audit::run(check);multimodeSynthLifecycleAudit();oscillatorRouteMixerAudit();synthFilterRoutingAudit();
         correctiveSpectralPreview();
         sourceInstanceRealtimeAudit();
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();

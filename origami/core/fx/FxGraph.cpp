@@ -1,3 +1,4 @@
+#include "../ParameterFormatting.h"
 // mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
@@ -121,7 +122,7 @@ std::string fxParameterText(const FxParameterDescriptor& d,float normalized) {
         return v>=0.5f ? "ON" : "OFF";
     }
     if(unit=="%") std::snprintf(text,sizeof(text),"%d%%",int(std::lround(v*100.0f)));
-    else if(unit=="Hz" && v>=1000.0f) std::snprintf(text,sizeof(text),"%.2f kHz",v/1000.0f);
+    else if(unit=="Hz") return formatFrequencyHz(v);
     else if(unit=="ms" && v>=1000.0f) std::snprintf(text,sizeof(text),"%.2f s",v/1000.0f);
     else if(std::abs(v)<10.0f) std::snprintf(text,sizeof(text),"%.2f %s",v,d.unit);
     else std::snprintf(text,sizeof(text),"%.0f %s",v,d.unit);

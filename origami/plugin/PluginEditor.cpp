@@ -1082,3 +1082,6 @@ void OrigamiAudioProcessorEditor::filesDropped(const juce::StringArray& files,in
 mct::origami::dsp::Wavetable OrigamiAudioProcessorEditor::WavetableEditorSurface::compiledWavetable() const {
     return OrigamiAudioProcessor::compileWavetable(documentData());
 }
+
+void OrigamiAudioProcessorEditor::dragOperationStarted(const juce::DragAndDropTarget::SourceDetails&) {header_.assignmentDragStarted();}
+void OrigamiAudioProcessorEditor::dragOperationEnded(const juce::DragAndDropTarget::SourceDetails&) {header_.assignmentDragEnded();}

@@ -204,7 +204,7 @@ bool validSynthFilters(const SynthFilterCollection& c,const std::array<Oscillato
     };
     for(std::size_t i=0;i<c.filters.size();++i) {
         const auto& f=c.filters[i];if(!f.id) continue;
-        if(f.id>=c.nextId || !range(f.values.cutoff,20,20000) || !range(f.values.resonance,0,1) || !range(f.values.drive,0,24) || !range(f.values.mix,0,1) || !range(f.values.keytrack,0,1) || !busesValid(f.buses,f.busCount,false)) return false;
+        if(f.id>=c.nextId || !dsp::synthFilterTypeSupported(f.type) || !range(f.values.gain,-24,24) || !range(f.values.cutoff,20,20000) || !range(f.values.resonance,0,1) || !range(f.values.drive,0,24) || !range(f.values.mix,0,1) || !range(f.values.keytrack,0,1) || !busesValid(f.buses,f.busCount,false)) return false;
         for(std::size_t j=0;j<i;++j) if(c.filters[j].id==f.id) return false;
         for(std::size_t r=0;r<f.busCount;++r) if(f.buses[r].filter) return false;
         auto next=f.next;

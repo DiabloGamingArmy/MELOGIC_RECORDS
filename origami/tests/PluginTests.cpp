@@ -5958,6 +5958,20 @@ void emergencyPanicAudit() {
 
 // Wave 1 PANIC under load: many voices, delay + reverb tails, live modulation
 // routes and a NODES operator. Runtime clears; the creative state does not.
+void panicDragFocusAudit() {
+    juce::DocumentWindow window("Origami drag lifecycle regression",juce::Colours::black,0);juce::Component root;ui::OrigamiHeader header;juce::Component source;
+    root.setSize(900,350);root.addAndMakeVisible(header);header.setBounds(0,0,900,72);source.setWantsKeyboardFocus(true);root.addAndMakeVisible(source);source.setBounds(400,100,100,100);window.setContentNonOwned(&root,true);window.setTopLeftPosition(300,300);window.setVisible(true);window.toFront(true);
+    juce::Button* panic=nullptr;walk(header,[&](auto& c){if(c.getName()=="Emergency DSP reset") panic=dynamic_cast<juce::Button*>(&c);});check(panic!=nullptr,"Panic lifecycle owns identity button");source.grabKeyboardFocus();
+    check(!header.panicVisibleForPointer(false) && header.panicVisibleForPointer(true),"physical pointer outside hides; entering reveals");check(!header.panicVisibleForPointer(false),"leaving restores branding");
+    for(const char* kind:{"ENV","LFO","MACRO","FILTER","CANCEL","VALID DROP"}) {
+        source.setName(kind);source.grabKeyboardFocus();header.assignmentDragStarted();check(!header.panicVisibleForPointer(false),"shared source drag starts without false reveal");
+        auto overlay=std::make_unique<juce::Component>();overlay->setWantsKeyboardFocus(true);root.addAndMakeVisible(*overlay);overlay->setBounds(400,220,100,50);overlay->grabKeyboardFocus();header.assignmentDragEnded();overlay.reset();
+        check(panic->hasKeyboardFocus(false) && !header.panicVisibleForPointer(false),"real drag-image focus handoff cannot reveal gray Panic");header.reconcileAssignmentDragFocus();check(!panic->hasKeyboardFocus(false) && !header.panicVisibleForPointer(false),"deferred reconciliation releases transient focus for cancelled and valid drops");
+    }
+    panic->grabKeyboardFocus();static_cast<juce::Component*>(panic)->focusGained(juce::Component::focusChangedByTabKey);check(header.panicVisibleForPointer(false),"intentional keyboard focus reveals Panic");header.assignmentDragStarted();auto overlay=std::make_unique<juce::Component>();overlay->setWantsKeyboardFocus(true);root.addAndMakeVisible(*overlay);overlay->grabKeyboardFocus();header.assignmentDragEnded();overlay.reset();header.reconcileAssignmentDragFocus();check(panic->hasKeyboardFocus(false) && header.panicVisibleForPointer(false),"legitimate keyboard accessibility focus survives drag lifecycle");
+    source.grabKeyboardFocus();check(!header.panicVisibleForPointer(false),"focus lost hides Panic");unsigned clicks=0;header.onPanicRequested=[&]{++clicks;};panic->onClick();check(clicks==1,"Panic activation invokes existing command exactly once");window.setVisible(false);window.clearContentComponent();
+}
+
 void panicUnderLoadAudit() {
     auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
     p.prepareToPlay(48000.0,256);
@@ -6017,7 +6031,7 @@ void run() {
     declarativeThemeAudit();
     correctiveViewportAudit();
     correctivePassUiAudit();
-    emergencyPanicAudit();
+    panicDragFocusAudit();emergencyPanicAudit();
     panicUnderLoadAudit();
     nodesVisualFeedbackAudit();
     fxPageAudit();
@@ -6299,7 +6313,7 @@ void synthFilterCompletionUi() {
     auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,256);
     auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;ui::OscillatorCard* card=nullptr;ui::FxPage* page=nullptr;
     walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;if(auto* osc=dynamic_cast<ui::OscillatorCard*>(&c)) if(osc->id()==1) card=osc;if(auto* fx=dynamic_cast<ui::FxPage*>(&c)) page=fx;});
-    check(panel && card,"Synth routing surfaces exist");check(panel->typeChoices()==std::vector<juce::String>{"LOW-PASS"},"only implemented low-pass type is selectable");check(p.getUiInstrumentState().modulation.synthFilters.nextId==1,"fresh UI has zero explicit filters");
+    check(panel && card,"Synth routing surfaces exist");check(panel->typeChoices().size()==dsp::filterTypes.size(),"Synth menu uses the canonical Nodes catalog");for(std::size_t i=0;i<dsp::filterTypes.size();++i) check(panel->typeChoices()[i]==dsp::filterTypes[i].name,"shared type names and persistent ordering");check(!panel->setFilterType(dsp::FilterType::Comb),"unsupported comb is unavailable");check(p.getUiInstrumentState().modulation.synthFilters.nextId==1,"fresh UI has zero explicit filters");
     const auto bus=p.addUiBus();auto osc=p.getUiOscillatorState(1);osc.busRoutes[0]={bus,1};check(p.setUiOscillatorState(1,osc),"OSC previous destination authors bus");
     const auto f=panel->addFilter();check(f && card->dropSynthFilter(f),"Filter -> oscillator invokes canonical insertion");
     auto state=p.getUiInstrumentState();check(state.modulation.synthFilters.filters[0].buses[0].bus==mainBusId && oscillatorOutputRouting(state.modulation,state.oscillators[0]).busRoutes[0].level==0,"UI drop is exclusive and preserves filter output");
@@ -6318,7 +6332,7 @@ void synthFilterCompletionUi() {
     check(rows.size()==3 && add && remove,"filter rail uses shared source-card primitive and collection buttons");
     rows[0]->onClick();check(panel->selectedFilter()==f && rows[0]->getToggleState() && !rows[1]->getToggleState(),"rail selection preserves stable FilterId");
     juce::Slider* cutoff=nullptr;walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)) if(k->getName()=="CUTOFF") cutoff=k;});
-    check(cutoff->getTextFromValue(8000)=="8000 Hz" && cutoff->getTextFromValue(20000)=="20.0 kHz" && cutoff->getDoubleClickReturnValue()==8000,"cutoff units and canonical default reset");cutoff->setValue(1300,juce::sendNotificationSync);check(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.cutoff==1300 && p.getUiInstrumentState().modulation.synthFilters.filters[1].values.cutoff==8000,"selected row edits its own working cutoff control");
+    check(cutoff->getTextFromValue(8000)=="8.00 kHz" && cutoff->getTextFromValue(20000)=="20.0 kHz" && cutoff->getDoubleClickReturnValue()==8000,"cutoff units and canonical default reset");cutoff->setValue(1300,juce::sendNotificationSync);check(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.cutoff==1300 && p.getUiInstrumentState().modulation.synthFilters.filters[1].values.cutoff==8000,"selected row edits its own working cutoff control");
     rows[2]->onClick();
     ui::ModulationSourceRow reference(ModSource::Lfo1,"FILTER 1","MOD SOURCE TAB LFO 1");reference.setLookAndFeel(&panel->getLookAndFeel());
     for(bool selected:{false,true}) {
@@ -6330,9 +6344,9 @@ void synthFilterCompletionUi() {
         panel->setSize(width,height);const auto layout=ui::sourceRailLayout(panel->contentBounds());
         check(panel->sourceRailBounds()==layout.rail && layout.rail.getWidth()==116,"persistent filter rail uses canonical Modulation width");
         for(auto* row:rows) check(row->getWidth()==layout.list.getWidth() && row->getHeight()==ui::ModulationSourceRow::baseHeight-ui::sourceRowGap,"filter row geometry matches unrouted Modulation row");
-        bool contained=true;walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)) contained &= layout.editor.contains(k->getBounds());});check(contained && panel->responseBounds().getHeight()>30,"right editor contains knobs and a usable graph");
+        bool contained=true;walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)) if(k->isVisible()) contained &= layout.editor.contains(k->getBounds());});check(contained && panel->responseBounds().getHeight()>30,"right editor contains knobs and a usable graph");
         juce::Image image(juce::Image::ARGB,width,height,true);juce::Graphics g(image);panel->paintEntireComponent(g,true);
-        const auto response=panel->responseBounds();check(image.getPixelAt(response.getCentreX(),response.getBottom()-2)==ui::signalSourceColour(),"graph bottom edge uses current theme accent");
+        const auto response=panel->responseBounds();check(image.getPixelAt(response.getCentreX(),response.getBottom()-2)!=ui::signalSourceColour(),"graph floor has no saturated accent line");
         juce::File file(path);file.deleteFile();if(auto out=file.createOutputStream()) {juce::PNGImageFormat png;png.writeImageToStream(image,*out);}
     };
     paintPanel(662,355,"/tmp/origami-synth-filter-ui.png");paintPanel(532,300,"/tmp/origami-synth-filter-ui-compact.png");
@@ -6356,6 +6370,30 @@ void synthFilterCompletionUi() {
     check(p.loadUiInitPreset(),"Init loads after explicit filter patch");for(const auto& filter:p.getUiInstrumentState().modulation.synthFilters.filters) check(!filter.id,"Init contains zero Synth instances");
 }
 
+void synthFilterEditorTypeAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,256);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;
+    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;});check(panel!=nullptr,"actual multimode editor exists");
+    const auto* descriptor=fx::findFxEffect(fx::FxEffectType::Filter);const auto* typeParameter=descriptor?fx::findFxParameter(*descriptor,5):nullptr;check(typeParameter && typeParameter->choiceLabels==dsp::filterTypeLabels.data() && typeParameter->choices==int(dsp::filterTypes.size()),"Nodes descriptor directly references shared canonical labels");
+    const auto id=panel->addFilter();panel->setSize(662,355);juce::Slider *cutoff=nullptr,*resonance=nullptr,*gain=nullptr;
+    walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)){if(k->getName()=="CUTOFF") cutoff=k;if(k->getName()=="RESONANCE") resonance=k;if(k->getName()=="GAIN") gain=k;}});
+    check(cutoff && resonance && gain,"canonical parameter controls exist");
+    const auto save=[&](const juce::String& name){const auto image=panel->createComponentSnapshot(panel->getLocalBounds(),true,2.f);juce::File file("/tmp/origami-filter-editor-"+name+".png");file.deleteFile();if(auto out=file.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(image,*out);}};
+    for(const auto& info:dsp::filterTypes) if(info.synth) {
+        check(panel->setFilterType(info.id),"supported type edits canonical state");check(p.getUiInstrumentState().modulation.synthFilters.filters[0].type==info.id,"type persists selected stable filter");
+        check(gain->isVisible()==info.gain,"Gain control appears only for gain-bearing types");
+        if(info.gain) {gain->setValue(6,juce::sendNotificationSync);check(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.gain==6,"Gain writes canonical state");}
+        cutoff->setValue(1000,juce::sendNotificationSync);resonance->setValue(.6,juce::sendNotificationSync);
+        const auto plot=panel->responseBounds().reduced(8).toFloat();const dsp::FilterResponseAxis axis{48000};auto handle=panel->responseHandle();check(std::abs(handle.x-(plot.getX()+float(axis.x(1000))*plot.getWidth()))<.1f,"knob drives canonical response handle");
+        const juce::Point<float> target{plot.getX()+float(axis.x(5000))*plot.getWidth(),plot.getBottom()-.3f*plot.getHeight()};check(panel->editResponseHandle(target),"response handle accepts parameter edit");const auto values=p.getUiInstrumentState().modulation.synthFilters.filters[0].values;
+        check(std::abs(values.cutoff-5000)<2 && std::abs(values.resonance-.3f)<.001f && std::abs(cutoff->getValue()-values.cutoff)<1,"handle updates canonical state and matching knobs");
+        juce::MemoryBlock bytes;p.getStateInformation(bytes);OrigamiAudioProcessor restored;restored.setStateInformation(bytes.getData(),int(bytes.getSize()));const auto f=restored.getUiInstrumentState().modulation.synthFilters.filters[0];check(f.id==id && f.type==info.id && f.values.gain==values.gain,"each selectable type and Gain survive processor wrapper restore");save("type-"+juce::String(int(info.id)));
+    }
+    check(panel->setFilterType(dsp::FilterType::LowPass),"visual sweep returns to low pass");resonance->setValue(.1,juce::sendNotificationSync);
+    for(int hz:{100,1000,5000,10000,20000}) {cutoff->setValue(hz,juce::sendNotificationSync);save("cutoff-"+juce::String(hz));}
+    const auto second=panel->addFilter();check(second!=id && p.getUiInstrumentState().modulation.synthFilters.filters[1].type==dsp::FilterType::LowPass,"switching filter selection uses its own type");check(panel->setFilterType(dsp::FilterType::HighPass),"second filter authors independent type");check(p.getUiInstrumentState().modulation.synthFilters.filters[0].type==dsp::FilterType::LowPass,"type switch cannot change previous filter");
+}
+
 void synthResponseFillAudit() {
     InstrumentState state;const auto f=addSynthFilter(state.modulation);RuntimeVisualizationSnapshot observed;observed.sampleRate=48000;observed.synthFilterIds[0]=f;observed.synthFilters[0]={1200,.1f,0,1,0};
     ui::ModulationBindings bindings;bindings.snapshot=[&]{return state;};bindings.visualization=[&]{return observed;};
@@ -6368,7 +6406,7 @@ void synthResponseFillAudit() {
     // At 2 kHz, 300 Hz and 8 kHz responses must move BOTH stroke and fill.
     observed.synthFilters[0].cutoff=300;auto low=render();observed.synthFilters[0].cutoff=8000;auto high=render();
     dsp::LowPassCoefficientTable table;table.prepare(48000);const int i=170;const double hz=20*std::pow(1000.,double(i)/255);const int column=plot.getX()+juce::roundToInt(float(i)/255*float(plot.getWidth()));
-    const auto curveY=[&](float cutoff) {const double magnitude=dsp::lowPassMagnitude(table.make(cutoff,.1f),hz,48000,1);return plot.getY()+juce::roundToInt(float(juce::jlimit(0.,1.,(12-20*std::log10(std::max(magnitude,1e-6)))/72))*float(plot.getHeight()));};
+    const auto curveY=[&](float cutoff) {const double magnitude=dsp::lowPassMagnitude(table.make(cutoff,.1f),hz,48000,1);return plot.getY()+juce::roundToInt(float(dsp::FilterResponseAxis{48000}.y(magnitude))*float(plot.getHeight()));};
     const int lowY=curveY(300),highY=curveY(8000),middle=(lowY+highY)/2;
     check(lowY-highY>20 && low.getPixelAt(column,middle)!=high.getPixelAt(column,middle),"observed cutoff moves fill boundary with truthful response");
     const auto whiteNear=[&](const juce::Image& img,int y) {float brightness=0;for(int dy=-2;dy<=2;++dy) brightness=std::max(brightness,img.getPixelAt(column,y+dy).getBrightness());return brightness;};
@@ -6388,15 +6426,15 @@ void synthFilterVisualComposition() {
         while(authored<count) {check(filter->addFilter()!=0,"visual fixture adds canonical filter");++authored;}
         check(filter->dropFilterOnOscillator(filter->selectedFilter(),1),"visual fixture exposes actual oscillator input and preserved serial output");
         const auto r=filter->editorRegions();
-        check(r.header.getBottom()==r.routing.getY() && r.routing.getBottom()<r.response.getY() && r.response.getBottom()<r.parameters.getY(),"header/routing/response/parameters form deliberate ordered regions");
-        check(r.response.getHeight()<=150 && r.response.getHeight()>90 && r.parameters.getHeight()==96 && filter->contentBounds().getBottom()-r.parameters.getBottom()>=12,"graph proportion and parameter breathing room are bounded");
+        check(r.routing.isEmpty() && r.header.getBottom()<r.response.getY() && r.response.getBottom()<r.parameters.getY(),"header/response/parameters are ordered without redundant input-topology row");
+        check(r.response.getHeight()<=190 && r.response.getHeight()>90 && r.parameters.getHeight()==96 && filter->contentBounds().getBottom()-r.parameters.getBottom()>=12,"graph proportion and parameter breathing room are bounded");
         bool selectedVisible=false,footerContains=true,controlsContained=true;juce::Viewport* viewport=nullptr;
         walk(*filter,[&](auto& c){if(auto* v=dynamic_cast<juce::Viewport*>(&c)) viewport=v;});
         const auto rail=ui::sourceRailLayout(filter->contentBounds());
         walk(*filter,[&](auto& c){
             if(auto* row=dynamic_cast<ui::SourceEntityButton*>(&c)) if(row->isVisible() && row->getToggleState()) selectedVisible=viewport->getBounds().contains(filter->getLocalArea(row,row->getLocalBounds()));
             if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="+" || b->getButtonText()=="-") footerContains &= rail.rail.contains(b->getBounds()) && b->getY()>viewport->getBottom();
-            if(auto* k=dynamic_cast<juce::Slider*>(&c)) controlsContained &= r.parameters.contains(k->getBounds());
+            if(auto* k=dynamic_cast<juce::Slider*>(&c)) if(k->isVisible()) controlsContained &= r.parameters.contains(k->getBounds());
         });
         check(selectedVisible && footerContains && controlsContained,"selected row remains visible without footer/parameter collisions at each capacity");
         if(count==8) {
@@ -6422,5 +6460,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

@@ -191,7 +191,7 @@ float eqResponseDb(const FxNode& n,float hz) {
 
 // UI-generated pictures of what each effect does, driven by its canonical
 // parameters. No audio is streamed to the UI to draw these.
-void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode& n) {
+void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode& n,double sampleRate) {
     well(g,r.toNearestInt());
     const auto* d=findFxEffect(n.effect);
     if(d==nullptr) return;
@@ -295,9 +295,9 @@ void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode&
             });
             break;
         }
-        const auto c=svfDesign(static_cast<SvfShape>(juce::jlimit(0,7,type)),physicalById(n,1),physicalById(n,6),physicalById(n,7),48000.0);
+        const auto c=svfDesign(static_cast<SvfShape>(juce::jlimit(0,7,type)),physicalById(n,1),physicalById(n,6),physicalById(n,7),sampleRate);
         plot(160,[&](float t){
-            const float db=float(20.0*std::log10(std::max(svfMagnitude(c,20.0*std::pow(1000.0,t),48000.0),1.0e-6)));
+            const float db=float(20.0*std::log10(std::max(std::abs((1.0-double(physicalById(n,3)))+double(physicalById(n,3))*dsp::svfTransfer(c.g,c.k,c.m0,c.m1,c.m2,20.0*std::pow(std::min(20000.,sampleRate*.499)/20.,t),sampleRate)),1.0e-6)));
             return 0.5f+juce::jlimit(-30.0f,30.0f,db)/60.0f;
         });
         break;
@@ -677,10 +677,12 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         if(!detailed) break;
         // Parameter previews are cached; a moving modulation dot must not
         // repeatedly design EQ filters or redraw an unchanged response.
-        if(previewDirty_ || !previewImage_.isValid()) {
+        const double previewRate=page_.responseSampleRate();
+        if(previewDirty_ || !previewImage_.isValid() || previewRate_!=previewRate) {
             previewImage_=juce::Image(juce::Image::ARGB,getWidth()-24,52,true);
             juce::Graphics preview(previewImage_);
-            paintEffectPreview(preview,{0,0,float(getWidth()-24),52},node_);
+            paintEffectPreview(preview,{0,0,float(getWidth()-24),52},node_,previewRate);
+            previewRate_=previewRate;
             previewDirty_=false;
         }
         g.drawImageAt(previewImage_,12,40);
@@ -2527,7 +2529,7 @@ private:
         area.removeFromTop(6);
         auto display=area.removeFromTop(60);
         if(effect) {
-            paintEffectPreview(g,display.toFloat(),*node_);
+            paintEffectPreview(g,display.toFloat(),*node_,page_.responseSampleRate());
             area.removeFromTop(4);
             auto values=area.removeFromBottom(14);
             auto labels=area.removeFromBottom(14);
@@ -3985,7 +3987,8 @@ FxNodeId FxPage::addSynthFilterCopy(FxPoint centre,SynthFilterId source) {
         g.setParameter(created,1,juce::jlimit(0.0f,1.0f,normalized(*findFxParameter(*d,1),juce::jlimit(20.0f,20000.0f,cutoff))));
         // Synth resonance [0,1] maps to Q [0.5,4] (ARCHITECTURE.md).
         g.setParameter(created,6,juce::jlimit(0.0f,1.0f,normalized(*findFxParameter(*d,6),0.5f+3.5f*resonance)));
-        g.setParameter(created,5,0.0f); // LOW PASS
+        g.setParameter(created,5,fxChoiceNormalized(*findFxParameter(*d,5),int(slot<maxSynthFilters?state.modulation.synthFilters.filters[slot].type:dsp::FilterType::LowPass)));
+        g.setParameter(created,7,juce::jlimit(0.0f,1.0f,normalized(*findFxParameter(*d,7),values.gain)));
         g.setParameter(created,3,values.mix);
         g.setParameter(created,8,juce::jlimit(0.0f,1.0f,normalized(*findFxParameter(*d,8),values.drive)));
         return true;
