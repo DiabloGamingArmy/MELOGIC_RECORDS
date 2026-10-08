@@ -307,10 +307,10 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         level.getProperties().set("mct.origami.knobScale",0.62);
         level.onValueChange=[this,i] {
             if(syncingBus_ || !moduleGetter_ || !moduleSetter_) return;
-            auto state=moduleGetter_(display_.id);
+            auto state=routingState();
             if(i>=state.busRouteCount) return;
             state.busRoutes[i].level=float(busLevels_[i].getValue());
-            moduleSetter_(display_.id,state);
+            commitBusRouting(state);
             repaint();
         };
         auto& removeButton=busRemoves_[i];
@@ -1111,7 +1111,7 @@ void OscillatorCard::refreshPhaseWorkspace() {
 
 void OscillatorCard::refreshRoutingWorkspace() {
     if(!moduleGetter_) return;
-    const auto state=moduleGetter_(display_.id);
+    const auto state=routingState();
     const auto buses=snapshotGetter_ ? snapshotGetter_().buses : BusState{};
     const auto name=[&buses](BusId id) {
         const auto* bus=buses.find(id);
@@ -1131,16 +1131,19 @@ void OscillatorCard::refreshRoutingWorkspace() {
         unrouted|=oscBusSend(state,buses.buses[b].id)==0.0f
             && std::none_of(state.busRoutes.begin(),state.busRoutes.begin()+std::ptrdiff_t(busRowCount_),
                             [&](const OscBusRoute& r){return r.bus==buses.buses[b].id;});
+    for(std::size_t i=0;i<busRowCount_;++i) {busSelectors_[i].setEnabled(true);busLevels_[i].setEnabled(true);}
     busAdd_.setEnabled(unrouted && busRowCount_<maxOscBusRoutes);
     juce::String header=busRowCount_>0 ? name(state.busRoutes[0].bus) : juce::String("NO BUS");
     if(busRowCount_>1) header+=" +"+juce::String(int(busRowCount_)-1);
     outputSelector_.setButtonText(header);
     repaint();
+    if(snapshotGetter_) for(const auto& in:snapshotGetter_().modulation.synthFilters.inputs) if(in.oscillator==display_.id && in.filter) {busRowCount_=0;busAdd_.setEnabled(false);outputSelector_.setButtonText("FILTER "+juce::String(in.filter));outputSelector_.setTooltip("Per-voice filter routing; edit the filter's OUT to change its downstream destination");break;}
+
 }
 
 void OscillatorCard::openBusMenu(std::size_t row) {
     if(!moduleGetter_ || !snapshotGetter_) return;
-    const auto state=moduleGetter_(display_.id);
+    const auto state=routingState();
     if(row>=state.busRouteCount) return;
     const auto buses=snapshotGetter_().buses;
     std::vector<NativeChoiceItem> items;
@@ -1153,21 +1156,21 @@ void OscillatorCard::openBusMenu(std::size_t row) {
     auto safe=juce::Component::SafePointer<OscillatorCard>(this);
     showNativeChoiceMenu(busSelectors_[row],"Output Bus",items,int(state.busRoutes[row].bus),[safe,row](int choice) {
         if(safe==nullptr || choice<=0) return;
-        auto s=safe->moduleGetter_(safe->display_.id);
+        auto s=safe->routingState();
         if(row>=s.busRouteCount) return;
         if(setOscBusRoute(s,safe->snapshotGetter_().buses,row,BusId(choice),s.busRoutes[row].level)==BusRouteResult::Ok)
-            safe->moduleSetter_(safe->display_.id,s);
+            safe->commitBusRouting(s);
         safe->refreshRoutingWorkspace();
     });
 }
 
 void OscillatorCard::addBusRoute() {
     if(!moduleGetter_ || !moduleSetter_ || !snapshotGetter_) return;
-    auto state=moduleGetter_(display_.id);
+    auto state=routingState();
     const auto buses=snapshotGetter_().buses;
     for(std::size_t b=0;b<buses.count;++b)
         if(addOscBusRoute(state,buses,buses.buses[b].id,1.0f)==BusRouteResult::Ok) {
-            moduleSetter_(display_.id,state);
+            commitBusRouting(state);
             break;
         }
     refreshRoutingWorkspace();
@@ -1176,8 +1179,8 @@ void OscillatorCard::addBusRoute() {
 
 void OscillatorCard::removeBusRoute(std::size_t row) {
     if(!moduleGetter_ || !moduleSetter_) return;
-    auto state=moduleGetter_(display_.id);
-    if(removeOscBusRoute(state,row)==BusRouteResult::Ok) moduleSetter_(display_.id,state);
+    auto state=routingState();
+    if(removeOscBusRoute(state,row)==BusRouteResult::Ok) commitBusRouting(state);
     refreshRoutingWorkspace();
     resized();
 }
@@ -1523,6 +1526,11 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
             section.removeFromTop(106);
             text(g,"BEHAVIOR",section.removeFromTop(13),Type::label,Palette::muted(),juce::Justification::centredLeft);
         } else {
+            if(snapshotGetter_) {const auto state=snapshotGetter_();for(const auto& in:state.modulation.synthFilters.inputs) if(in.oscillator==display_.id && in.filter) {
+                juce::String route="OSC "+juce::String(display_.ordinal);auto id=in.filter;
+                for(std::size_t n=0;id && n<maxSynthFilters;++n) {const auto f=synthFilterSlot(state.modulation.synthFilters,id);if(f==maxSynthFilters) break;const auto& filter=state.modulation.synthFilters.filters[f];route+=" > FILTER "+juce::String(id);id=filter.next;if(!id) {route+=" > ";for(std::size_t b=0;b<filter.busCount;++b) {if(b) route+=", ";const auto* bus=state.buses.find(filter.buses[b].bus);route+=bus?juce::String(bus->label()):juce::String("BUS");}}}
+                text(g,route,section.removeFromTop(24),Type::label,Palette::text());text(g,"EDIT DOWNSTREAM OUT ON THE SYNTH FILTER",section.removeFromTop(24),Type::secondary,Palette::muted());return;
+            }}
             text(g,"OUTPUT BUSES  /  POST OSC CHAIN + FILTER",section.removeFromTop(15),Type::label,Palette::muted(),juce::Justification::centredLeft);
             for(std::size_t i=0;i<busRowCount_;++i) {
                 const auto row=busRowBounds_[i];
@@ -1803,6 +1811,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 }
 
 void OscillatorCard::paintOverChildren(juce::Graphics& g) {
+    if(synthDropOver_) {g.setColour(Palette::background().withAlpha(.75f));g.fillRect(contentBounds());g.setColour(signalSourceColour());g.drawRect(contentBounds().reduced(2),2);text(g,synthDropAllowed_?"INSERT FILTER / KEEP DOWNSTREAM ROUTE":"CANNOT INSERT / SHARED OUTPUT CONFLICT OR CYCLE",contentBounds(),Type::label,Palette::text(),juce::Justification::centred);return;}
     const auto& telemetry=modulationUiTelemetry();
 
     const auto drawRotary=[&](juce::Slider& slider,ModDestination destination,std::uint32_t itemId=0) {
@@ -1930,6 +1939,31 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
             drawRotary(chainAmounts_[i],ModDestination::RouteAmount,item.id);
     }
     g.restoreState();
+}
+
+OscillatorModuleState OscillatorCard::routingState() const {
+    auto state=moduleGetter_?moduleGetter_(display_.id):OscillatorModuleState{};
+    if(snapshotGetter_) for(const auto& in:snapshotGetter_().modulation.synthFilters.inputs) if(in.oscillator==display_.id && !in.filter && in.busCount) {state.busRoutes=in.buses;state.busRouteCount=in.busCount;}
+    return state;
+}
+bool OscillatorCard::commitBusRouting(const OscillatorModuleState& state) {
+    if(snapshotGetter_ && synthRoutingSetter) {auto mod=snapshotGetter_().modulation;for(auto& in:mod.synthFilters.inputs) if(in.oscillator==display_.id) {if(in.filter) return false;if(in.busCount) {in.buses=state.busRoutes;in.busCount=state.busRouteCount;return synthRoutingSetter(mod);}}}
+    return moduleSetter_ && moduleSetter_(display_.id,state);
+}
+bool OscillatorCard::dropSynthFilter(SynthFilterId id) {
+    if(!snapshotGetter_ || !synthRoutingSetter) return false;const auto state=snapshotGetter_();auto mod=state.modulation;
+    if(!insertSynthFilter(mod,state.oscillators,id,display_.id) || !synthRoutingSetter(mod)) return false;syncFromModel();return true;
+}
+bool OscillatorCard::isInterestedInDragSource(const SourceDetails& d) {
+    if(!snapshotGetter_ || !synthRoutingSetter || !d.description.toString().startsWith("MCT_SYNTH_FILTER:")) return false;
+    const auto id=std::uint32_t(d.description.toString().fromFirstOccurrenceOf(":",false,false).getIntValue());const auto state=snapshotGetter_();return synthFilterSlot(state.modulation.synthFilters,id)<maxSynthFilters;
+}
+void OscillatorCard::itemDragEnter(const SourceDetails& d) {synthDropOver_=isInterestedInDragSource(d);synthDropAllowed_=false;if(synthDropOver_) {const auto state=snapshotGetter_();auto mod=state.modulation;const auto id=std::uint32_t(d.description.toString().fromFirstOccurrenceOf(":",false,false).getIntValue());synthDropAllowed_=insertSynthFilter(mod,state.oscillators,id,display_.id);}repaint();}
+void OscillatorCard::itemDragExit(const SourceDetails&) {synthDropOver_=false;repaint();}
+void OscillatorCard::itemDropped(const SourceDetails& d) {synthDropOver_=false;if(isInterestedInDragSource(d)) dropSynthFilter(std::uint32_t(d.description.toString().fromFirstOccurrenceOf(":",false,false).getIntValue()));repaint();}
+void OscillatorCard::mouseDrag(const juce::MouseEvent& e) {
+    if(e.originalComponent!=this || !headerLayout().title.contains(e.getMouseDownPosition()) || e.getDistanceFromDragStart()<7) return;
+    if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) if(!container->isDragAndDropActive()) container->startDragging("MCT_SYNTH_OSC:"+juce::String(display_.id),this);
 }
 
 OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
@@ -2099,6 +2133,7 @@ void OscillatorRack::createCard(unsigned moduleId) {
             return snapshotGetter_ ? snapshotGetter_() : mct::origami::InstrumentState{};
         });
 
+    card->synthRoutingSetter=synthRoutingSetter_;
     card->onWavetableEditorRequested=[safe](unsigned id) {
         if(safe!=nullptr && safe->onWavetableEditorRequested)
             safe->onWavetableEditorRequested(id);

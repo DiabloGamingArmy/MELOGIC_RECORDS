@@ -146,8 +146,8 @@ void OrigamiEngine::rebuildHostWavetables() noexcept {
     }
 }
 void OrigamiEngine::reset() noexcept {
-    modulationMailbox_.consume(audioModulation_);
-    audioModulation_=modulation_; // reset requires exclusive access
+    modulationMailbox_.consume(pendingModulationUpdate_);
+    audioModulation_=modulation_; audioSynthFilters_=preparedSynthFilters_;hostBusSlots_=slotMapFor(buses_); // reset requires exclusive access
     smoothedMacros_=audioModulation_.macros;
     // Global FREE LFOs: their lifecycle (DELAY / ATTACK) starts at engine reset;
     // one coherent ENTROPY stream per LFO index.
@@ -161,7 +161,7 @@ void OrigamiEngine::reset() noexcept {
     for(std::size_t i=0;i<maxSourceInstances;++i) {const auto& a=audioModulation_.instances[i];if(a.id && !sourceIsVoice(instanceSource(a.id),audioModulation_) && compiledModulation_.usesGlobalSource(CompiledModulation::instanceGlobalSlot(i))) globalInstanceSlots_[globalInstanceCount_++]=std::uint8_t(i);}
     publishNodesDiagnostics();
     compiledModulation_.resetOperatorState();
-    oscillatorPlan_.compile(resetModules);
+    oscillatorPlan_.compile(resetModules,slotMapFor(buses_));oscillatorPlan_.adoptSynthFilters(audioSynthFilters_);
     dezipModules_=resetModules; dezipActive_=0; // a reset never glides
     for(std::size_t i=0;i<resetModules.size();++i) compiledModuleIds_[i]=resetModules[i].id;
     for (auto& voice : voices_) { voice.reset(); voice.restartLifecycles(); }
@@ -210,13 +210,12 @@ InstrumentState OrigamiEngine::instrumentState() const noexcept {
 }
 bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcept {
     if(!validInstrumentState(state)) return false;
-    modulation_=state.modulation;publishModEnvelopeTargets(modulation_);modulationMailbox_.publish(modulation_);
+    modulation_=state.modulation;publishModEnvelopeTargets(modulation_);
     performance_=state.performance;
     buses_=state.buses;
-    busSlotMailbox_.publish(slotMapFor(state.buses));
     pitchBendRange_.store(state.performance.pitchBendRangeSemitones,std::memory_order_relaxed);
     pitchBendDownRange_.store(state.performance.pitchBendDownSemitones,std::memory_order_relaxed);
-    oscillatorModules_.restore(state.oscillators,state.nextId);
+    oscillatorModules_.restore(state.oscillators,state.nextId);publishModulation();
     for(std::size_t i=0;i<parameterCount;++i) targets_[i].store(state.parameters[i],std::memory_order_relaxed);
     reset();return true;
 }
@@ -230,12 +229,18 @@ bool OrigamiEngine::setBusState(const BusState& state) noexcept {
     InstrumentState probe=instrumentState();probe.buses=state;
     if(!validInstrumentState(probe)) return false;
     buses_=state;
-    busSlotMailbox_.publish(slotMapFor(state));
+    publishModulation();
     return true;
 }
 bool OrigamiEngine::setModulationState(const ModulationState& state) noexcept {
-    if(!validModulation(state,oscillatorModules_.snapshot())) return false;
-    modulation_=state;publishModEnvelopeTargets(state);modulationMailbox_.publish(state);return true;
+    auto candidate=instrumentState();candidate.modulation=state;
+    if(!validInstrumentState(candidate)) return false;
+    modulation_=state;publishModEnvelopeTargets(state);publishModulation();return true;
+}
+void OrigamiEngine::publishModulation() noexcept {
+    const auto slots=slotMapFor(buses_);
+    preparedSynthFilters_=prepareSynthFilters(modulation_,oscillatorModules_.snapshot(),slots.ids,slots.count);
+    modulationMailbox_.publish(ModulationUpdate{modulation_,preparedSynthFilters_});
 }
 ParameterValues OrigamiEngine::parameterState() const noexcept {
     ParameterValues values {};
@@ -541,7 +546,8 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     const bool oscillatorGenerationChanged=
         oscillatorModules_.consumeSnapshot(hostModules_,hostModuleGeneration_);
     if(oscillatorGenerationChanged) startDezip();
-    const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
+    const bool modulationChanged=modulationMailbox_.consume(pendingModulationUpdate_);
+    if(modulationChanged) {audioModulation_=pendingModulationUpdate_.state;audioSynthFilters_=pendingModulationUpdate_.filters;}
     if(hostMacrosValid_)
         for(std::size_t i=0;i<maxMacros;++i) {
             const float v=hostMacros_[i];
@@ -555,7 +561,8 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
         }
     }
     BusSlotMap slots;
-    const bool slotsChanged=busSlotMailbox_.consume(slots) && slots!=hostBusSlots_;
+    slots.ids=audioSynthFilters_.busIds;slots.count=audioSynthFilters_.busCount;
+    const bool slotsChanged=modulationChanged && slots!=hostBusSlots_;
     if(slotsChanged) hostBusSlots_=slots;
     bool tablesChanged=false;
     if(oscillatorGenerationChanged || moduleTopologyChanged) {
@@ -572,6 +579,7 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
         oscillatorPlan_.compile(hostModules_,hostBusSlots_);
         rebuildHostWavetables();
     }
+    if(modulationChanged || oscillatorGenerationChanged || moduleTopologyChanged || slotsChanged || tablesChanged) oscillatorPlan_.adoptSynthFilters(audioSynthFilters_);
     if(modulationChanged) compiledModulation_.markStateRevision();
     if(modulationChanged || moduleTopologyChanged || oscillatorGenerationChanged) {
         compiledModulation_.compile(audioModulation_,hostModules_);
@@ -811,6 +819,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         // advance at full audio rate; only copying/inspection is decimated.
         const bool observeVisualization=!suppressVisualization_ && runtimeVisualizationCountdown_==0;
         if(observeVisualization) {
+            runtimeVisualization_.synthFilterIds.fill(0);
             for(std::size_t i=0;i<maxSourceInstances;++i) {runtimeVisualization_.instanceIds[i]=audioModulation_.instances[i].id;runtimeVisualization_.instancePhases[i]=float(instanceRuntime_[i].lfo.readPosition());}
             runtimeVisualizationCountdown_=visualizationPeriod-1;
             for(std::size_t i=0;i<4;++i) {
@@ -864,6 +873,9 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         frame.portaTime=performance_.glideSeconds;
         frame.envelopeScaling=1.0f;frame.lfoScaling=1.0f;frame.swing=globalSwingBase_;
         frame.applyMaster=!hostMasterAfterFx_;
+        frame.synthFilterMask=0;
+        for(std::size_t n=0;n<audioSynthFilters_.count;++n) {const auto f=audioSynthFilters_.stages[n].slot;frame.synthFilters[f]=audioModulation_.synthFilters.filters[f].values;frame.synthFilterMask|=std::uint8_t(1u<<f);}
+
         compiledModulation_.globalFrame(frame,sources,sampleRate_);
         if(hostMasterAfterFx_) blockMaster_=frame.master;
         if(compiledModulation_.hasFxRoutes()) { lastGlobalSources_=sources; lastGlobalOperators_=frame.operatorOutputs; }
@@ -906,6 +918,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                                                 modWheel_[channel],aftertouch_[channel],oscillatorPlan_,sharedProcesses,observe);
             if(observe) {
                 const auto& visual=voices_[v].visualizationSnapshot();
+                runtimeVisualization_.synthFilters=visual.synthFilters;runtimeVisualization_.synthFilterIds=visual.synthFilterIds;runtimeVisualization_.sampleRate=sampleRate_;
                 runtimeVisualization_.instanceEnvelopes=visual.instanceEnvelopes;
                 for(std::size_t i=0;i<maxSourceInstances;++i) if(audioModulation_.instances[i].family==SourceFamily::Envelope || (audioModulation_.instances[i].family==SourceFamily::Lfo && audioModulation_.instances[i].lfo.mode!=LfoMode::Free)) runtimeVisualization_.instancePhases[i]=visual.instancePhases[i];
                 for(std::size_t i=0;i<CompiledModulation::voiceSourceCount;++i)
@@ -1035,7 +1048,7 @@ OscillatorModuleId OrigamiEngine::addOscillatorModule() noexcept {
     s.level=targets_[static_cast<std::size_t>(ParameterId::OscLevel)].load(std::memory_order_relaxed);
     s.wtPosition=std::clamp(s.waveform/3.0f,0.0f,1.0f);
     s.tableId=dsp::BuiltinWavetableId::BasicShapes;
-    return oscillatorModules_.add(s);
+    const auto id=oscillatorModules_.add(s);if(id) publishModulation();return id;
 }
 bool OrigamiEngine::removeOscillatorModule(OscillatorModuleId id) noexcept {
     if(!oscillatorModules_.remove(id)) return false;
@@ -1077,7 +1090,7 @@ bool OrigamiEngine::removeOscillatorModule(OscillatorModuleId id) noexcept {
     }
 
     // Deletion removes addressed modulation routes. Reused display ordinals never retarget them.
-    auto updated=modulation_;std::size_t out=0;
+    auto updated=modulation_;for(auto& in:updated.synthFilters.inputs) if(in.oscillator==id) in={};std::size_t out=0;
     for(const auto& route:modulation_.routes)
         if(route.id && route.destination.oscillator!=id) updated.routes[out++]=route;
     while(out<updated.routes.size()) updated.routes[out++]={};
@@ -1099,7 +1112,9 @@ bool OrigamiEngine::setOscillatorModuleState(OscillatorModuleId id,const Oscilla
     auto candidate=instrumentState();
     for(auto& m:candidate.oscillators) if(m.id==id) {canonical.id=id;canonical.enabled=m.enabled;m=canonical;}
     if(!validInstrumentState(candidate)) return false;
-    return oscillatorModules_.set(id,canonical);
+    bool routingChanged=canonical.busRouteCount!=old.busRouteCount;
+    for(std::size_t b=0;b<canonical.busRouteCount;++b) routingChanged|=canonical.busRoutes[b].bus!=old.busRoutes[b].bus || canonical.busRoutes[b].level!=old.busRoutes[b].level;
+    const bool ok=oscillatorModules_.set(id,canonical);if(ok && routingChanged) publishModulation();return ok;
 }
 OscillatorModuleState OrigamiEngine::oscillatorModuleState(OscillatorModuleId id) const noexcept {
     auto state=oscillatorModules_.state(id);
@@ -1107,7 +1122,7 @@ OscillatorModuleState OrigamiEngine::oscillatorModuleState(OscillatorModuleId id
     return state;
 }
 bool OrigamiEngine::setOscillatorModuleEnabled(OscillatorModuleId id,bool enabled) noexcept {
-    return oscillatorModules_.setEnabled(id,enabled);
+    const bool ok=oscillatorModules_.setEnabled(id,enabled);if(ok) publishModulation();return ok;
 }
 bool OrigamiEngine::oscillatorModuleEnabled(OscillatorModuleId id) const noexcept {
     return oscillatorModules_.enabled(id);

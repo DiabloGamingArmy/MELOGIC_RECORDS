@@ -288,6 +288,21 @@ Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
 
 std::vector<Scenario> matrix() {
     std::vector<Scenario> m;
+    for(int voices:{1,8,16}) for(int mode=0;mode<6;++mode) {
+        const char* names[]{"zero","single","shared four OSC","serial two","four separate","maximum eight serial"};
+        m.push_back({std::string("Synth filters ")+names[mode]+", "+std::to_string(voices)+" voices",48000,256,voices,[mode](OrigamiAudioProcessor& p){
+            oscillators(p,(mode==2 || mode==4 || mode==5)?4:1);
+            auto state=p.getUiInstrumentState();auto mod=state.modulation;std::array<SynthFilterId,maxSynthFilters> ids{};
+            const int count=mode==0?0:mode==3?2:mode==4?4:mode==5?8:1;
+            for(int i=0;i<count;++i) {ids[std::size_t(i)]=addSynthFilter(mod);mod.synthFilters.filters[std::size_t(i)].values.cutoff=1200+400*float(i);}
+            if(count) {insertSynthFilter(mod,state.oscillators,ids[0],state.oscillators[0].id);
+                if(mode==2) for(const auto& osc:state.oscillators) if(osc.id && osc.id!=state.oscillators[0].id) insertSynthFilter(mod,state.oscillators,ids[0],osc.id);
+                if(mode==4) for(int i=1;i<4;++i) insertSynthFilter(mod,state.oscillators,ids[std::size_t(i)],state.oscillators[std::size_t(i)].id);
+                if(mode==3 || mode==5) for(int i=1;i<count;++i) insertSynthFilterAfter(mod,ids[std::size_t(i)],ids[std::size_t(i-1)]);
+            }
+            p.setUiModulationState(mod);
+        }});
+    }
     const auto typical=[](OrigamiAudioProcessor& p){ oscillators(p,2,4); chain(p,false); routes(p,8,false); };
     m.push_back({"idle (no notes)",48000,256,0,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});
     for(int v:{1,8,16}) m.push_back({"1 osc, "+std::to_string(v)+" voices",48000,256,v,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});
@@ -459,6 +474,7 @@ void memoryReport() {
     std::printf("WavetableOscillator    %10zu B   SpectralReadHint %zu B\n",sizeof(dsp::WavetableOscillator),sizeof(dsp::SpectralReadHint));
     std::printf("Lfo                    %10zu B   LowPassFilter %zu B   Envelope %zu B\n",sizeof(Lfo),sizeof(dsp::LowPassFilter),sizeof(dsp::Envelope));
     std::printf("OscillatorModuleState  %10zu B   InstrumentState %.1f KB\n",sizeof(OscillatorModuleState),kb(sizeof(InstrumentState)));
+    std::printf("SynthFilterRuntime %zu B (x8 per voice), SynthFilterPlan %zu B, SynthFilterCollection %zu B\n",sizeof(SynthFilterRuntime),sizeof(SynthFilterPlan),sizeof(SynthFilterCollection));
     const auto table=dsp::Wavetable::builtIns(); std::size_t samples=0;
     for(const auto& f:table.frames) for(const auto& b:f.bands) samples+=b.samples.size();
     std::printf("built-in table data    %10.1f KB  (%zu frames x %zu bands x %zu)\n",kb(samples*sizeof(float)),table.frames.size(),table.frames[0].bands.size(),table.tableLength);
@@ -481,6 +497,13 @@ int main(int argc,char** argv) {
 #endif
     juce::ScopedJuceInitialiser_GUI gui;
     dsp::prepareSpectralCompiler();
+    if(argc>=2 && std::strcmp(argv[1],"--filter-prepare")==0) {
+        OrigamiAudioProcessor processor;oscillators(processor,4);auto state=processor.getUiInstrumentState();auto mod=state.modulation;SynthFilterId previous=0;
+        for(std::size_t n=0;n<maxSynthFilters;++n) {const auto id=addSynthFilter(mod);if(previous) insertSynthFilterAfter(mod,id,previous);else insertSynthFilter(mod,state.oscillators,id,state.oscillators[0].id);previous=id;}
+        std::vector<double> times;times.reserve(1000);
+        for(int n=0;n<1000;++n) {const auto start=std::chrono::steady_clock::now();const bool ok=processor.setUiModulationState(mod);const auto stop=std::chrono::steady_clock::now();if(!ok) return 1;times.push_back(std::chrono::duration<double,std::micro>(stop-start).count());}
+        std::sort(times.begin(),times.end());std::printf("maximum Synth topology writer validation/preparation/publication: median %.3f us, p99 %.3f us\n",times[500],times[990]);return 0;
+    }
     auto scenarios=matrix();
     if(argc>=4 && std::strcmp(argv[1],"--profile")==0) {
         for(const auto& s:scenarios) if(s.name.find(argv[2])!=std::string::npos) {

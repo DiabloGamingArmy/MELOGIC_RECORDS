@@ -255,7 +255,7 @@ inline float modulationUiEffectiveSliderPosition(juce::Slider& slider,
     const double minimum=slider.getMinimum(),maximum=slider.getMaximum();
     if(maximum<=minimum) return 0.0f;
     const double value=slider.getValue();
-    const bool logarithmic=destination==ModDestination::Cutoff && minimum>0.0;
+    const bool logarithmic=(destination==ModDestination::Cutoff || destination==ModDestination::SynthCutoff) && minimum>0.0;
     const double base=logarithmic ? std::log(value/minimum)/std::log(maximum/minimum)
                                  : (value-minimum)/(maximum-minimum);
     const double effective=juce::jlimit(0.0,1.0,base+

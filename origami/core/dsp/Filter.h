@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 namespace mct::origami::dsp {
 // Topology-preserving state variable low-pass; shared coefficients, per-voice state.
 struct LowPassCoefficients {
@@ -14,6 +15,12 @@ struct LowPassCoefficients {
         return {g, 1.0 / (1 + g * (g + 1.0 / q))};
     }
 };
+inline double lowPassMagnitude(const LowPassCoefficients& c,double hz,double rate,double mix=1) noexcept {
+    if(c.g<=0 || c.a1<=0 || rate<=0) return 0;
+    const double k=(1/c.a1-1)/c.g-c.g;
+    const std::complex<double> s{0,std::tan(3.14159265358979323846*std::clamp(hz,1.0,rate*.499)/rate)/c.g};
+    return std::abs((1-mix)+mix/(s*s+k*s+1.0));
+}
 
 class LowPassCoefficientTable {
 public:

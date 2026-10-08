@@ -106,7 +106,7 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     const float up=s.performance.pitchBendRangeSemitones,down=s.performance.pitchBendDownSemitones;
     v34|=!(up>=1.0f && up<=48.0f && down<=-1.0f && down>=-48.0f);
     for(const auto& name:s.modulation.macroNames) v34|=name[0]!='\0';
-    const std::uint32_t version=s.modulation.nextInstanceId!=1 ? 35u : v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
+    const std::uint32_t version=(s.modulation.synthFilters.nextId!=1 || std::any_of(s.modulation.synthFilters.inputs.begin(),s.modulation.synthFilters.inputs.end(),[](const auto& in){return in.oscillator!=0;})) ? 36u : s.modulation.nextInstanceId!=1 ? 35u : v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
     Writer w;w.word(magic);w.word(version);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
@@ -295,6 +295,13 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
             for(std::uint32_t c=0;c<length;++c) w.word(static_cast<unsigned char>(name[c]));
         }
     if(version>=35) {w.word(mod.nextInstanceId);w.word(maxSourceInstances);for(const auto& a:mod.instances) writeInstance(w,a);}
+    if(version>=36) {
+        const auto& c=mod.synthFilters;w.word(c.nextId);w.word(maxSynthFilters);
+        for(const auto& f:c.filters) {w.word(f.id);if(!f.id) continue;w.word(f.power?1u:0u);w.word(f.next);
+            for(float v:{f.values.cutoff,f.values.resonance,f.values.drive,f.values.mix,f.values.keytrack}) w.real(v);
+            w.word(f.busCount);for(std::size_t b=0;b<f.busCount;++b) {w.word(f.buses[b].bus);w.real(f.buses[b].level);}}
+        for(const auto& in:c.inputs) {w.word(in.oscillator);w.word(in.filter);w.word(in.busCount);for(std::size_t b=0;b<in.busCount;++b) {w.word(in.buses[b].bus);w.real(in.buses[b].level);}}
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -305,7 +312,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>35) return false;
+    if(version<1 || version>36) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     // Formats before collection flags implicitly contained the filter.
@@ -586,6 +593,14 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         }
     }
     if(version>=35) {s.modulation.nextInstanceId=r.word();if(r.word()!=maxSourceInstances) return false;for(auto& a:s.modulation.instances) if(!readInstance(r,a)) return false;}
+    if(version>=36) {
+        auto& c=s.modulation.synthFilters;c.nextId=r.word();if(r.word()!=maxSynthFilters) return false;
+        for(auto& f:c.filters) {f={};f.id=r.word();if(!f.id) continue;const auto power=r.word();if(power>1) return false;f.power=power==1;f.next=r.word();
+            for(float* v:{&f.values.cutoff,&f.values.resonance,&f.values.drive,&f.values.mix,&f.values.keytrack}) *v=r.real();
+            const auto count=r.word();if(count>maxOscBusRoutes) return false;f.busCount=static_cast<std::uint8_t>(count);
+            for(std::size_t b=0;b<f.busCount;++b) {f.buses[b].bus=r.word();f.buses[b].level=r.real();}}
+        for(auto& in:c.inputs) {in={};in.oscillator=r.word();in.filter=r.word();const auto count=r.word();if(count>maxOscBusRoutes) return false;in.busCount=static_cast<std::uint8_t>(count);for(std::size_t b=0;b<in.busCount;++b) {in.buses[b].bus=r.word();in.buses[b].level=r.real();}}
+    }
     // mct-origami-nodes-n01: (source, destination) pairs are unique. States
     // written before that rule may repeat a pair; merge them deterministically
     // (summed amount, as the compiler always did) instead of rejecting the load.

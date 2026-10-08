@@ -1938,7 +1938,7 @@ bool FxCanvas::isInterestedInDragSource(const SourceDetails& details) {
 
 void FxCanvas::itemDropped(const SourceDetails& details) {
     if(details.description.toString().startsWith("MCT_SYNTH_FILTER:")) {
-        page_.addSynthFilterCopy(toGraph(details.localPosition.toFloat()));
+        page_.addSynthFilterCopy(toGraph(details.localPosition.toFloat()),std::uint32_t(details.description.toString().fromFirstOccurrenceOf(":",false,false).getIntValue()));
         return;
     }
     const int id=details.description.toString().fromFirstOccurrenceOf(moduleDragPrefix,false,false).getIntValue();
@@ -3892,13 +3892,11 @@ void FxPage::refreshSidebar(bool includeControl) {
     }
     sidebar_.setRows(FxSidebar::Tab::Modulators,std::move(modulators));
 
-    // FILTERS: the canonical synth FILTER 1 (per voice, before the buses).
-    const bool filterOn=state.modulation.filterEnabled;
-    sidebar_.setRows(FxSidebar::Tab::Filters,{
-        {"SYNTH FILTERS",{},{},{},true,false,true,{}},
-        {"FILTER 1",filterOn ? "ON" : "OFF","Per-voice, before buses / drag: post-mix copy",
-         filterOn ? juce::String("MCT_SYNTH_FILTER:1") : juce::String(),true,filterOn,false,
-         [safe]{if(safe!=nullptr && safe->onOpenSynthFilter) safe->onOpenSynthFilter();}}});
+    // Synth identities are navigation/copy sources, never Nodes aliases.
+    std::vector<Row> filters{{"SYNTH / PER VOICE",{},{},{},true,false,true,{}}};
+    if(state.modulation.filterEnabled) filters.push_back({"LEGACY LP","ON","Per oscillator, before buses / drag: post-mix copy","MCT_SYNTH_FILTER:0",true,true,false,[safe]{if(safe && safe->onOpenSynthFilter) safe->onOpenSynthFilter();}});
+    for(const auto& f:state.modulation.synthFilters.filters) if(f.id) filters.push_back({"FILTER "+juce::String(f.id),f.power?"ON":"BYPASS","Drag: independent post-mix copy","MCT_SYNTH_FILTER:"+juce::String(f.id),true,true,false,[safe]{if(safe && safe->onOpenSynthFilter) safe->onOpenSynthFilter();}});
+    sidebar_.setRows(FxSidebar::Tab::Filters,std::move(filters));
 
     // BUSES: one canonical bus model; selecting a bus shows its graph.
     std::vector<Row> buses{{"AUDIO BUSES",{},{},{},true,false,true,{}}};
@@ -3967,13 +3965,15 @@ void FxPage::requestDeleteBus(BusId bus) {
     overlay_.show(*confirmPanel_,{0,0,560,190});
 }
 
-FxNodeId FxPage::addSynthFilterCopy(FxPoint centre) {
+FxNodeId FxPage::addSynthFilterCopy(FxPoint centre,SynthFilterId source) {
     // A post-mix FILTER module matching FILTER 1 (low-pass, cutoff, resonance).
     // The synth filter itself stays the single per-voice processor.
     InstrumentState state;
     if(bindings_.snapshot) state=bindings_.snapshot();
-    const float cutoff=state.parameters[static_cast<std::size_t>(ParameterId::Cutoff)];
-    const float resonance=state.parameters[static_cast<std::size_t>(ParameterId::Resonance)];
+    const auto slot=synthFilterSlot(state.modulation.synthFilters,source);
+    if(source && slot==maxSynthFilters) return invalidFxNodeId;
+    const auto values=slot<maxSynthFilters ? state.modulation.synthFilters.filters[slot].values : SynthFilterValues{state.parameters[static_cast<std::size_t>(ParameterId::Cutoff)],state.parameters[static_cast<std::size_t>(ParameterId::Resonance)]};
+    const float cutoff=values.cutoff,resonance=values.resonance;
     const auto created=addModuleAt({FxModuleKind::Effect,FxEffectType::Filter,0},centre);
     if(created==invalidFxNodeId) return created;
     const auto* d=findFxEffect(FxEffectType::Filter);
@@ -3986,6 +3986,8 @@ FxNodeId FxPage::addSynthFilterCopy(FxPoint centre) {
         // Synth resonance [0,1] maps to Q [0.5,4] (ARCHITECTURE.md).
         g.setParameter(created,6,juce::jlimit(0.0f,1.0f,normalized(*findFxParameter(*d,6),0.5f+3.5f*resonance)));
         g.setParameter(created,5,0.0f); // LOW PASS
+        g.setParameter(created,3,values.mix);
+        g.setParameter(created,8,juce::jlimit(0.0f,1.0f,normalized(*findFxParameter(*d,8),values.drive)));
         return true;
     });
     refresh(true);

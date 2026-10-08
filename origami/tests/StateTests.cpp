@@ -153,7 +153,7 @@ void nestedStateV34() {
     bool truncated=true;
     for(std::size_t n=0;n<bytes.size();++n) { InstrumentState t; truncated&=!decodeInstrumentState(bytes.data(),n,t); }
     check(truncated,"every truncation of a v34 state is rejected");
-    { auto future=bytes; word(future,4,36); check(!decodeInstrumentState(future.data(),future.size(),out),"an unknown future version (36) is rejected"); }
+    { auto future=bytes; word(future,4,37); check(!decodeInstrumentState(future.data(),future.size(),out),"an unknown future version (37) is rejected"); }
     // The state ends with the names: per macro a length word and one word per
     // character. MACRO 2 is "Wobble" (6), MACRO 3..16 are empty (14 words).
     const std::size_t tail=14*4,name2=bytes.size()-tail-6*4;
@@ -233,6 +233,35 @@ void instanceStateV35() {
     auto legacy=e->instrumentState();legacy.modulation.filterEnabled=true;const auto legacyBytes=encodeInstrumentState(legacy);
     check(legacyBytes[7]<35 && decodeInstrumentState(legacyBytes.data(),legacyBytes.size(),restored) && restored.modulation.filterEnabled,"legacy filter flag preserves authored topology");
 }
+void synthFiltersV36() {
+    auto e=std::make_unique<OrigamiEngine>();check(e->addOscillatorModule()!=0,"serial state includes second oscillator");auto state=e->instrumentState();auto& mod=state.modulation;
+    const auto bus=addBus(state.buses);state.oscillators[0].busRoutes[0]={bus,1};
+    const auto a=addSynthFilter(mod),b=addSynthFilter(mod);check(a && b,"filter identities allocate");
+    check(insertSynthFilter(mod,state.oscillators,a,1),"bus insertion");check(mod.synthFilters.filters[0].buses[0].bus==bus,"insert preserves previous bus");
+    check(insertSynthFilter(mod,state.oscillators,b,1) && mod.synthFilters.filters[1].next==a,"before insertion preserves existing chain");
+    const auto c=addSynthFilter(mod);check(insertSynthFilterAfter(mod,c,a),"AFTER insertion");
+    check(insertSynthFilter(mod,state.oscillators,b,2)==false,"conflicting shared destination rejects atomically");
+    mod.synthFilters.filters[1].values={1234,.78f,8,.6f,.5f};
+    const auto source=addSourceInstance(mod,SourceFamily::Envelope);mod.routes[0]={mod.nextRouteId++,true,source,{ModDestination::SynthCutoff,0,b},.4f,false};
+    auto roundtrip=[&] {const auto bytes=encodeInstrumentState(state);InstrumentState out;check(bytes[7]==36,"filter topology selects v36");check(decodeInstrumentState(bytes.data(),bytes.size(),out) && encodeInstrumentState(out)==bytes,"v36 exact filter/input/serial/bus/modulation roundtrip");return bytes;};
+    auto bytes=roundtrip();
+    {auto bad=bytes;word(bad,bad.size()-16*12+4,999);InstrumentState out;check(!decodeInstrumentState(bad.data(),bad.size(),out),"decoder rejects dangling filter identity");}
+    {auto bad=bytes;const auto first=bad.size()-(8+3*44+5*4+16*12)+8;word(bad,first+44,a);InstrumentState out;check(!decodeInstrumentState(bad.data(),bad.size(),out),"decoder rejects duplicate filter identity");}
+    {auto bad=bytes;const auto first=bad.size()-(8+3*44+5*4+16*12)+8;word(bad,first+8,b);InstrumentState out;check(!decodeInstrumentState(bad.data(),bad.size(),out),"decoder rejects serial cycle");}
+for(std::size_t n=bytes.size()-32;n<bytes.size();++n) {InstrumentState out;check(!decodeInstrumentState(bytes.data(),n,out),"truncated filter topology rejects");}
+    auto invalid=state;invalid.modulation.synthFilters.filters[0].next=b;check(!validInstrumentState(invalid),"filter cycle rejects");
+    invalid=state;invalid.modulation.synthFilters.filters[0].id=b;check(!validInstrumentState(invalid),"duplicate filter ID rejects");
+    invalid=state;invalid.modulation.synthFilters.inputs[0].filter=999;check(!validInstrumentState(invalid),"dangling filter ID rejects");
+    invalid=state;invalid.modulation.synthFilters.filters[0].buses[0].bus=999;check(!validInstrumentState(invalid),"invalid filter bus rejects");
+    check(removeSynthFilter(mod,b) && !mod.routes[0].id && mod.synthFilters.inputs[0].filter==a,"deleting stage splices and removes its modulation");roundtrip();
+    check(removeSynthFilter(mod,a) && mod.synthFilters.inputs[0].filter==c,"deleting upstream preserves serial downstream");
+    check(removeSynthFilter(mod,c) && mod.synthFilters.inputs[0].filter==0 && mod.synthFilters.inputs[0].buses[0].bus==bus,"terminal delete preserves downstream bus");roundtrip();
+    const auto fresh=addSynthFilter(mod);check(fresh>c,"deleted filter IDs never reused");
+    for(std::size_t n=1;n<maxSynthFilters;++n) check(addSynthFilter(mod)!=0,"professional bounded filter capacity");check(!addSynthFilter(mod),"filter capacity explicit");
+    check(removeBus(state,bus) && validInstrumentState(state),"bus deletion prunes filter and direct-splice destinations");
+    roundtrip();
+}
+
 void patches() {
     Patch p,out;std::string error;
     p.parameters[0]=.625f;
@@ -247,4 +276,4 @@ void patches() {
     check(!parsePatch(partial,out,error),"partial historical set rejected");
 }
 }
-int main() {try {states();nestedStateV34();instanceStateV35();patches();std::cout<<"PASS: "<<checks<<" state checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
+int main() {try {states();nestedStateV34();instanceStateV35();synthFiltersV36();patches();std::cout<<"PASS: "<<checks<<" state checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

@@ -13,6 +13,7 @@
 // mct-origami-v34.2.1-performance-reinforcement
 // mct-origami-v34.3.0-lfo-interaction-mod-properties
 #pragma once
+#include "../SynthFilter.h"
 #include "core/OscillatorModule.h"
 #include "core/dsp/Filter.h"
 #include "core/dsp/Envelope.h"
@@ -70,8 +71,10 @@ enum class ModDestination : std::uint32_t {
     // depth is identified by that id, never by its array index.
     LfoRate=301,      // the canonical LFO rate (Hz; BEATS / SECONDS / HZ are views)
     MacroValue=302,   // the macro's EFFECTIVE value (its stored base never moves)
-    RouteDepth=303    // the depth (amount) of another route
+    RouteDepth=303,    // the depth (amount) of another route
+    SynthCutoff=401,SynthResonance=402,SynthDrive=403,SynthMix=404,SynthKeytrack=405
 };
+constexpr bool isSynthFilterDestination(ModDestination d) noexcept {return d>=ModDestination::SynthCutoff && d<=ModDestination::SynthKeytrack;}
 constexpr bool isNestedDestination(ModDestination d) noexcept {
     return d==ModDestination::LfoRate || d==ModDestination::MacroValue || d==ModDestination::RouteDepth;
 }
@@ -397,6 +400,9 @@ struct SourceInstance {
     SequencerSettings sequencer{};
 };
 struct ModulationState {
+    SynthFilterCollection synthFilters{};
+    // Derived writer-side resolution, never serialized or UI-authored.
+    std::array<std::int8_t,32> preparedFilterRouteSlots=[]() constexpr {std::array<std::int8_t,32> slots{};for(auto& value:slots) value=-1;return slots;}();
     static constexpr std::size_t capacity=32;
     static constexpr std::size_t maxControlOperators=32;
     std::array<SourceInstance,maxSourceInstances> instances{};
@@ -438,6 +444,12 @@ std::size_t sourceInstanceSlot(const ModulationState&,ModSource) noexcept;
 const SourceInstance* findSourceInstance(const ModulationState&,ModSource) noexcept;
 ModSource addSourceInstance(ModulationState&,SourceFamily) noexcept;
 bool removeSourceInstance(ModulationState&,ModSource) noexcept;
+SynthFilterId addSynthFilter(ModulationState&) noexcept;
+bool removeSynthFilter(ModulationState&,SynthFilterId) noexcept;
+bool insertSynthFilter(ModulationState&,const std::array<OscillatorModuleState,16>&,SynthFilterId,OscillatorModuleId) noexcept;
+bool insertSynthFilterAfter(ModulationState&,SynthFilterId inserted,SynthFilterId before) noexcept;
+bool validSynthFilters(const SynthFilterCollection&,const std::array<OscillatorModuleState,16>&) noexcept;
+SynthFilterPlan prepareSynthFilters(ModulationState&,const std::array<OscillatorModuleState,16>&,const std::array<BusId,8>&,std::size_t) noexcept;
 const char* sourceFamilyName(SourceFamily) noexcept;
 
 inline std::size_t lfoIndexForItem(const ModulationState& s,std::uint32_t item) noexcept {
@@ -824,6 +836,8 @@ struct StereoModulationFrame {
 };
 
 struct ModulationFrame {
+    std::array<SynthFilterValues,maxSynthFilters> synthFilters{};
+    std::uint8_t synthFilterMask=0;
     std::array<OscillatorModuleState,16> modules{};
     ControlEventContext events{}; // N05: timing (global) + note state (per voice)
     // N04: operator outputs by storage slot (global operators evaluated in the
@@ -857,6 +871,8 @@ struct ModulationFrame {
         }
         for(std::size_t i=0;i<activeCount && i<active.size();++i)
             if((moduleMask>>active[i])&1u) modules[active[i]]=g.modules[active[i]];
+        if(g.synthFilterMask) synthFilters=g.synthFilters;
+        synthFilterMask=g.synthFilterMask;
         events=g.events; globalSources=g.globalSources;
         cutoff=g.cutoff; resonance=g.resonance; master=g.master; mainTuning=g.mainTuning; transpose=g.transpose;
         portaTime=g.portaTime; envelopeScaling=g.envelopeScaling; lfoScaling=g.lfoScaling; swing=g.swing;
@@ -868,10 +884,11 @@ struct ModulationFrame {
 
 // Fields copied by ModulationFrame::copyForVoice: the size is pinned so any
 // field change trips here and forces copyForVoice to be updated with it.
-static_assert(sizeof(ModulationFrame)==8928+4*maxSourceInstances+2*sizeof(float)*ModulationState::capacity+sizeof(StereoModulationFrame),"ModulationFrame changed: update copyForVoice");
+static_assert(sizeof(ModulationFrame)==8928+4*maxSourceInstances+2*sizeof(float)*ModulationState::capacity+sizeof(StereoModulationFrame)+sizeof(SynthFilterValues)*maxSynthFilters+8,"ModulationFrame changed: update copyForVoice");
 
 class CompiledModulation {
 public:
+    dsp::LowPassCoefficients synthFilterCoefficients(float cutoff,float resonance) const noexcept {return filterTable_.make(cutoff,resonance);}
     // Global slots: 0..12 as always (macros 1..4 at 4..7), 13..24 macros 5..16.
     // Voice slots follow (globalSourceCount + 0..12), then operator outputs.
     static constexpr std::size_t globalSourceCount=13+(maxMacros-4)+maxSourceInstances;
@@ -1163,6 +1180,7 @@ private:
         bool operator==(const ModulePlanKey&) const noexcept;
     };
     struct PlanKey {
+        std::array<std::int8_t,32> filterRouteSlots{};
         bool valid=false;
         double sampleRate=0.0;
         std::array<ModRoute,ModulationState::capacity> routes{};

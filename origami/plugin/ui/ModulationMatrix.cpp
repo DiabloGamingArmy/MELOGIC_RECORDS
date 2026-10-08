@@ -353,6 +353,7 @@ void ModulationMatrix::syncFromModel() {
         const auto id=macroIdOf(macro);
         dynamicDestinations.push_back({macroValueAddress(id),static_cast<std::uint32_t>(macroLabel(state.modulation,id).hashCode())});
     }
+    for(const auto& f:state.modulation.synthFilters.filters) if(f.id) dynamicDestinations.push_back({{ModDestination::SynthCutoff,0,f.id},f.id});
     if(bindings_.fxDestinations)
         for(const auto& fx:bindings_.fxDestinations())
             dynamicDestinations.push_back({fx.address,static_cast<std::uint32_t>(std::hash<std::string>{}(fx.group+fx.label))});

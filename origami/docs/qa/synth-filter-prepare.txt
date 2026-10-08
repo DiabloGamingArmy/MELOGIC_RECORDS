@@ -1,0 +1,1 @@
+maximum Synth topology writer validation/preparation/publication: median 6.833 us, p99 9.542 us

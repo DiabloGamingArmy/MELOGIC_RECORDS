@@ -505,7 +505,7 @@ public:
     void requestDeleteBus(BusId);
     bool deleteBus(BusId);
     juce::String busName(BusId) const;
-    fx::FxNodeId addSynthFilterCopy(fx::FxPoint centre);
+    fx::FxNodeId addSynthFilterCopy(fx::FxPoint centre,SynthFilterId source=0);
     fx::FxNodeId selectedNode() const noexcept { return selected_; }
     void selectNode(fx::FxNodeId);
     bool deleteNode(fx::FxNodeId);

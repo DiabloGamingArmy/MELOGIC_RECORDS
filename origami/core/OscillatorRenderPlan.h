@@ -2,6 +2,7 @@
 #pragma once
 #include "OscillatorModule.h"
 #include "BusModel.h"
+#include "SynthFilter.h"
 
 namespace mct::origami {
 using OscillatorProcessPlans=std::array<dsp::OscProcessPlan,16>;
@@ -16,6 +17,16 @@ struct BusSlotMap {
 // Compiled at a host-block boundary and shared by all voices. Only amounts
 // change at audio rate; IDs, enabled flags, types and ordering are topology.
 struct OscillatorRenderPlan {
+    SynthFilterPlan synthFilters{};
+    void adoptSynthFilters(const SynthFilterPlan& plan) noexcept {
+        synthFilters=plan;++generation;
+        for(std::size_t m=0;m<modules.size();++m) if(ids[m] && ids[m]==plan.oscillatorIds[m]) {
+            auto& module=modules[m];module.busSend=plan.directSends[m];module.mainBusSend=module.busSend[0];module.auxSends=false;
+            for(std::size_t b=1;b<plan.busCount;++b) module.auxSends|=module.busSend[b]!=0;
+        }
+        auxActive=false;for(std::size_t a=0;a<activeCount;++a) auxActive|=modules[active[a]].auxSends;
+        for(std::size_t f=0;f<plan.count;++f) for(std::size_t b=1;b<plan.busCount;++b) auxActive|=plan.stages[f].sends[b]!=0;
+    }
     struct Route {
         int source=-1;
         std::uint8_t amountSlot=0;

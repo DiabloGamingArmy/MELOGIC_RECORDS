@@ -2626,7 +2626,7 @@ void consolidationTests() {
     // measured 126.4 KiB, budget 128 KiB. No oscillator copies were added.
     static_assert(sizeof(Voice)<=128*1024,"voice footprint including source pool");
     // Measured 2331.8 KiB (was 2084.8): pool, mailbox and compiled/telemetry slots.
-    static_assert(sizeof(OrigamiEngine)<=2360*1024,"engine footprint including source pool");
+    static_assert(sizeof(OrigamiEngine)<=2400*1024,"engine footprint including bounded Synth routing and source pools");
     check(true,"memory gates hold (compile-time)");
 }
 

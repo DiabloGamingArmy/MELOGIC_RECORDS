@@ -17,6 +17,9 @@
 #include <cstddef>
 namespace mct::origami {
 struct RuntimeVisualizationSnapshot {
+    std::array<SynthFilterValues,maxSynthFilters> synthFilters{};
+    std::array<SynthFilterId,maxSynthFilters> synthFilterIds{};
+    double sampleRate=48000;
     static constexpr std::size_t waveformBins=256;
     std::array<float,maxSourceInstances> instancePhases{};
     std::array<EnvelopeRuntimeInfo,maxSourceInstances> instanceEnvelopes{};
@@ -175,7 +178,11 @@ private:
     void latchParameters() noexcept;
     float value(ParameterId id) const noexcept { return smooth_[static_cast<std::size_t>(id)].value; }
     ModulationState modulation_{}; // non-realtime model; never read in process
-    LatestStateMailbox<ModulationState> modulationMailbox_;
+    struct ModulationUpdate {ModulationState state{};SynthFilterPlan filters{};};
+    LatestStateMailbox<ModulationUpdate> modulationMailbox_;
+    SynthFilterPlan preparedSynthFilters_{},audioSynthFilters_{};
+    ModulationUpdate pendingModulationUpdate_{};
+    void publishModulation() noexcept;
     ModulationState audioModulation_{};
     CompiledModulation compiledModulation_;
     OscillatorRenderPlan oscillatorPlan_;
@@ -214,7 +221,6 @@ private:
     std::array<Voice::AuxSamples, voiceCount> lastAux_{};
     std::array<Voice::AuxSamples, voiceCount> stealAuxResidual_{};
     static BusSlotMap slotMapFor(const BusState&) noexcept;
-    LatestStateMailbox<BusSlotMap> busSlotMailbox_;
     BusSlotMap hostBusSlots_{};
     std::array<std::size_t, voiceCount> tailRemaining_{};
     dsp::Wavetable wavetable_;

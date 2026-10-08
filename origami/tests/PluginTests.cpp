@@ -2016,7 +2016,7 @@ void fxWorkspaceP03Audit() {
     }
     for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Sources)) mainInput|=r.label=="MAIN IN" && r.active;
     for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Filters))
-        filterTruth|=r.label=="FILTER 1" && r.detail.contains("before buses") && r.dragDescription=="MCT_SYNTH_FILTER:1";
+        filterTruth|=r.label=="LEGACY LP" && r.detail.contains("before buses") && r.dragDescription=="MCT_SYNTH_FILTER:0";
     check(mainBus && addBus && mainInput && filterTruth,"SOURCES / FILTERS / BUSES rows are truthful");
 
     // Clear: Origami-native confirmation, one undoable transaction.
@@ -6295,6 +6295,35 @@ void run() {
     check(observedWaveform,"oscillator viewport telemetry contains audio-rendered samples");
 }
 }
+void synthFilterCompletionUi() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,256);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;ui::OscillatorCard* card=nullptr;ui::FxPage* page=nullptr;
+    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;if(auto* osc=dynamic_cast<ui::OscillatorCard*>(&c)) if(osc->id()==1) card=osc;if(auto* fx=dynamic_cast<ui::FxPage*>(&c)) page=fx;});
+    check(panel && card,"Synth routing surfaces exist");check(p.getUiInstrumentState().modulation.synthFilters.nextId==1,"fresh UI has zero explicit filters");
+    const auto bus=p.addUiBus();auto osc=p.getUiOscillatorState(1);osc.busRoutes[0]={bus,1};check(p.setUiOscillatorState(1,osc),"OSC previous destination authors bus");
+    const auto f=panel->addFilter();check(f && card->dropSynthFilter(f),"Filter -> oscillator invokes canonical insertion");
+    auto state=p.getUiInstrumentState();check(state.modulation.synthFilters.filters[0].buses[0].bus==bus,"UI insertion preserves previous bus");
+    const auto second=panel->addFilter();check(second && panel->dropFilterOnOscillator(second,1),"reverse oscillator -> filter uses same insertion command");
+    const auto third=panel->addFilter();check(third && panel->dropFilterAfter(third,f),"explicit AFTER insertion preserves chain");
+    state=p.getUiInstrumentState();check(state.modulation.synthFilters.filters[1].next==f && state.modulation.synthFilters.filters[0].next==third,"UI serial routing is canonical engine state");
+    auto mod=state.modulation;const auto env=addSourceInstance(mod,SourceFamily::Envelope);const auto random=addSourceInstance(mod,SourceFamily::Random);
+    mod.routes[0]={mod.nextRouteId++,true,env,{ModDestination::SynthCutoff,0,f},-.5f,false};mod.routes[1]={mod.nextRouteId++,true,random,{ModDestination::SynthDrive,0,f},.2f,true};check(p.setUiModulationState(mod),"scalable sources modulate filter knobs");
+    auto catalog=ui::modulationDestinationCatalog(p.getUiInstrumentState(),{});check(std::count_if(catalog.begin(),catalog.end(),[](const auto& entry){return isSynthFilterDestination(entry.address.parameter);})==15,"Nodes/Matrix canonical catalog has five destinations per filter");
+    const ModAddress resonance{ModDestination::SynthResonance,0,f};
+    check(page && page->addParameterNode(resonance) && page->connectControl(ModSource::Lfo2,resonance).creatable(),"Nodes authors same per-voice filter destination");
+    panel->syncFromModel();bool tagged=false;walk(*panel,[&](auto& c){if(auto* knob=dynamic_cast<juce::Slider*>(&c)) if(knob->getProperties().contains("mct.mod.itemId")) {check(int(knob->getProperties()["mct.mod.itemId"])==int(third),"knob assignment targets selected stable filter identity");tagged=true;}});check(tagged,"filter knob assignments tagged");
+    // Paint the actual panel for inspection; analytic response derives from DSP.
+    panel->setSize(700,280);juce::Image image(juce::Image::ARGB,700,280,true);juce::Graphics g(image);panel->paintEntireComponent(g,true);juce::File file("/tmp/origami-synth-filter-ui.png");file.deleteFile();if(auto out=file.createOutputStream()) {juce::PNGImageFormat png;png.writeImageToStream(image,*out);}
+    juce::MemoryBlock saved;p.getStateInformation(saved);OrigamiAudioProcessor restored;restored.setStateInformation(saved.getData(),int(saved.getSize()));
+    auto decoded=restored.getUiInstrumentState();check(decoded.modulation.synthFilters.filters[0].next==third && decoded.modulation.routes[0].destination.itemId==f,"plugin binary wrapper restores serial chain and modulation");
+    check(restored.getUiControlLayout().find(nodes::parameterKey(resonance))!=nullptr,"placed Synth parameter node survives wrapper restore");
+    check(panel->removeFilter(f),"UI removal splices filter");state=p.getUiInstrumentState();check(state.modulation.synthFilters.filters[1].next==third && !state.modulation.routes[0].id,"UI splice preserves downstream and prunes destinations");
+    page->syncFromModel();check(!p.getUiControlLayout().find(nodes::parameterKey(resonance)) && !page->controlGraph().find(nodes::parameterKey(resonance)),"deleted filter leaves no placed Nodes destination or cable");
+    check(p.removeUiBus(bus),"bus deletion handles Synth filter output");check(validInstrumentState(p.getUiInstrumentState()),"no dangling Synth bus destination");
+    check(p.removeUiOscillator(2),"oscillator deletion preserves valid filter model");
+    check(p.loadUiInitPreset(),"Init loads after explicit filter patch");for(const auto& filter:p.getUiInstrumentState().modulation.synthFilters.filters) check(!filter.id,"Init contains zero Synth instances");
+}
+
 int main(){juce::ScopedJuceInitialiser_GUI gui;
 // Preferences stay in memory (the user's file is never touched). The
 // shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
@@ -6304,5 +6333,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{synthFilterCompletionUi();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

@@ -1360,12 +1360,67 @@ void correctiveSpectralPreview() {
     check(last>.99f,"saw viewport ends on final positive sample rather than artificial negative edge");
 }
 
+void synthFilterRoutingAudit() {
+    const auto make=[](int oscillators) {
+        auto e=std::make_unique<OrigamiEngine>();check(e->prepare(48000,256,2),"Synth filter engine prepares");
+        for(int n=1;n<oscillators;++n) check(e->addOscillatorModule()!=0,"filter fixture adds oscillator");
+        auto state=e->instrumentState();for(auto& m:state.oscillators) if(m.id) m.enabled=m.id<=unsigned(oscillators);
+        state.parameters[std::size_t(ParameterId::Waveform)]=1;applyLegacyOscillatorParameters(state.oscillators[0],state.parameters);
+        check(e->restoreInstrumentState(state),"Synth filter fixture restores");e->setMasterAfterFx(true);return e;
+    };
+    auto dry=make(2),wet=make(2);auto state=wet->instrumentState();auto mod=state.modulation;
+    const auto f=addSynthFilter(mod);check(f && insertSynthFilter(mod,state.oscillators,f,1) && insertSynthFilter(mod,state.oscillators,f,2),"two oscillators share one filter identity");
+    mod.synthFilters.filters[0].values={950,.4f,12,.7f,0};check(wet->setModulationState(mod),"shared filter topology adopts");
+    dry->noteOn(60,.7f);wet->noteOn(60,.7f);
+    dsp::LowPassCoefficientTable table;table.prepare(48000);const auto c=table.make(950,.4f);dsp::LowPassFilter ref[2];
+    std::array<float,256> dl{},dr{},wl{},wr{};float* d[]{dl.data(),dr.data()},*w[]{wl.data(),wr.data()};double energy=0,difference=0;
+    const double gain=dsp::fastExp2Audio(12/6.020599913);
+    for(int block=0;block<24;++block) {check(dry->process(d,2,256) && wet->process(w,2,256),"shared filter renders");for(std::size_t n=0;n<256;++n) for(int ch=0;ch<2;++ch) {
+        const float input=2*(ch?dr[n]:dl[n]);const float driven=float(std::tanh(gain*input)/std::sqrt(gain));
+        const float expected=.5f*(input+.7f*(ref[ch].next(driven,c)-input));const float actual=ch?wr[n]:wl[n];
+        check(std::abs(expected-actual)<3e-6f,"shared filter executes once over the per-voice sum, with preserved normalization");energy+=actual*actual;difference+=std::abs(actual-(ch?dr[n]:dl[n]));}}
+    check(energy>1e-4 && difference>1,"filter changes audible output");
+    // New polyphonic sources resolve through the existing compiler and values.
+    const auto env=addSourceInstance(mod,SourceFamily::Envelope);const auto lfo=addSourceInstance(mod,SourceFamily::Lfo);
+    mod.routes[0]={mod.nextRouteId++,true,env,{ModDestination::SynthCutoff,0,f},-.4f,false};
+    mod.routes[1]={mod.nextRouteId++,true,lfo,{ModDestination::SynthResonance,0,f},.3f,false};
+    mod.instances[sourceInstanceSlot(mod,lfo)].lfo.mode=LfoMode::Loop;
+    const auto random=addSourceInstance(mod,SourceFamily::Random);mod.instances[sourceInstanceSlot(mod,random)].random.rateHz=40;mod.routes[2]={mod.nextRouteId++,true,random,{ModDestination::SynthDrive,0,f},.3f,true};
+    check(wet->setModulationState(mod),"ENV4 and LFO5 drive canonical filter destinations");
+    auto tail=f;for(std::size_t n=1;n<maxSynthFilters;++n) {const auto next=addSynthFilter(mod);check(insertSynthFilterAfter(mod,next,tail),"maximum serial filter topology");tail=next;}check(wet->setModulationState(mod),"maximum filter topology adopts");
+    for(int n=0;n<16;++n) wet->noteOn(48+n,.6f);
+    allocations.store(0);frees.store(0);guardAllocations.store(true);bool processed=true;for(int block=0;block<8;++block) processed=wet->process(w,2,256) && processed;const auto observedId=wet->runtimeVisualizationSnapshot().synthFilterIds[0];const auto observed=wet->runtimeVisualizationSnapshot().synthFilters[0];wet->emergencyResetRuntime();guardAllocations.store(false);const auto filterAllocations=allocations.load(),filterFrees=frees.load();
+    check(processed,"filter adoption and sixteen voices process under guard");
+    check(observedId==f && std::abs(observed.cutoff-950)>10 && std::abs(observed.resonance-.4f)>.001f,"observed ENV4/LFO5 filter modulation is effective per voice");
+    check(observed.drive>=0 && observed.drive<=24,"Random2 filter drive remains bounded");
+    auto performance=wet->performanceState();performance.voiceMode=VoiceMode::Mono;performance.legato=true;check(wet->setPerformanceState(performance),"Synth filters enter mono/legato");
+    allocations.store(0);frees.store(0);guardAllocations.store(true);wet->noteOn(60,.5f);wet->noteOn(64,.6f);processed=wet->process(w,2,256);wet->noteOff(64);processed=wet->process(w,2,256) && processed;guardAllocations.store(false);check(processed && wet->activeVoiceCount()==1,"filter lifecycle survives mono retarget and release");
+#ifndef ORIGAMI_SANITIZED
+    check(!allocations.load() && !frees.load(),"mono filter lifecycle has zero allocations/frees");
+#endif
+#ifndef ORIGAMI_SANITIZED
+    check(!filterAllocations && !filterFrees,"filter processing/adoption/reset has zero allocations/frees");
+#endif
+    auto reordered=mod;std::swap(reordered.synthFilters.filters[0],reordered.synthFilters.filters[1]);
+    check(wet->setModulationState(reordered) && wet->process(w,2,256),"reordered storage adopts stable filter identities");
+    const auto rebound=wet->runtimeVisualizationSnapshot();
+    check(rebound.synthFilterIds[1]==f && std::abs(rebound.synthFilters[1].resonance-.4f)>.001f,"unchanged route identities recompile when prepared runtime slots move");
+    // Chord output must equal the sum of independent note/filter lifetimes.
+    auto poly=make(1);auto m=poly->instrumentState().modulation;const auto pf=addSynthFilter(m);check(insertSynthFilter(m,poly->instrumentState().oscillators,pf,1),"poly filter inserts");m.synthFilters.filters[0].values={600,.2f,0,1,1};check(poly->setModulationState(m),"poly keytrack state");
+    std::array<std::unique_ptr<OrigamiEngine>,3> solo;std::array<std::array<float,256>,3> left{},right{};
+    for(int n=0;n<3;++n) {solo[n]=make(1);check(solo[n]->setModulationState(m),"independent filter fixture");solo[n]->noteOn(60+n*4,.3f);poly->noteOn(60+n*4,.3f);}
+    for(int block=0;block<16;++block) {check(poly->process(w,2,256),"poly renders");for(int n=0;n<3;++n) {float* out[]{left[n].data(),right[n].data()};check(solo[n]->process(out,2,256),"solo renders");}for(std::size_t n=0;n<256;++n) {check(std::abs(wl[n]-left[0][n]-left[1][n]-left[2][n])<4e-6f,"per-voice keytracked filter state is independent");}}
+    // Every supported sample rate/extreme must retain finite, bounded state.
+    for(double rate:{8000.,22050.,44100.,48000.,96000.,192000.,384000.}) {table.prepare(rate);for(float cutoff:{20.f,1000.f,20000.f}) for(float res:{0.f,1.f}) {dsp::LowPassFilter filter;const auto coeff=table.make(cutoff,res);for(int n=0;n<4096;++n) {const float sample=filter.next(n==0?1.f:0.f,coeff);check(std::isfinite(sample) && std::abs(sample)<8,"extreme Synth TPT remains finite and bounded");}}}
+}
+
 int main() {
     // OrigamiEngine/Voice are intentionally large fixed-storage realtime
     // objects. Keep every engine-heavy regression off the process stack so the
     // test runner cannot overflow before it reaches its first diagnostic.
     // Production engine ownership already follows this pattern.
     try {
+        synthFilterRoutingAudit();
         correctiveSpectralPreview();
         sourceInstanceRealtimeAudit();
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();

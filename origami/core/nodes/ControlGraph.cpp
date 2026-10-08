@@ -185,6 +185,13 @@ bool ControlLayout::operator==(const ControlLayout& o) const noexcept {
     return true;
 }
 
+void ControlLayout::pruneSynthFilterDestinations(const ModulationState& m) noexcept {
+    entries_.erase(std::remove_if(entries_.begin(),entries_.end(),[&](const ControlLayoutEntry& e) {
+        return e.key.kind==ControlNodeKind::Parameter && isSynthFilterDestination(e.key.destination.parameter)
+            && synthFilterSlot(m.synthFilters,e.key.destination.itemId)==maxSynthFilters;
+    }),entries_.end());
+}
+
 std::vector<std::uint8_t> ControlLayout::encode() const {
     std::vector<std::uint8_t> b;
     bool operators=false;

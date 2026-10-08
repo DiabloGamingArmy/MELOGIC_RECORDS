@@ -11,34 +11,43 @@ class MixerPanel final : public Panel {
 public: MixerPanel():Panel("MIXER") {}
 private: void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
 };
-class FilterPanel final : public Panel {
+class FilterPanel final : public Panel,public juce::DragAndDropTarget {
 public:
-    using ParameterSetter=std::function<bool(mct::origami::ParameterId,float)>;
-    using ParameterGetter=std::function<float(mct::origami::ParameterId)>;
-    // mct-origami-core-controls-v18.2
+    using ParameterSetter=std::function<bool(ParameterId,float)>;
+    using ParameterGetter=std::function<float(ParameterId)>;
     FilterPanel(ParameterSetter setter={},ParameterGetter getter={},ModulationBindings bindings={});
     void resized() override;
     void syncFromModel();
+    SynthFilterId addFilter();
+    bool removeFilter(SynthFilterId);
+    bool dropFilterOnOscillator(SynthFilterId,OscillatorModuleId);
+    bool dropFilterAfter(SynthFilterId,SynthFilterId);
+    SynthFilterId selectedFilter() const noexcept {return selectedId_;}
+    bool isInterestedInDragSource(const SourceDetails&) override;
+    void itemDragEnter(const SourceDetails&) override;
+    void itemDragExit(const SourceDetails&) override;
+    void itemDropped(const SourceDetails&) override;
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     void paintOverChildren(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
-    bool filterDragStarted_=false;
-    ParameterSetter setter_;
-    ParameterGetter getter_;
-    ModulationBindings bindings_;
-    bool filterEnabled_=true;
-    juce::Slider cutoff_,resonance_;
-    juce::Label cutoffLabel_,resonanceLabel_;
-    juce::TextButton filter1_{"FILTER 1"},filterAdd_{"+"},filterRemove_{"-"};
-    struct Grip final : juce::Component {
-        Grip() { setInterceptsMouseClicks(false,false); }
-        void paint(juce::Graphics&) override;
-    } filterGrip_;
-    juce::Viewport filterViewport_;
-    juce::Component filterContent_;
-    juce::Rectangle<int> filterRail_{};
+    void editValues();
+    void showOutputMenu();
+    bool commit(ModulationState);
+    ParameterSetter setter_;ParameterGetter getter_;ModulationBindings bindings_;
+    InstrumentState state_{};
+    SynthFilterId selectedId_=0;
+    bool legacy_=false,dragStarted_=false,dropOver_=false,syncing_=false;
+    std::array<juce::TextButton,maxSynthFilters+1> tabs_{};
+    std::array<SynthFilterId,maxSynthFilters+1> tabIds_{};
+    std::size_t tabCount_=0;
+    std::array<juce::Slider,5> knobs_{};
+    std::array<juce::Label,5> labels_{};
+    juce::TextButton add_{"+"},remove_{"-"},output_{"MAIN"},power_{"ON"};
+    juce::Viewport viewport_;juce::Component railContent_;
+    dsp::LowPassCoefficientTable responseTable_;
+    double responseRate_=0;
 };
 class FxPanel final : public Panel {
 public: explicit FxPanel(bool pre):Panel(pre?"FX PRE":"FX POST"),pre_(pre) {}

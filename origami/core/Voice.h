@@ -45,6 +45,8 @@ struct PerformanceInputSnapshot {
     std::array<std::uint8_t,128> velocity{};
 };
 struct VoiceVisualizationSnapshot {
+    std::array<SynthFilterValues,maxSynthFilters> synthFilters{};
+    std::array<SynthFilterId,maxSynthFilters> synthFilterIds{};
     std::array<float,CompiledModulation::voiceSourceCount> sources{};
     std::array<float,maxSourceInstances> instancePhases{};
     std::array<EnvelopeRuntimeInfo,maxSourceInstances> instanceEnvelopes{};
@@ -67,7 +69,7 @@ public:
                         float pitchBendSemitones,float pitchBendNormalized,
                         float modWheel,float aftertouch,const OscillatorRenderPlan&,const OscillatorProcessPlans&,bool observe=true) noexcept;
 private:
-    template<bool Stereo>
+    template<bool Stereo,bool Synth>
     Samples render(const std::array<const dsp::Wavetable*,16>&,const ModulationFrame&,float sustain,
                    const CompiledModulation&,const ModulationState&,float pitchBendSemitones,float pitchBendNormalized,
                    float modWheel,float aftertouch,const OscillatorRenderPlan&,const OscillatorProcessPlans&,bool observe) noexcept;
@@ -90,6 +92,8 @@ public:
     const AuxSamples& aux() const noexcept { return aux_; }
 private:
     AuxSamples aux_{};
+    std::array<SynthFilterRuntime,maxSynthFilters> synthFilterRuntime_{};
+    float filterSmoothing_=1;
     dsp::EnvelopeSettings ampSettings_{};   // ENV 1 settings of the current note (graph triggers reuse them)
     bool oneShotRelease_=false;             // a graph trigger after release: release when it reaches sustain
     std::array<float,CompiledModulation::voiceSourceCount> lastSources_{};

@@ -21,6 +21,12 @@ std::vector<ModulationDestinationEntry> modulationDestinationCatalog(const Instr
         add("Filter",{ModDestination::Resonance,0},"RESONANCE");
     }
 
+    for(const auto& f:state.modulation.synthFilters.filters) if(f.id) {
+        const auto group="SYNTH FILTER "+juce::String(f.id);
+        const char* names[]{"CUTOFF","RESONANCE","DRIVE","MIX","KEYTRACK"};
+        for(std::uint32_t i=0;i<5;++i) add(group,{static_cast<ModDestination>(401+i),0,f.id},names[i]);
+    }
+
     struct OscDestinationSpec { ModDestination destination; const char* label; };
     static constexpr OscDestinationSpec oscillatorDestinations[] {
         {ModDestination::WtPosition,"WT POS"},

@@ -104,6 +104,8 @@ bool OrigamiAudioProcessor::removeUiBus(mct::origami::BusId id) noexcept {
         // Retarget oscillator sends first (the bus still exists), then drop it.
         for(const auto& module:next.oscillators)
             if(module.id && !engine_.setOscillatorModuleState(module.id,module)) return false;
+        if(!engine_.setModulationState(next.modulation)) return false;
+        uiInstrumentState_.modulation=next.modulation;
         if(!engine_.setBusState(next.buses)) return false;
         for(auto& module:uiInstrumentState_.oscillators)
             if(module.id) module=engine_.oscillatorModuleState(module.id);
@@ -989,6 +991,7 @@ bool OrigamiAudioProcessor::restoreState(const void* data, int size) {
     fxWorkspace_.onChanged=std::move(notify);
     // States without the trailer (pre-N03) use the deterministic default layout.
     if(controlLayout) controlLayout_=std::move(*controlLayout); else controlLayout_.clear();
+    controlLayout_.pruneSynthFilterDestinations(state.modulation);
     syncFxRenderer();
     return true;
 }
@@ -1124,6 +1127,7 @@ bool OrigamiAudioProcessor::setUiModulationState(const mct::origami::ModulationS
         mct::origami::pruneDanglingNestedRoutes(repaired);
         if(!engine_.setModulationState(repaired)) return false;
         uiInstrumentState_.modulation=repaired;
+        controlLayout_.pruneSynthFilterDestinations(repaired);
         bumpUiModelRevision();
     }
     setMacroParametersFromModel(repaired); // DAW parameters follow the macro bases / names
@@ -1217,7 +1221,7 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
     uiInstrumentState_.oscillators=compact;
     bumpUiModelRevision();
 
-    auto mod=uiInstrumentState_.modulation;
+    auto mod=uiInstrumentState_.modulation;for(auto& in:mod.synthFilters.inputs) if(in.oscillator==id) in={};
     std::size_t routeOut=0;
     for(const auto& route:mod.routes)
         if(route.id && route.destination.oscillator!=id)
