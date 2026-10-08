@@ -6350,6 +6350,44 @@ void synthFilterCompletionUi() {
     check(p.loadUiInitPreset(),"Init loads after explicit filter patch");for(const auto& filter:p.getUiInstrumentState().modulation.synthFilters.filters) check(!filter.id,"Init contains zero Synth instances");
 }
 
+void synthFilterVisualComposition() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,256);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    ui::FilterPanel* filter=nullptr;ui::ModulationPanel* modulation=nullptr;
+    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) filter=f;if(auto* m=dynamic_cast<ui::ModulationPanel*>(&c)) modulation=m;});
+    check(filter && modulation,"visual composition uses actual Synth panels");
+    filter->setSize(662,355);modulation->setSize(778,355);
+    const auto save=[](const juce::Image& image,const juce::String& name){juce::File file("/tmp/"+name);file.deleteFile();if(auto out=file.createOutputStream()) {juce::PNGImageFormat png;png.writeImageToStream(image,*out);}};
+    int authored=0;
+    for(int count:{1,3,8}) {
+        while(authored<count) {check(filter->addFilter()!=0,"visual fixture adds canonical filter");++authored;}
+        check(filter->dropFilterOnOscillator(filter->selectedFilter(),1),"visual fixture exposes actual oscillator input and preserved serial output");
+        const auto r=filter->editorRegions();
+        check(r.header.getBottom()==r.routing.getY() && r.routing.getBottom()<r.response.getY() && r.response.getBottom()<r.parameters.getY(),"header/routing/response/parameters form deliberate ordered regions");
+        check(r.response.getHeight()<=150 && r.response.getHeight()>90 && r.parameters.getHeight()==96 && filter->contentBounds().getBottom()-r.parameters.getBottom()>=12,"graph proportion and parameter breathing room are bounded");
+        bool selectedVisible=false,footerContains=true,controlsContained=true;juce::Viewport* viewport=nullptr;
+        walk(*filter,[&](auto& c){if(auto* v=dynamic_cast<juce::Viewport*>(&c)) viewport=v;});
+        const auto rail=ui::sourceRailLayout(filter->contentBounds());
+        walk(*filter,[&](auto& c){
+            if(auto* row=dynamic_cast<ui::SourceEntityButton*>(&c)) if(row->isVisible() && row->getToggleState()) selectedVisible=viewport->getBounds().contains(filter->getLocalArea(row,row->getLocalBounds()));
+            if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="+" || b->getButtonText()=="-") footerContains &= rail.rail.contains(b->getBounds()) && b->getY()>viewport->getBottom();
+            if(auto* k=dynamic_cast<juce::Slider*>(&c)) controlsContained &= r.parameters.contains(k->getBounds());
+        });
+        check(selectedVisible && footerContains && controlsContained,"selected row remains visible without footer/parameter collisions at each capacity");
+        if(count==8) {
+            const int selectedScroll=viewport->getViewPositionY();check(selectedScroll>0,"full filter rail scrolls selected last row into view");
+            viewport->setViewPosition(0,0);filter->syncFromModel();check(viewport->getViewPositionY()==0,"model polling preserves deliberate user scroll away from selection");viewport->setViewPosition(0,selectedScroll);
+        }
+        juce::Image panel(juce::Image::ARGB,662,355,true);juce::Graphics gp(panel);filter->paintEntireComponent(gp,true);
+        save(panel,"origami-filter-ui2-"+juce::String(count)+".png");
+        juce::Image comparison(juce::Image::ARGB,1440,355,true);juce::Graphics gc(comparison);modulation->paintEntireComponent(gc,true);gc.setOrigin(778,0);filter->paintEntireComponent(gc,true);
+        save(comparison,"origami-filter-ui2-comparison-"+juce::String(count)+".png");
+    }
+    walk(*editor,[&](auto& c){if(auto* rack=dynamic_cast<ui::OscillatorRack*>(&c)) rack->syncFromModel();});
+    // The actual whole Synth canvas also proves the lower regions stay above keys.
+    juce::Image canvas(juce::Image::ARGB,editor->getWidth(),editor->getHeight(),true);juce::Graphics g(canvas);editor->paintEntireComponent(g,true);save(canvas,"origami-filter-ui2-synth.png");
+}
+
 int main(){juce::ScopedJuceInitialiser_GUI gui;
 // Preferences stay in memory (the user's file is never touched). The
 // shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
@@ -6359,5 +6397,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{synthFilterCompletionUi();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

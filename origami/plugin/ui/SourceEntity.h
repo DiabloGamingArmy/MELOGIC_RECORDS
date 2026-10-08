@@ -127,6 +127,17 @@ inline void paintSourceRailHeader(juce::Graphics& g,juce::Rectangle<int> title) 
     g.setColour(Palette::borderSoft());g.drawRoundedRectangle(box,2.5f,1.0f);
     text(g,"SOURCE",title,Type::label,Palette::secondary(),juce::Justification::centred);
 }
+// Close a sparse collection with a footer band inside the rail's perimeter.
+// Empty list space remains part of the same inset surface, not the editor.
+inline void paintSourceRail(juce::Graphics& g,const SourceRailLayout& layout) {
+    well(g,layout.rail);
+    const int footerTop=layout.remove.getY()-5;
+    g.setColour(Palette::raised());
+    g.fillRect(layout.rail.getX()+1,footerTop,layout.rail.getWidth()-2,layout.rail.getBottom()-footerTop-1);
+    g.setColour(Palette::border());
+    g.drawHorizontalLine(footerTop,float(layout.rail.getX()+1),float(layout.rail.getRight()-1));
+    paintSourceRailHeader(g,layout.header);
+}
 inline constexpr int sourceListTopGap=3,sourceRowGap=2;
 
 }

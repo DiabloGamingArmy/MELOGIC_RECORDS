@@ -90,28 +90,45 @@ void FilterPanel::showOutputMenu() {
     for(std::size_t f=0;f<maxSynthFilters;++f) if(state_.modulation.synthFilters.filters[f].id) {auto probe=state_.modulation;probe.synthFilters.filters[slot].next=probe.synthFilters.filters[f].id;const bool valid=validSynthFilters(probe.synthFilters,state_.oscillators);items.push_back({int(100+f),"FILTER "+juce::String(probe.synthFilters.filters[f].id),valid,"SERIAL FILTER",false,valid?juce::String():juce::String("Would create a cycle"),{}});}
     showNativeChoiceMenu(output_,"Filter output",items,0,[safe=juce::Component::SafePointer<FilterPanel>(this),slot](int choice){if(!safe) return;auto mod=safe->bindings_.snapshot().modulation;auto& f=mod.synthFilters.filters[slot];if(choice>=100) f.next=mod.synthFilters.filters[std::size_t(choice-100)].id;else {f.next=0;f.busCount=1;f.buses[0]={safe->state_.buses.buses[std::size_t(choice-1)].id,1};}safe->commit(mod);});
 }
-juce::Rectangle<int> FilterPanel::responseBounds() const noexcept {
-    auto body=sourceRailLayout(contentBounds()).editor;
-    body.removeFromTop(44);body.removeFromBottom(80);body.removeFromBottom(20);return body;
+FilterPanel::EditorRegions FilterPanel::editorRegions() const noexcept {
+    auto body=sourceRailLayout(contentBounds()).editor.reduced(4,0);
+    EditorRegions r;r.header=body.removeFromTop(28);r.routing=body.removeFromTop(26);
+    body.removeFromTop(6);body.removeFromBottom(12);
+    r.parameters=body.removeFromBottom(96);body.removeFromBottom(8);r.response=body;
+    return r;
 }
 void FilterPanel::resized() {
-    const auto layout=sourceRailLayout(contentBounds());auto body=layout.editor;
+    const auto layout=sourceRailLayout(contentBounds());
     remove_.setBounds(layout.remove);add_.setBounds(layout.add);viewport_.setBounds(layout.list);
     const int width=juce::jmax(1,layout.list.getWidth());
     for(std::size_t i=0;i<tabCount_;++i) tabs_[i].setBounds(0,sourceListTopGap+int(i)*SourceEntityButton::baseHeight,width,SourceEntityButton::baseHeight-sourceRowGap);
     railContent_.setSize(width,juce::jmax(layout.list.getHeight(),sourceListTopGap+int(tabCount_)*SourceEntityButton::baseHeight));
-    body.removeFromTop(18);auto head=body.removeFromTop(26);power_.setBounds(head.removeFromRight(70));head.removeFromRight(3);output_.setBounds(head.removeFromRight(juce::jmin(175,head.getWidth())));
-    auto controls=body.removeFromBottom(80);const int cellWidth=controls.getWidth()/5;
+    const juce::Point<int> viewportSize{viewport_.getWidth(),viewport_.getHeight()};
+    if(revealedId_!=selectedId_ || revealedViewportSize_!=viewportSize) for(std::size_t i=0;i<tabCount_;++i) if(tabIds_[i]==selectedId_) {
+        const int top=tabs_[i].getY(),bottom=tabs_[i].getBottom(),view=viewport_.getViewPositionY();
+        if(top<view) viewport_.setViewPosition(0,top);
+        else if(bottom>view+viewport_.getHeight()) viewport_.setViewPosition(0,bottom-viewport_.getHeight());
+    }
+    revealedId_=selectedId_;revealedViewportSize_=viewportSize;
+    const auto regions=editorRegions();auto head=regions.header.reduced(4);
+    power_.setBounds(head.removeFromRight(48));head.removeFromRight(4);
+    output_.setBounds(head.removeFromRight(juce::jmin(145,head.getWidth()/2)));
+    auto controls=regions.parameters.reduced(0,12);const int cellWidth=controls.getWidth()/5;
     for(std::size_t i=0;i<5;++i) {auto cell=controls.removeFromLeft(cellWidth);labels_[i].setBounds(cell.removeFromBottom(17));knobs_[i].setBounds(cell.reduced(2));}
 }
 void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
-    const auto layout=sourceRailLayout(body);well(g,layout.rail);paintSourceRailHeader(g,layout.header);body=layout.editor;
+    const auto layout=sourceRailLayout(body);paintSourceRail(g,layout);body=layout.editor;
     if(!tabCount_) {text(g,"NO SYNTH FILTERS — + TO ADD",body,Type::label,Palette::muted(),juce::Justification::centred);return;}
-    text(g,legacy_?"LEGACY / PER OSCILLATOR":"LOW-PASS / PER VOICE",body.removeFromTop(18),Type::secondary,Palette::muted());
-    body.removeFromTop(26);body.removeFromBottom(80);auto context=body.removeFromBottom(20);juce::String inputs="IN: ";
+    const auto regions=editorRegions();well(g,regions.header);
+    auto caption=regions.header.reduced(8,0);caption.setRight(output_.isVisible()?output_.getX()-4:caption.getRight());
+    text(g,legacy_?"LEGACY / PER OSCILLATOR":"LOW-PASS / PER VOICE",caption,Type::secondary,Palette::secondary());
+    g.setColour(Palette::borderSoft());
+    g.drawHorizontalLine(regions.routing.getBottom(),float(regions.routing.getX()),float(regions.routing.getRight()));
+    g.drawHorizontalLine(regions.parameters.getY(),float(regions.parameters.getX()),float(regions.parameters.getRight()));
+    juce::String inputs="IN: ";
     if(legacy_) inputs+="ALL OSCILLATORS";
     else {bool first=true;for(const auto& in:state_.modulation.synthFilters.inputs) if(in.filter==selectedId_) {if(!first) inputs+=", ";unsigned ordinal=0;for(const auto& m:state_.oscillators) if(m.id) {++ordinal;if(m.id==in.oscillator) inputs+="OSC "+juce::String(ordinal);}first=false;}for(const auto& f:state_.modulation.synthFilters.filters) if(f.id && f.next==selectedId_) {if(!first) inputs+=", ";inputs+="FILTER "+juce::String(f.id);first=false;}if(first) inputs+="UNCONNECTED";}
-    text(g,inputs,context,Type::secondary,Palette::muted());well(g,body);auto plot=body.reduced(8).toFloat();
+    text(g,inputs,regions.routing.reduced(8,0),Type::secondary,Palette::secondary());body=regions.response;well(g,body);auto plot=body.reduced(8).toFloat();
     SynthFilterValues values;const auto slot=synthFilterSlot(state_.modulation.synthFilters,selectedId_);if(slot<maxSynthFilters) values=state_.modulation.synthFilters.filters[slot].values;else if(getter_) {values.cutoff=getter_(ParameterId::Cutoff);values.resonance=getter_(ParameterId::Resonance);}
     auto visual=bindings_.visualization?bindings_.visualization():RuntimeVisualizationSnapshot{};
     if(slot<maxSynthFilters && visual.synthFilterIds[slot]==selectedId_) values=visual.synthFilters[slot];

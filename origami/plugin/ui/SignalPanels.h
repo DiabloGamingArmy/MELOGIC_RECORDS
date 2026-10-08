@@ -24,7 +24,9 @@ public:
     bool dropFilterOnOscillator(SynthFilterId,OscillatorModuleId);
     bool dropFilterAfter(SynthFilterId,SynthFilterId);
     juce::Rectangle<int> sourceRailBounds() const noexcept {return sourceRailLayout(contentBounds()).rail;}
-    juce::Rectangle<int> responseBounds() const noexcept;
+    struct EditorRegions {juce::Rectangle<int> header,routing,response,parameters;};
+    EditorRegions editorRegions() const noexcept;
+    juce::Rectangle<int> responseBounds() const noexcept {return editorRegions().response;}
     SynthFilterId selectedFilter() const noexcept {return selectedId_;}
     bool isInterestedInDragSource(const SourceDetails&) override;
     void itemDragEnter(const SourceDetails&) override;
@@ -40,7 +42,8 @@ private:
     bool commit(ModulationState);
     ParameterSetter setter_;ParameterGetter getter_;ModulationBindings bindings_;
     InstrumentState state_{};
-    SynthFilterId selectedId_=0;
+    SynthFilterId selectedId_=0,revealedId_=0;
+    juce::Point<int> revealedViewportSize_{};
     bool legacy_=false,dragStarted_=false,dropOver_=false,syncing_=false;
     std::array<SourceEntityButton,maxSynthFilters+1> tabs_{};
     std::array<SynthFilterId,maxSynthFilters+1> tabIds_{};
