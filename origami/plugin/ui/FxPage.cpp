@@ -601,10 +601,10 @@ void FxNodeComponent::setMeter(float left,float right) {
 void FxNodeComponent::setTelemetry(const FxRenderer::NodeTelemetrySnapshot& telemetry) {
     if(telemetry.sequence==telemetry_.sequence && telemetry.valid==telemetry_.valid) return;
     telemetry_=telemetry;
-    // Only the 52 px preview is dynamic. Cached parameter/model art remains
+    // Only the shared audio viewport is dynamic. Cached parameter/model art remains
     // untouched, avoiding expensive response redesign at timer cadence.
     if(node_.kind==FxNodeKind::Effect && page_.graphZoom()>=0.6f)
-        repaint(12,40,getWidth()-24,52);
+        repaint(AudioCardLayout::forBounds(getLocalBounds(),int(quick_.size())).viewport);
 }
 
 float FxNodeComponent::hitRadius() const noexcept {
@@ -637,9 +637,8 @@ void FxNodeComponent::resized() {
         remove_.setBounds(row.removeFromRight(28));
         row.removeFromRight(4);
         menu_.setBounds(row.removeFromRight(30));
-        auto knobs=getLocalBounds().withTrimmedTop(98).reduced(12,0).withTrimmedBottom(22);
-        const int width=knobs.getWidth()/juce::jmax<int>(1,int(quick_.size()));
-        for(auto& slider:quick_) slider->setBounds(knobs.removeFromLeft(width).withSizeKeepingCentre(46,46));
+        const auto layout=AudioCardLayout::forBounds(getLocalBounds(),int(quick_.size()));
+        for(std::size_t i=0;i<quick_.size();++i) quick_[i]->setBounds(layout.knob(int(i),int(quick_.size())));
     } else if(node_.isRouting()) {
         remove_.setBounds(getWidth()-32,4,26,22);
     } else if(node_.kind==FxNodeKind::Output) {
@@ -678,22 +677,24 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         if(!detailed) break;
         // Parameter previews are cached; a moving modulation dot must not
         // repeatedly design EQ filters or redraw an unchanged response.
+        const auto layout=AudioCardLayout::forBounds(local,int(quick_.size()));
+        const auto viewport=layout.viewport;
         const double previewRate=page_.responseSampleRate();
-        if(previewDirty_ || !previewImage_.isValid() || previewRate_!=previewRate) {
-            previewImage_=juce::Image(juce::Image::ARGB,getWidth()-24,52,true);
+        if(previewDirty_ || !previewImage_.isValid() || previewRate_!=previewRate || previewImage_.getWidth()!=viewport.getWidth() || previewImage_.getHeight()!=viewport.getHeight()) {
+            previewImage_=juce::Image(juce::Image::ARGB,viewport.getWidth(),viewport.getHeight(),true);
             juce::Graphics preview(previewImage_);
-            paintEffectPreview(preview,{0,0,float(getWidth()-24),52},node_,previewRate);
+            paintEffectPreview(preview,previewImage_.getBounds().toFloat(),node_,previewRate);
             previewRate_=previewRate;
             previewDirty_=false;
         }
-        g.drawImageAt(previewImage_,12,40);
-        paintLiveEffectTelemetry(g,{12.0f,40.0f,float(getWidth()-24),52.0f},node_,telemetry_);
+        g.drawImageAt(previewImage_,viewport.getX(),viewport.getY());
+        paintLiveEffectTelemetry(g,viewport.toFloat(),node_,telemetry_);
         // The preview itself is primary. Keep model/bypass provenance as a quiet
         // caption rather than laying a prominent label over the visualization.
         text(g,node_.enabled ? "MODEL" : "BYPASSED",{18,42,getWidth()-36,12},Type::secondary,
              Palette::muted().withAlpha(.62f),juce::Justification::topRight);
         const auto quick=parametersFor(node_,true,std::nullopt);
-        auto labels=local.withTrimmedTop(local.getHeight()-22).reduced(12,0);
+        auto labels=layout.labels;
         const int width=labels.getWidth()/juce::jmax<int>(1,int(quick.size()));
         for(const auto* p:quick) text(g,p->label,labels.removeFromLeft(width),Type::label,Palette::muted(),juce::Justification::centred);
         break;
@@ -2509,11 +2510,8 @@ public:
         power_.setBounds(row.removeFromLeft(42));
         remove_.setBounds(row.removeFromRight(30));
         area.removeFromTop(6);
-        area.removeFromTop(60);
-        area.removeFromTop(4);
-        auto knobs=area.withTrimmedBottom(30);
-        const int width=knobs.getWidth()/juce::jmax<int>(1,int(knobs_.size()));
-        for(auto& knob:knobs_) knob->setBounds(knobs.removeFromLeft(width).withSizeKeepingCentre(48,48));
+        const auto layout=AudioCardLayout::forBody(area,int(knobs_.size()),48,28);
+        for(std::size_t i=0;i<knobs_.size();++i) knobs_[i]->setBounds(layout.knob(int(i),int(knobs_.size())));
     }
 private:
     void paintContent(juce::Graphics& g,juce::Rectangle<int> body) override {
@@ -2528,12 +2526,12 @@ private:
         text(g,node_->name,row.withTrimmedLeft(effect ? 52 : 0).withTrimmedRight(36),12.0f,Palette::text());
         text(g,kindLabel(node_->kind),row.withTrimmedRight(38),Type::secondary,Palette::muted(),juce::Justification::centredRight);
         area.removeFromTop(6);
-        auto display=area.removeFromTop(60);
+        auto display=area.withHeight(60);
         if(effect) {
-            paintEffectPreview(g,display.toFloat(),*node_,page_.responseSampleRate());
-            area.removeFromTop(4);
-            auto values=area.removeFromBottom(14);
-            auto labels=area.removeFromBottom(14);
+            const auto layout=AudioCardLayout::forBody(area,int(knobs_.size()),48,28);
+            paintEffectPreview(g,layout.viewport.toFloat(),*node_,page_.responseSampleRate());
+            auto labels=layout.labels;
+            auto values=labels.removeFromBottom(14);
             const int width=labels.getWidth()/juce::jmax(1,int(params_.size()));
             for(const auto* p:params_) {
                 text(g,p->label,labels.removeFromLeft(width),Type::label,Palette::muted(),juce::Justification::centred);

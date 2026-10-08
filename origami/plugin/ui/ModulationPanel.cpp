@@ -767,6 +767,8 @@ void ModulationPanel::syncFromModel() {
     if(bindings_.snapshot) applyModulationState(bindings_.snapshot().modulation);
     if(!sourceTabActive(static_cast<std::size_t>(railSelected_))) selectTab(0);
     sourceRemove_.setEnabled(railSelected_!=0);
+    envSliders_[3].setRange(selected_==0 ? 0.0 : .001,20.0,0);
+    envSliders_[3].setSkewFactorFromMidPoint(.35);
     if(selected_==0) {
         if(getter_) for(std::size_t i=0;i<4;++i)
             if(!envSliders_[i].isMouseButtonDown())
@@ -1096,7 +1098,7 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
             updateScrollbar();repaint();return;
         }
         case DragTarget::Release:
-            env.release=static_cast<float>(juce::jlimit(.001,20.0,
+            env.release=static_cast<float>(juce::jlimit(selected_==0 ? 0.0 : .001,20.0,
                 t-double(env.attack)-double(env.decay)-visualHoldSeconds()));break;
         case DragTarget::AttackCurve:
         case DragTarget::DecayCurve:

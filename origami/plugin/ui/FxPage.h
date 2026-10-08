@@ -47,6 +47,27 @@ struct FxModuleMenu {
     static std::optional<fx::FxModuleSpec> decode(int id);
 };
 
+// Internal audio-card proportions; event/control cards do not use this policy.
+struct AudioCardLayout {
+    juce::Rectangle<int> viewport,labels,controls;
+    static AudioCardLayout forBody(juce::Rectangle<int> body,int count,int diameter,int textHeight) noexcept {
+        auto labels=body.removeFromBottom(textHeight);
+        diameter=std::min(diameter,labels.getWidth()/std::max(1,count));
+        auto controls=body.removeFromBottom(diameter);
+        return {body,labels,controls};
+    }
+    static AudioCardLayout forBounds(juce::Rectangle<int> bounds,int count) noexcept {
+        // Preserve 46 px knobs and the original low labels; consume footer padding.
+        return forBody(bounds.withTrimmedTop(40).withTrimmedLeft(12).withTrimmedRight(12),count,46,22);
+    }
+    juce::Rectangle<int> knob(int index,int count) const noexcept {
+        const int x0=controls.getX()+controls.getWidth()*index/std::max(1,count);
+        const int x1=controls.getX()+controls.getWidth()*(index+1)/std::max(1,count);
+        return juce::Rectangle<int>(x0,controls.getY(),x1-x0,controls.getHeight())
+            .withSizeKeepingCentre(controls.getHeight(),controls.getHeight());
+    }
+};
+
 class FxNodeComponent final : public juce::Component {
 public:
     FxNodeComponent(FxPage&,fx::FxNodeId);

@@ -71,7 +71,7 @@ void registryAndPatches() {
     check(std::abs(engine.parameterState()[static_cast<std::size_t>(ParameterId::Waveform)]-0.5f)<1e-6f,
           "OSC1 WT position preserves fractional values");
     std::ifstream input(ORIGAMI_INIT_PATCH);std::ostringstream text;text<<input.rdbuf();check(bool(input),"read canonical Init");
-    Patch patch;std::string error;check(parsePatch(text.str(),patch,error),"parse Init");check(patch.parameters==defaultParameters(),"Init equals defaults");
+    Patch patch;std::string error;check(parsePatch(text.str(),patch,error),"parse Init");check(patch.parameters==canonicalInitState().parameters,"Init JSON equals canonical authored parameters");
     Patch decoded;check(parsePatch(serializePatch(patch),decoded,error),"JSON round trip");check(decoded.parameters==patch.parameters && decoded.name=="Init","exact float round trip");
     patch.name="MCT 雪 \"one\"\n";check(parsePatch(serializePatch(patch),decoded,error) && decoded.name==patch.name,"UTF-8 and escaping");
     const auto before=decoded.parameters;
@@ -79,6 +79,47 @@ void registryAndPatches() {
     std::string bad=text.str();bad.replace(bad.find("8000"),4,"1e999");check(!parsePatch(bad,decoded,error),"huge exponent rejected");
     bad=text.str();bad.insert(bad.find("\"osc.1.level\""),"\"osc.1.waveform\": 2,\n");check(!parsePatch(bad,decoded,error),"duplicate parameters rejected");
     check(engine.applyPatchState(patch.parameters),"apply patch state");auto invalid=patch.parameters;invalid[0]=std::numeric_limits<float>::quiet_NaN();check(!engine.applyPatchState(invalid) && engine.parameterState()==patch.parameters,"invalid state transactional");
+}
+void canonicalInitAudit() {
+    const auto init=canonicalInitState();
+    check(validInstrumentState(init),"canonical Init is valid");
+    check(init.oscillators[0].id==1 && init.oscillators[0].enabled && init.nextId==2,"Init stable single oscillator identity");
+    const auto& o=init.oscillators[0];
+    check(o.tableId==dsp::BuiltinWavetableId::BasicShapes && o.wtPosition==1.f/3.f && o.waveform==1,"Init unmixed canonical saw frame");
+    check(o.octave==0 && o.semitone==0 && o.fineCents==0 && o.unison==0 && o.detuneCents==0 && o.blend==.5f && o.pan==0 && o.level==1,"Init exact oscillator controls");
+    check(o.processCount==0 && o.routeCount==0 && oscBusSend(o,mainBusId)==1,"Init clean direct output");
+    for(std::size_t i=1;i<init.oscillators.size();++i) check(!init.oscillators[i].id && !init.oscillators[i].enabled,"no extra Init oscillators");
+    const auto v=[&](ParameterId id){return init.parameters[std::size_t(id)];};
+    check(v(ParameterId::Attack)==.01f && v(ParameterId::Decay)==.5f && v(ParameterId::Sustain)==1 && v(ParameterId::Release)==0,"Init ENV1 exact authored values");
+    check(init.modulation.env2.release==.25f && init.modulation.env3.sustain==.7f,"ENV2 and ENV3 retain low-level defaults");
+    for(const auto& f:init.modulation.synthFilters.filters) check(!f.id,"no Init Synth Filters");
+    for(const auto& r:init.modulation.routes) check(!r.id,"no Init modulation");
+    const auto bytes=encodeInstrumentState(init);InstrumentState decoded;check(decodeInstrumentState(bytes.data(),bytes.size(),decoded) && encodeInstrumentState(decoded)==encodeInstrumentState(init),"Init binary round trip");
+    check(toNormalized(ParameterId::Release,0)==0 && fromNormalized(ParameterId::Release,0)==0,"zero release mapping finite and exact");
+    for(float seconds:{.001f,.25f,1.f,20.f}) check(std::abs(fromNormalized(ParameterId::Release,toNormalized(ParameterId::Release,seconds))-seconds)<.00005f,"positive release physical value round trip");
+    for(int note:{36,60,84}) {
+        auto e=std::make_unique<OrigamiEngine>();check(e->restoreInstrumentState(init),"Init restore");prepare(*e,48000,2);e->noteOn(note,1);
+        std::array<float,256> l{},r{};float* buffers[]{l.data(),r.data()};double peak=0,power=0,mean=0;int count=0;
+        for(int block=0;block<188;++block) {check(e->process(buffers,2,256),"Init stereo render");if(block>93) for(int i=0;i<256;++i){check(std::isfinite(l[i]) && l[i]==r[i],"Init finite symmetric centered output");peak=std::max(peak,double(std::abs(l[i])));power+=l[i]*l[i];mean+=l[i];++count;}}
+        const double db=20*std::log10(peak);check(db>-11.2 && db<-10.2,"Init nominal peak target tolerance");check(std::abs(mean/count)<.001,"Init no DC regression");
+        std::cout<<"Init MIDI "<<note<<" peak="<<peak<<" dB="<<db<<" RMS="<<std::sqrt(power/count)<<" DC="<<mean/count<<'\n';
+        e->noteOff(note);e->process(buffers,2,256);check(e->activeVoiceCount()==0,"Init zero release completes in existing one-sample segment");
+    }
+    // Independent raw-table probe closes the transparent gain equation.
+    dsp::WavetableOscillator raw;double rawPeak=0,rawPower=0;int rawCount=0;
+    for(int sample=0;sample<48128;++sample) {const float x=raw.nextSimple(bank(),dsp::midiFrequency(60),48000,1.f/3.f);if(sample>=24064){rawPeak=std::max(rawPeak,double(std::abs(x)));rawPower+=x*x;++rawCount;}}
+    std::cout<<"Init gain stages MIDI60 raw="<<rawPeak<<" rawRMS="<<std::sqrt(rawPower/rawCount)<<" postENV/level="<<rawPeak<<" stereoPostRoute="<<rawPeak*.70710678<<" previousMaster0.2="<<rawPeak*.70710678*.2<<" calibratedMaster0.35="<<rawPeak*.70710678*.35<<'\n';
+    auto e=std::make_unique<OrigamiEngine>();e->restoreInstrumentState(init);prepare(*e);e->noteOn(60,1);auto reference=render(*e,48000,256);
+    for(std::size_t block:{1u,7u,127u,511u,1024u}) {e->reset();e->noteOn(60,1);check(render(*e,48000,block)==reference,"Init deterministic block partitions");}
+    for(unsigned unison:{0u,4u,8u,16u}) for(bool chord:{false,true}) {
+        auto s=init;s.oscillators[0].unison=unison;s.parameters[std::size_t(ParameterId::OscUnison)]=float(unison);s.oscillators[0].detuneCents=12;s.parameters[std::size_t(ParameterId::OscDetune)]=12;
+        check(e->restoreInstrumentState(s),"Init unison/chord restore");e->reset();e->noteOn(48,1);if(chord) for(int n:{55,60,64}) e->noteOn(n,1);
+        prepare(*e,48000,2);e->noteOn(48,1);if(chord)for(int n:{55,60,64})e->noteOn(n,1);
+        std::array<float,256> left{},right{};float* b[]{left.data(),right.data()};double peak=0;
+        for(int block=0;block<188;++block){e->process(b,2,256);for(float x:left){check(std::isfinite(x),"Init chord/unison finite");peak=std::max(peak,double(std::abs(x)));}}
+        std::cout<<"Init stereo headroom unison="<<unison<<" chord="<<chord<<" peak="<<peak<<'\n';
+        check(peak<1,"representative stereo Init chord/unison avoids clipping");
+    }
 }
 void envelopeTiming() {
     for(double rate:{44100.,48000.,96000.}) {
@@ -1507,7 +1548,7 @@ int main() {
     // test runner cannot overflow before it reaches its first diagnostic.
     // Production engine ownership already follows this pattern.
     try {
-        filter_response_audit::run(check);synthCombStorageLifecycleAudit();multimodeSynthLifecycleAudit();oscillatorRouteMixerAudit();synthFilterRoutingAudit();
+        canonicalInitAudit();filter_response_audit::run(check);synthCombStorageLifecycleAudit();multimodeSynthLifecycleAudit();oscillatorRouteMixerAudit();synthFilterRoutingAudit();
         correctiveSpectralPreview();
         sourceInstanceRealtimeAudit();
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();

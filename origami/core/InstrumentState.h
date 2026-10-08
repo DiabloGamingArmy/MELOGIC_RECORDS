@@ -31,6 +31,9 @@ struct InstrumentState {
     // mct-origami-fx-graph-dsp-bus-routing-p02: canonical named buses.
     BusState buses{};
 };
+// Authored NEW/INIT content. Low-level defaults remain migration/fixture defaults.
+InstrumentState canonicalInitState() noexcept;
+
 // Removes a bus and every oscillator send to it in one step, so no oscillator
 // is left with a dangling destination. BUS 1 is protected. An oscillator whose
 // only route pointed at the removed bus falls back to BUS 1 at unity.

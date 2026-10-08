@@ -460,7 +460,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         detuneSlider_.setName("OSC DETUNE");
         blendSlider_.setName("OSC BLEND");
 
-        unisonSlider_.setRange(1.0, 16.0, 1.0);
+        unisonSlider_.setRange(0.0, 16.0, 1.0);
         detuneSlider_.setRange(0.0, 100.0, 0.1);
         blendSlider_.setRange(0.0,1.0,0.001);
         blendSlider_.setTooltip("Unison blend — centre oscillator to full detuned stack");
@@ -2062,7 +2062,7 @@ void OscillatorRack::createCard(unsigned moduleId) {
                 case mct::origami::ParameterId::OscOctave: s.octave=value; break;
                 case mct::origami::ParameterId::OscSemitone: s.semitone=value; break;
                 case mct::origami::ParameterId::OscFine: s.fineCents=value; break;
-                case mct::origami::ParameterId::OscUnison: s.unison=static_cast<unsigned>(juce::jlimit(1,16,juce::roundToInt(value))); break;
+                case mct::origami::ParameterId::OscUnison: s.unison=static_cast<unsigned>(juce::jlimit(0,16,juce::roundToInt(value))); break;
                 case mct::origami::ParameterId::OscDetune: s.detuneCents=value; break;
                 case mct::origami::ParameterId::OscPan: s.pan=value; break;
                 case mct::origami::ParameterId::OscLevel: s.level=value; break;

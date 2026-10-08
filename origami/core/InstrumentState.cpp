@@ -7,6 +7,20 @@
 #include "InstrumentState.h"
 #include <cmath>
 namespace mct::origami {
+InstrumentState canonicalInitState() noexcept {
+    InstrumentState s;
+    auto set=[&](ParameterId id,float value){s.parameters[static_cast<std::size_t>(id)]=value;};
+    set(ParameterId::Waveform,1.0f); // saw frame 1 / (four Basic Shapes frames - 1)
+    set(ParameterId::OscLevel,1.0f);
+    set(ParameterId::OscUnison,0.0f); // no additional unison lanes; renderer uses one lane
+    set(ParameterId::OscDetune,0.0f);
+    set(ParameterId::Decay,0.5f);set(ParameterId::Sustain,1.0f);set(ParameterId::Release,0.0f);
+    set(ParameterId::MasterGain,0.35f); // transparent Init-only nominal level calibration
+    auto& osc=s.oscillators[0];osc.id=1;osc.enabled=true;
+    applyLegacyOscillatorParameters(osc,s.parameters);
+    osc.wtPosition=1.0f/3.0f;osc.blend=0.5f;
+    return s;
+}
 void applyLegacyOscillatorParameters(OscillatorModuleState& m,const ParameterValues& p) noexcept {
     auto v=[&](ParameterId id){return p[static_cast<std::size_t>(id)];};
     m.waveform=v(ParameterId::Waveform);m.wtPosition=m.waveform/3.0f;
@@ -38,7 +52,7 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
            std::abs(m.waveform-m.wtPosition*3.0f)>1e-6f ||
            !range(m.octave,-4,4) || m.octave!=std::round(m.octave) ||
            !range(m.semitone,-12,12) || m.semitone!=std::round(m.semitone) ||
-           !range(m.fineCents,-100,100) || m.unison<1 || m.unison>16 ||
+           !range(m.fineCents,-100,100) || m.unison>16 ||
            !range(m.detuneCents,0,100) || !range(m.blend,0,1) ||
            !range(m.pan,-1,1) || !range(m.level,0,1) ||
            !dsp::validOscProcessType(m.process1) ||

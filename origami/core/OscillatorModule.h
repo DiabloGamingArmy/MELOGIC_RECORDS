@@ -321,7 +321,7 @@ private:
         s.octave=std::clamp(s.octave,-4.0f,4.0f);
         s.semitone=std::clamp(s.semitone,-12.0f,12.0f);
         s.fineCents=std::clamp(s.fineCents,-100.0f,100.0f);
-        s.unison=std::clamp(s.unison,1u,16u);
+        s.unison=std::min(s.unison,16u);
         s.detuneCents=std::clamp(s.detuneCents,0.0f,100.0f);
         if(!std::isfinite(s.blend)) s.blend=0.35f;
         s.blend=std::clamp(s.blend,0.0f,1.0f);

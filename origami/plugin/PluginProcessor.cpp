@@ -37,8 +37,10 @@
 #include "core/preset/StateCodec.h"
 OrigamiAudioProcessor::OrigamiAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
-    // Preserve the established four-module initial layout in the model, once.
-    for(int i=0;i<3;++i) engine_.addOscillatorModule();
+    // NEW and browser INIT share authored content, independent of codec defaults.
+    const bool initRestored=engine_.restoreInstrumentState(mct::origami::canonicalInitState());
+    jassert(initRestored);
+    juce::ignoreUnused(initRestored);
     // mct-origami-nested-modulation-manual-qa: 16 DAW macro parameters with
     // immutable IDs, created once (hosts expect a stable parameter list).
     for(unsigned id=1;id<=mct::origami::maxMacros;++id) {
