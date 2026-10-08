@@ -6396,8 +6396,11 @@ void synthFilterEditorTypeAudit() {
 
 void synthFilterPrecisionVisualAudit() {
     auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,256);
-    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;
-    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;});check(panel!=nullptr,"precision fixtures use actual plugin FilterPanel");
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;ui::ModulationPanel* lfo=nullptr;
+    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;if(auto* m=dynamic_cast<ui::ModulationPanel*>(&c)) lfo=m;});check(panel && lfo,"precision fixtures use actual FilterPanel and LFO reference");
+    check(lfo->selectSource(ModSource::Lfo1),"proportion reference selects existing LFO");lfo->lfoStrip().setPage(ui::LfoControlStrip::Page::Func);
+    {auto image=lfo->createComponentSnapshot(lfo->getLocalBounds(),true,2.f);juce::File file("/tmp/origami-filter-proportion-lfo.png");file.deleteFile();if(auto stream=file.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(image,*stream);}}
+
     panel->addFilter();panel->setSize(662,355);const auto theme=ui::gTheme;
     const auto start=panel->responseHandle();auto down=event(*panel).withNewPosition(start);static_cast<juce::Component*>(panel)->mouseDown(down);
     check(std::abs(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.resonance-.1f)<.001f,"grabbing curve handle does not jump resonance");
@@ -6408,12 +6411,13 @@ void synthFilterPrecisionVisualAudit() {
         const auto r=panel->editorRegions();const auto rail=ui::sourceRailLayout(panel->contentBounds());
         check(!rail.rail.intersects(r.header) && !rail.rail.intersects(r.response) && !rail.rail.intersects(r.parameters),"rail and editor never overlap");
         check(r.header.getCentreY()==rail.header.getCentreY() && r.header.getX()==r.response.getX() && r.header.getRight()==r.parameters.getRight(),"shared editor alignment and SOURCE header centerline");
+        if(panel->getWidth()==662) check(r.response.getHeight()==181 && r.parameters.getHeight()==80 && r.parameterBank.getWidth()>=468 && r.parameterBank.getY()>=260,"graph dominates a shallow, low, widely spaced control footer");
         check(r.response.contains(r.plot) && r.response.contains(r.frequencyAxis) && r.response.contains(r.levelAxis) && !r.plot.intersects(r.frequencyAxis) && !r.plot.intersects(r.levelAxis),"dedicated axes remain contained outside plot");
         const auto h=panel->responseHandle();check(r.response.toFloat().contains(juce::Rectangle<float>(8,8).withCentre(h)),"cutoff handle remains inside graph perimeter");
         const auto st=p.getUiInstrumentState();const auto& f=st.modulation.synthFilters.filters[synthFilterSlot(st.modulation.synthFilters,panel->selectedFilter())];dsp::LowPassCoefficientTable table;table.prepare(48000);const dsp::FilterResponseAxis axis{48000,dsp::filterTypeInfo(f.type)->gain?36.:18.};const auto c=dsp::filterDesign(f.type,table.make(f.values.cutoff,f.values.resonance),f.values.gain);
         const float expectedY=r.plot.getY()+float(axis.y(dsp::filterMagnitude(c,f.values.cutoff,48000,f.values.mix)))*r.plot.getHeight();check(std::abs(h.y-expectedY)<.1f,"handle lies on actual response including resonance, type and Mix");
         int knobY=-1,labelY=-1,valueY=-1,valueHeight=-1;walk(*panel,[&](auto& comp){
-            if(auto* knob=dynamic_cast<juce::Slider*>(&comp)) if(knob->isVisible()) {check(r.parameterBank.contains(knob->getBounds()),"parameter control stays inside coherent bank");if(knobY<0) knobY=knob->getY();check(knob->getY()==knobY,"knobs share identical vertical baseline");for(auto* child:knob->getChildren()) if(auto* value=dynamic_cast<juce::Label*>(child)) {if(valueY<0){valueY=value->getY();valueHeight=value->getHeight();}check(value->getY()==valueY && value->getHeight()==valueHeight && knob->getLocalBounds().contains(value->getBounds()),"editable value boxes align and remain contained");}}
+            if(auto* knob=dynamic_cast<juce::Slider*>(&comp)) if(knob->isVisible()) {check(r.parameterBank.contains(knob->getBounds()),"parameter control stays inside coherent bank");check(knob->getHeight()==54,"parameter stacks use compact common slider height");if(knobY<0) knobY=knob->getY();check(knob->getY()==knobY,"knobs share identical vertical baseline");for(auto* child:knob->getChildren()) if(auto* value=dynamic_cast<juce::Label*>(child)) {if(valueY<0){valueY=value->getY();valueHeight=value->getHeight();}check(value->getY()==valueY && value->getHeight()==valueHeight && knob->getLocalBounds().contains(value->getBounds()),"editable value boxes align and remain contained");}}
             if(auto* label=dynamic_cast<juce::Label*>(&comp)) if(label->getParentComponent()==panel && label->isVisible()) {check(r.parameterBank.contains(label->getBounds()),"parameter labels stay inside bank");if(labelY<0) labelY=label->getY();check(labelY==label->getY(),"parameter label baselines agree");check(label->getWidth()>=60,"supported parameter labels retain readable width");}
             if(auto* button=dynamic_cast<juce::Button*>(&comp)) if(button->getName()=="Synth filter type" || button->getName()=="Synth filter output" || button->getName()=="Power Synth Filter") check(r.header.contains(button->getBounds()) && button->getHeight()>=24 && button->getWantsKeyboardFocus(),"compact selectors and power retain accessible hit areas");
         });
@@ -6466,7 +6470,7 @@ void synthFilterVisualComposition() {
         check(filter->dropFilterOnOscillator(filter->selectedFilter(),1),"visual fixture exposes actual oscillator input and preserved serial output");
         const auto r=filter->editorRegions();
         check(r.routing.isEmpty() && r.header.getBottom()<r.response.getY() && r.response.getBottom()<r.parameters.getY(),"header/response/parameters are ordered without redundant input-topology row");
-        check(r.response.getHeight()<=140 && r.response.getHeight()>90 && r.parameters.getHeight()==ui::FilterPanel::EditorMetrics::parameterHeight && filter->contentBounds().getBottom()-r.parameters.getBottom()>=12,"graph proportion and parameter breathing room are bounded");
+        check(r.response.getHeight()>=180 && r.response.getHeight()<=190 && r.parameters.getHeight()==ui::FilterPanel::EditorMetrics::parameterHeight && filter->contentBounds().getBottom()-r.parameters.getBottom()>=12,"graph proportion and parameter breathing room are bounded");
         bool selectedVisible=false,footerContains=true,controlsContained=true;juce::Viewport* viewport=nullptr;
         walk(*filter,[&](auto& c){if(auto* v=dynamic_cast<juce::Viewport*>(&c)) viewport=v;});
         const auto rail=ui::sourceRailLayout(filter->contentBounds());

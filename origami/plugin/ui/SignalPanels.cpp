@@ -55,7 +55,7 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter,Modulatio
         knob.setDoubleClickReturnValue(true,control.defaultValue);
         if(i==0) {knob.textFromValueFunction=[](double v){return juce::String(formatFrequencyHz(v));};knob.valueFromTextFunction=[](const juce::String& t){return t.getDoubleValue()*(t.containsIgnoreCase("kHz")?1000:1);};}
         knob.setRange(control.minimum,control.maximum,i==0?1:.001);if(i==0) knob.setSkewFactorFromMidPoint(1000);if(i==4) knob.setTooltip("Full keytracking doubles cutoff per octave above MIDI note 60");
-        knob.getProperties().set("mct.origami.knobTrack",true);knob.getProperties().set("mct.origami.knobScale",.88);knob.setColour(juce::Slider::textBoxOutlineColourId,Palette::borderSoft());
+        knob.getProperties().set("mct.origami.knobTrack",true);knob.getProperties().set("mct.origami.knobScale",1.);knob.setColour(juce::Slider::textBoxOutlineColourId,Palette::borderSoft());
         knob.onValueChange=[this]{if(!syncing_) editValues();};
         auto& label=labels_[i];addAndMakeVisible(label);label.setText(control.name,juce::dontSendNotification);label.setJustificationType(juce::Justification::centred);label.setFont(juce::FontOptions(Type::label));
     }
@@ -136,7 +136,7 @@ FilterPanel::EditorRegions FilterPanel::editorRegions() const noexcept {
     r.parameters=body.removeFromBottom(parameterHeight);body.removeFromBottom(EditorMetrics::bottom);r.response=body;
     auto inner=r.response.reduced(EditorMetrics::gap,EditorMetrics::plotInset);r.levelAxis=inner.removeFromLeft(EditorMetrics::levelWidth);
     r.frequencyAxis=inner.removeFromBottom(EditorMetrics::axisHeight);r.plot=inner;r.levelAxis.setHeight(inner.getHeight());
-    const int count=knobs_[5].isVisible()?6:5,bankWidth=juce::jmin(r.parameters.getWidth(),juce::jmax(count*EditorMetrics::minCellWidth,juce::roundToInt(r.parameters.getWidth()*EditorMetrics::bankFraction)));
+    const int count=knobs_[5].isVisible()?6:5,bankWidth=juce::jmin(r.parameters.getWidth(),juce::jmax(count*EditorMetrics::minCellWidth,juce::roundToInt(r.parameters.getWidth()*EditorMetrics::bankFraction/count)*count));
     r.parameterBank=r.parameters.withSizeKeepingCentre(bankWidth,juce::jmin(EditorMetrics::stackHeight,r.parameters.getHeight()));
     r.typeLabel=r.header.withWidth(EditorMetrics::typeLabelWidth);auto right=r.header.withTrimmedRight(EditorMetrics::powerWidth+EditorMetrics::gap);
     r.outputLabel=right.withWidth(EditorMetrics::outLabelWidth).withX(right.getRight()-EditorMetrics::outWidth-EditorMetrics::outLabelWidth-EditorMetrics::inset);

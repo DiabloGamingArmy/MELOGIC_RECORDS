@@ -26,8 +26,8 @@ public:
     juce::Rectangle<int> sourceRailBounds() const noexcept {return sourceRailLayout(contentBounds()).rail;}
     struct EditorMetrics {
         static constexpr int inset=4,gap=8,bottom=12,selectorHeight=24,typeWidth=104,outWidth=100,powerWidth=42,typeLabelWidth=32,outLabelWidth=28,minCellWidth=70;
-        static constexpr int parameterHeight=130,axisHeight=16,levelWidth=36,plotInset=6,stackHeight=104,labelHeight=16,stackGap=4,valueWidth=66,valueHeight=18;
-        static constexpr float bankFraction=.84f,fillExposure=.32f,fillAlpha=.16f;
+        static constexpr int parameterHeight=80,axisHeight=16,levelWidth=36,plotInset=6,stackHeight=72,labelHeight=16,stackGap=2,valueWidth=64,valueHeight=16;
+        static constexpr float bankFraction=.90f,fillExposure=.32f,fillAlpha=.16f;
     };
     struct EditorRegions {juce::Rectangle<int> header,routing,response,parameters,plot,frequencyAxis,levelAxis,parameterBank,typeLabel,outputLabel;};
     EditorRegions editorRegions() const noexcept;
