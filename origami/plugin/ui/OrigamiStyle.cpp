@@ -263,7 +263,7 @@ void OrigamiLookAndFeel::drawRotarySlider(juce::Graphics& g,int x,int y,int widt
         return;
     }
 
-    paintKnob(g,circle,sliderPos,rotaryStartAngle,rotaryEndAngle);
+    paintKnob(g,circle,sliderPos,rotaryStartAngle,rotaryEndAngle,bool(slider.getProperties()["mct.origami.knobTrack"])? .5f:0.f);
 }
 
 void OrigamiLookAndFeel::drawLinearSlider(juce::Graphics& g,int x,int y,int width,int height,

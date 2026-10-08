@@ -24,7 +24,12 @@ public:
     bool dropFilterOnOscillator(SynthFilterId,OscillatorModuleId);
     bool dropFilterAfter(SynthFilterId,SynthFilterId);
     juce::Rectangle<int> sourceRailBounds() const noexcept {return sourceRailLayout(contentBounds()).rail;}
-    struct EditorRegions {juce::Rectangle<int> header,routing,response,parameters;};
+    struct EditorMetrics {
+        static constexpr int inset=4,gap=8,bottom=12,selectorHeight=24,typeWidth=104,outWidth=100,powerWidth=42,typeLabelWidth=32,outLabelWidth=28,minCellWidth=70;
+        static constexpr int parameterHeight=130,axisHeight=16,levelWidth=36,plotInset=6,stackHeight=104,labelHeight=16,stackGap=4,valueWidth=66,valueHeight=18;
+        static constexpr float bankFraction=.84f,fillExposure=.32f,fillAlpha=.16f;
+    };
+    struct EditorRegions {juce::Rectangle<int> header,routing,response,parameters,plot,frequencyAxis,levelAxis,parameterBank,typeLabel,outputLabel;};
     EditorRegions editorRegions() const noexcept;
     juce::Rectangle<int> responseBounds() const noexcept {return editorRegions().response;}
     std::vector<juce::String> typeChoices() const;
@@ -42,23 +47,29 @@ private:
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
+    void mouseMove(const juce::MouseEvent&) override;
+    void mouseExit(const juce::MouseEvent&) override;
     void editValues();
+    bool editResponseParameters(juce::Point<float>,float resonance);
+    SynthFilterValues responseValues(const RuntimeVisualizationSnapshot&) const;
     void showOutputMenu();
     bool commit(ModulationState);
     ParameterSetter setter_;ParameterGetter getter_;ModulationBindings bindings_;
     InstrumentState state_{};
     SynthFilterId selectedId_=0,revealedId_=0;
     juce::Point<int> revealedViewportSize_{};
-    bool legacy_=false,dragStarted_=false,dropOver_=false,syncing_=false,handleDragging_=false;
+    bool legacy_=false,dragStarted_=false,dropOver_=false,syncing_=false,handleDragging_=false,handleHovered_=false;
+    juce::Point<float> handleDragStart_{};float handleDragResonance_=0;
     std::array<SourceEntityButton,maxSynthFilters+1> tabs_{};
     std::array<SynthFilterId,maxSynthFilters+1> tabIds_{};
     std::size_t tabCount_=0;
     std::array<juce::Slider,6> knobs_{};
     std::array<juce::Label,6> labels_{};
-    juce::TextButton add_{"+"},remove_{"-"},output_{"MAIN"},power_{"ON"},type_{};
+    juce::TextButton add_{"+"},remove_{"-"},output_{"MAIN"},type_{};
+    juce::ToggleButton power_{"ON"};
     juce::Viewport viewport_;juce::Component railContent_;
-    dsp::LowPassCoefficientTable responseTable_;
-    double responseRate_=0;
+    mutable dsp::LowPassCoefficientTable responseTable_;
+    mutable double responseRate_=0;
 };
 class FxPanel final : public Panel {
 public: explicit FxPanel(bool pre):Panel(pre?"FX PRE":"FX POST"),pre_(pre) {}

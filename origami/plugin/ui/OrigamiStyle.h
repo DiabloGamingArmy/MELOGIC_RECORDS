@@ -110,7 +110,7 @@ inline void well(juce::Graphics& g, juce::Rectangle<int> bounds) {
     g.setColour(Palette::borderSoft()); g.drawRoundedRectangle(box,2.5f,1.0f);
 }
 // Shared visual contract: one magnitude arc outside the body, one pointer.
-inline void paintKnob(juce::Graphics& g,juce::Rectangle<float> circle,float position,float start,float end) {
+inline void paintKnob(juce::Graphics& g,juce::Rectangle<float> circle,float position,float start,float end,float trackAlpha=0) {
     const float diameter=circle.getWidth();
     const auto c=circle.getCentre();
     const float angle=start+juce::jlimit(0.0f,1.0f,position)*(end-start);
@@ -118,6 +118,7 @@ inline void paintKnob(juce::Graphics& g,juce::Rectangle<float> circle,float posi
     const auto inner=circle.reduced(diameter*.15f);
     g.setColour(Palette::background().withAlpha(.45f));g.fillEllipse(inner);
     g.setColour(Palette::borderSoft().brighter(.08f));g.drawEllipse(inner,.8f);
+    if(trackAlpha>0) {juce::Path track;track.addCentredArc(c.x,c.y,diameter*.54f,diameter*.54f,0,start,end,true);g.setColour(Palette::borderStrong().withAlpha(trackAlpha));g.strokePath(track,juce::PathStrokeType(1.2f));}
     juce::Path active;
     active.addCentredArc(c.x,c.y,diameter*.54f,diameter*.54f,0,start,angle,true);
     g.setColour(Palette::accent().withAlpha(.90f));g.strokePath(active,juce::PathStrokeType(2.1f));

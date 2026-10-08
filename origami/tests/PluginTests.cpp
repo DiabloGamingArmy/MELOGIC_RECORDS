@@ -6384,8 +6384,8 @@ void synthFilterEditorTypeAudit() {
         check(gain->isVisible()==info.gain,"Gain control appears only for gain-bearing types");
         if(info.gain) {gain->setValue(6,juce::sendNotificationSync);check(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.gain==6,"Gain writes canonical state");}
         cutoff->setValue(1000,juce::sendNotificationSync);resonance->setValue(.6,juce::sendNotificationSync);
-        const auto plot=panel->responseBounds().reduced(8).toFloat();const dsp::FilterResponseAxis axis{48000};auto handle=panel->responseHandle();check(std::abs(handle.x-(plot.getX()+float(axis.x(1000))*plot.getWidth()))<.1f,"knob drives canonical response handle");
-        const juce::Point<float> target{plot.getX()+float(axis.x(5000))*plot.getWidth(),plot.getBottom()-.3f*plot.getHeight()};check(panel->editResponseHandle(target),"response handle accepts parameter edit");const auto values=p.getUiInstrumentState().modulation.synthFilters.filters[0].values;
+        const auto plot=panel->editorRegions().plot.toFloat();const dsp::FilterResponseAxis axis{48000};auto handle=panel->responseHandle();check(std::abs(handle.x-(plot.getX()+float(axis.x(1000))*plot.getWidth()))<.1f,"knob drives canonical response handle");
+        const juce::Point<float> target{plot.getX()+float(axis.x(5000))*plot.getWidth(),handle.y+.3f*plot.getHeight()};check(panel->editResponseHandle(target),"response handle accepts parameter edit");const auto values=p.getUiInstrumentState().modulation.synthFilters.filters[0].values;
         check(std::abs(values.cutoff-5000)<2 && std::abs(values.resonance-.3f)<.001f && std::abs(cutoff->getValue()-values.cutoff)<1,"handle updates canonical state and matching knobs");
         juce::MemoryBlock bytes;p.getStateInformation(bytes);OrigamiAudioProcessor restored;restored.setStateInformation(bytes.getData(),int(bytes.getSize()));const auto f=restored.getUiInstrumentState().modulation.synthFilters.filters[0];check(f.id==id && f.type==info.id && f.values.gain==values.gain,"each selectable type and Gain survive processor wrapper restore");save("type-"+juce::String(int(info.id)));
     }
@@ -6394,17 +6394,56 @@ void synthFilterEditorTypeAudit() {
     const auto second=panel->addFilter();check(second!=id && p.getUiInstrumentState().modulation.synthFilters.filters[1].type==dsp::FilterType::LowPass,"switching filter selection uses its own type");check(panel->setFilterType(dsp::FilterType::HighPass),"second filter authors independent type");check(p.getUiInstrumentState().modulation.synthFilters.filters[0].type==dsp::FilterType::LowPass,"type switch cannot change previous filter");
 }
 
+void synthFilterPrecisionVisualAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,256);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;
+    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;});check(panel!=nullptr,"precision fixtures use actual plugin FilterPanel");
+    panel->addFilter();panel->setSize(662,355);const auto theme=ui::gTheme;
+    const auto start=panel->responseHandle();auto down=event(*panel).withNewPosition(start);static_cast<juce::Component*>(panel)->mouseDown(down);
+    check(std::abs(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.resonance-.1f)<.001f,"grabbing curve handle does not jump resonance");
+    const auto plot=panel->editorRegions().plot.toFloat();const dsp::FilterResponseAxis gestureAxis{48000};auto drag=down.withNewPosition(juce::Point<float>{plot.getX()+float(gestureAxis.x(5000))*plot.getWidth(),start.y-.2f*plot.getHeight()});static_cast<juce::Component*>(panel)->mouseDrag(drag);static_cast<juce::Component*>(panel)->mouseUp(drag);
+    const auto gestureValues=p.getUiInstrumentState().modulation.synthFilters.filters[0].values;check(std::abs(gestureValues.cutoff-5000)<2 && std::abs(gestureValues.resonance-.3f)<.001f,"anchored horizontal and vertical gestures update the canonical knobs");
+    const auto set=[&](dsp::FilterType type,float cutoff,float resonance,float mix=1.f) {auto m=p.getUiInstrumentState().modulation;auto& f=m.synthFilters.filters[synthFilterSlot(m.synthFilters,panel->selectedFilter())];f.type=type;f.values={cutoff,resonance,0,mix,0,dsp::filterTypeInfo(type)->gain?6.f:0.f};check(p.setUiModulationState(m),"visual fixture edits only canonical filter values");panel->syncFromModel();};
+    const auto render=[&](const juce::String& name) {
+        const auto r=panel->editorRegions();const auto rail=ui::sourceRailLayout(panel->contentBounds());
+        check(!rail.rail.intersects(r.header) && !rail.rail.intersects(r.response) && !rail.rail.intersects(r.parameters),"rail and editor never overlap");
+        check(r.header.getCentreY()==rail.header.getCentreY() && r.header.getX()==r.response.getX() && r.header.getRight()==r.parameters.getRight(),"shared editor alignment and SOURCE header centerline");
+        check(r.response.contains(r.plot) && r.response.contains(r.frequencyAxis) && r.response.contains(r.levelAxis) && !r.plot.intersects(r.frequencyAxis) && !r.plot.intersects(r.levelAxis),"dedicated axes remain contained outside plot");
+        const auto h=panel->responseHandle();check(r.response.toFloat().contains(juce::Rectangle<float>(8,8).withCentre(h)),"cutoff handle remains inside graph perimeter");
+        const auto st=p.getUiInstrumentState();const auto& f=st.modulation.synthFilters.filters[synthFilterSlot(st.modulation.synthFilters,panel->selectedFilter())];dsp::LowPassCoefficientTable table;table.prepare(48000);const dsp::FilterResponseAxis axis{48000,dsp::filterTypeInfo(f.type)->gain?36.:18.};const auto c=dsp::filterDesign(f.type,table.make(f.values.cutoff,f.values.resonance),f.values.gain);
+        const float expectedY=r.plot.getY()+float(axis.y(dsp::filterMagnitude(c,f.values.cutoff,48000,f.values.mix)))*r.plot.getHeight();check(std::abs(h.y-expectedY)<.1f,"handle lies on actual response including resonance, type and Mix");
+        int knobY=-1,labelY=-1,valueY=-1,valueHeight=-1;walk(*panel,[&](auto& comp){
+            if(auto* knob=dynamic_cast<juce::Slider*>(&comp)) if(knob->isVisible()) {check(r.parameterBank.contains(knob->getBounds()),"parameter control stays inside coherent bank");if(knobY<0) knobY=knob->getY();check(knob->getY()==knobY,"knobs share identical vertical baseline");for(auto* child:knob->getChildren()) if(auto* value=dynamic_cast<juce::Label*>(child)) {if(valueY<0){valueY=value->getY();valueHeight=value->getHeight();}check(value->getY()==valueY && value->getHeight()==valueHeight && knob->getLocalBounds().contains(value->getBounds()),"editable value boxes align and remain contained");}}
+            if(auto* label=dynamic_cast<juce::Label*>(&comp)) if(label->getParentComponent()==panel && label->isVisible()) {check(r.parameterBank.contains(label->getBounds()),"parameter labels stay inside bank");if(labelY<0) labelY=label->getY();check(labelY==label->getY(),"parameter label baselines agree");check(label->getWidth()>=60,"supported parameter labels retain readable width");}
+            if(auto* button=dynamic_cast<juce::Button*>(&comp)) if(button->getName()=="Synth filter type" || button->getName()=="Synth filter output" || button->getName()=="Power Synth Filter") check(r.header.contains(button->getBounds()) && button->getHeight()>=24 && button->getWantsKeyboardFocus(),"compact selectors and power retain accessible hit areas");
+        });
+        juce::Image image=panel->createComponentSnapshot(panel->getLocalBounds(),true,2.f);juce::File file("/tmp/origami-filter-polish-"+name+".png");file.deleteFile();if(auto out=file.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(image,*out);}
+    };
+    for(int hz:{100,1000,5000,8000,10000,20000}) {set(dsp::FilterType::LowPass,float(hz),.1f);render("lp-"+juce::String(hz));}
+    for(float res:{0.f,.6f,1.f}) {set(dsp::FilterType::LowPass,8000,res);render("res-"+juce::String(res,1));}
+    for(float mix:{0.f,.25f,.5f,.75f,1.f}) {set(dsp::FilterType::LowPass,8000,.6f,mix);render("mix-"+juce::String(mix,2));}
+    for(const auto& info:dsp::filterTypes) if(info.synth && info.id!=dsp::FilterType::LowPass) {set(info.id,5000,.6f);render("type-"+juce::String(int(info.id)));}
+    set(dsp::FilterType::LowPass,8000,.1f);
+    for(const auto& entry:std::array<std::pair<const char*,juce::Colour>,3>{{{"red",theme.signal},{"cool",juce::Colour(0xff40aaff)},{"bright",juce::Colour(0xffffd040)}}}) {auto t=theme;t.signal=entry.second;ui::setDeclarativeTheme(t);render("theme-"+juce::String(entry.first));}ui::setDeclarativeTheme(theme);
+    int count=1;for(int desired:{1,3,8}) {while(count<desired){panel->addFilter();++count;}set(dsp::FilterType::LowPass,8000,.1f);render("count-"+juce::String(desired));}
+    juce::Button* power=nullptr;juce::Button* out=nullptr;walk(*panel,[&](auto& c){if(auto* b=dynamic_cast<juce::Button*>(&c)){if(b->getName()=="Power Synth Filter") power=b;if(b->getName()=="Synth filter output") out=b;}});check(power && out && bool(out->onClick),"routing and power retain live canonical callbacks");power->onClick();check(!p.getUiInstrumentState().modulation.synthFilters.filters[7].power && !power->getToggleState(),"compact power bypass writes state");power->onClick();check(p.getUiInstrumentState().modulation.synthFilters.filters[7].power && power->getToggleState(),"compact power restores canonical state");
+    check(panel->dropFilterAfter(panel->selectedFilter(),p.getUiInstrumentState().modulation.synthFilters.filters[0].id),"existing serial drop remains canonical");panel->syncFromModel();
+    panel->setSize(532,300);render("compact");panel->setSize(662,355);
+    editor->setSize(ui::EditorLayout::minWidth,ui::EditorLayout::minHeight);editor->resized();check(panel->getWidth()==662 && panel->getHeight()==355,"supported minimum scales canonical design rather than collapsing controls");editor->setSize(ui::EditorLayout::defaultWidth,ui::EditorLayout::defaultHeight);
+    juce::Image whole=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.f);juce::File wholeFile("/tmp/origami-filter-polish-whole.png");wholeFile.deleteFile();if(auto outStream=wholeFile.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(whole,*outStream);}
+}
+
 void synthResponseFillAudit() {
     InstrumentState state;const auto f=addSynthFilter(state.modulation);RuntimeVisualizationSnapshot observed;observed.sampleRate=48000;observed.synthFilterIds[0]=f;observed.synthFilters[0]={1200,.1f,0,1,0};
     ui::ModulationBindings bindings;bindings.snapshot=[&]{return state;};bindings.visualization=[&]{return observed;};
-    ui::FilterPanel panel({}, {},bindings);panel.setSize(662,355);const auto plot=panel.responseBounds().reduced(8);
+    ui::FilterPanel panel({}, {},bindings);panel.setSize(662,355);const auto plot=panel.editorRegions().plot;
     const auto render=[&] {juce::Image image(juce::Image::ARGB,662,355,true);juce::Graphics g(image);panel.paintEntireComponent(g,true);return image;};
     const auto theme=ui::gTheme;auto red=render();auto blueTheme=theme;blueTheme.signal=juce::Colour(0xff40aaff);ui::setDeclarativeTheme(blueTheme);auto blue=render();
     const int x=plot.getX()+12,above=plot.getY()+20,below=plot.getBottom()-5;
     check(red.getPixelAt(x,above)==blue.getPixelAt(x,above),"theme does not flood area above curve");
     check(red.getPixelAt(x,below)!=blue.getPixelAt(x,below),"accent fill reaches graph floor below curve and follows theme");
     // At 2 kHz, 300 Hz and 8 kHz responses must move BOTH stroke and fill.
-    observed.synthFilters[0].cutoff=300;auto low=render();observed.synthFilters[0].cutoff=8000;auto high=render();
+    observed.synthFilters[0].cutoff=300;auto low=render();const auto lowHandle=panel.responseHandle();observed.synthFilters[0].cutoff=8000;auto high=render();check(panel.responseHandle().x>lowHandle.x && state.modulation.synthFilters.filters[0].values.cutoff==8000,"modulation telemetry moves handle without overwriting authored knobs");
     dsp::LowPassCoefficientTable table;table.prepare(48000);const int i=170;const double hz=20*std::pow(1000.,double(i)/255);const int column=plot.getX()+juce::roundToInt(float(i)/255*float(plot.getWidth()));
     const auto curveY=[&](float cutoff) {const double magnitude=dsp::lowPassMagnitude(table.make(cutoff,.1f),hz,48000,1);return plot.getY()+juce::roundToInt(float(dsp::FilterResponseAxis{48000}.y(magnitude))*float(plot.getHeight()));};
     const int lowY=curveY(300),highY=curveY(8000),middle=(lowY+highY)/2;
@@ -6427,7 +6466,7 @@ void synthFilterVisualComposition() {
         check(filter->dropFilterOnOscillator(filter->selectedFilter(),1),"visual fixture exposes actual oscillator input and preserved serial output");
         const auto r=filter->editorRegions();
         check(r.routing.isEmpty() && r.header.getBottom()<r.response.getY() && r.response.getBottom()<r.parameters.getY(),"header/response/parameters are ordered without redundant input-topology row");
-        check(r.response.getHeight()<=190 && r.response.getHeight()>90 && r.parameters.getHeight()==96 && filter->contentBounds().getBottom()-r.parameters.getBottom()>=12,"graph proportion and parameter breathing room are bounded");
+        check(r.response.getHeight()<=140 && r.response.getHeight()>90 && r.parameters.getHeight()==ui::FilterPanel::EditorMetrics::parameterHeight && filter->contentBounds().getBottom()-r.parameters.getBottom()>=12,"graph proportion and parameter breathing room are bounded");
         bool selectedVisible=false,footerContains=true,controlsContained=true;juce::Viewport* viewport=nullptr;
         walk(*filter,[&](auto& c){if(auto* v=dynamic_cast<juce::Viewport*>(&c)) viewport=v;});
         const auto rail=ui::sourceRailLayout(filter->contentBounds());
@@ -6460,5 +6499,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

@@ -1,0 +1,194 @@
+Start testing: Oct 08 12:12 EDT
+----------------------------------------------------------
+1/7 Testing: origami_state
+1/7 Test: origami_state
+Command: "/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_state_tests"
+Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+"origami_state" start time: Oct 08 12:12 EDT
+Output:
+----------------------------------------------------------
+PASS: 2782 state checks
+<end of output>
+Test time =   0.08 sec
+----------------------------------------------------------
+Test Passed.
+"origami_state" end time: Oct 08 12:12 EDT
+"origami_state" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/7 Testing: origami_foundation
+2/7 Test: origami_foundation
+Command: "/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_tests"
+Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+"origami_foundation" start time: Oct 08 12:12 EDT
+Output:
+----------------------------------------------------------
+[filter response] 6656 independent Synth probes; worst meaningful dB error 0.00577907216882; worst absolute magnitude error 1.41515030094e-06
+dynamic topology
+oscillator control cache
+simple playback + visualization policy
+clean sine simple path P0
+performance visualization sources
+voice observation
+visualization cadence
+performance source curves
+QoS voice admission
+audio-rate fast math
+oscillator generation
+spectral preparation
+random spectral amount
+spectral playback
+spectral concurrent eviction
+random spectral morph
+random spectral morph crossing
+realtime thread policy
+wavetable handoff
+wavetable handoff concurrency
+optimised-path golden renders
+spectral transitions
+manual-edit dezipper
+nested modulation realtime
+registry and patches
+envelope timing
+pitch and blocks
+voices and realtime
+performance modes
+signal behavior
+oscillator and filter
+PASS: 1355116 checks
+<end of output>
+Test time =   8.07 sec
+----------------------------------------------------------
+Test Passed.
+"origami_foundation" end time: Oct 08 12:12 EDT
+"origami_foundation" time elapsed: 00:00:08
+----------------------------------------------------------
+
+3/7 Testing: origami_wavetable_bank_foundation
+3/7 Test: origami_wavetable_bank_foundation
+Command: "/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_wavetable_bank_tests"
+Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+"origami_wavetable_bank_foundation" start time: Oct 08 12:12 EDT
+Output:
+----------------------------------------------------------
+PASS: V22.0 wavetable-bank foundation
+<end of output>
+Test time =   0.08 sec
+----------------------------------------------------------
+Test Passed.
+"origami_wavetable_bank_foundation" end time: Oct 08 12:12 EDT
+"origami_wavetable_bank_foundation" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/7 Testing: origami_modulation_core
+4/7 Test: origami_modulation_core
+Command: "/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_modulation_tests"
+Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+"origami_modulation_core" start time: Oct 08 12:12 EDT
+Output:
+----------------------------------------------------------
+PASS: 3938 modulation foundation checks
+<end of output>
+Test time =   1.69 sec
+----------------------------------------------------------
+Test Passed.
+"origami_modulation_core" end time: Oct 08 12:12 EDT
+"origami_modulation_core" time elapsed: 00:00:01
+----------------------------------------------------------
+
+5/7 Testing: origami_fx_graph
+5/7 Test: origami_fx_graph
+Command: "/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_fx_tests"
+Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+"origami_fx_graph" start time: Oct 08 12:12 EDT
+Output:
+----------------------------------------------------------
+[N07 stress] 32-node x16 voices / empty x16 voices CPU ratio 4.13562
+PASS: 648 FX graph/DSP/bus checks
+<end of output>
+Test time =   1.67 sec
+----------------------------------------------------------
+Test Passed.
+"origami_fx_graph" end time: Oct 08 12:12 EDT
+"origami_fx_graph" time elapsed: 00:00:01
+----------------------------------------------------------
+
+6/7 Testing: origami_plugin_ui
+6/7 Test: origami_plugin_ui
+Command: "/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_plugin_tests"
+Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+"origami_plugin_ui" start time: Oct 08 12:12 EDT
+Output:
+----------------------------------------------------------
+[N07 ui] timer sync unchanged 0.00333 us | model change + rebuild 551.628 us | hidden model change 27.107 us | graph paint 100% 252.921 us, 50% 916.337 us, 40% 1337.45 us
+[menu] AUDIO >  (0 items)
+[menu]     EFFECTS >  (0 items)
+[menu]         DYNAMICS >  (2 items)
+[menu]         FILTER / EQ >  (2 items)
+[menu]         DISTORTION >  (1 items)
+[menu]         MODULATION >  (3 items)
+[menu]         SPATIAL >  (1 items)
+[menu]         TIME >  (3 items)
+[menu]         UTILITY >  (2 items)
+[menu]     ROUTING >  (2 items)
+[menu] CONTROL >  (0 items)
+[menu]     MODULATION SOURCES >  (22 items)
+[menu]     MATH >  (5 items)
+[menu]     SHAPING >  (6 items)
+[menu]     UTILITY >  (3 items)
+[menu]     UTILITIES >  (1 items)
+[menu] EVENTS >  (0 items)
+[menu]     NOTE / GATE / TRIGGER >  (5 items)
+[menu]     TRANSPORT >  (1 items)
+[menu]     TARGETS >  (1 items)
+[menu] LOGIC / GENERATIVE >  (0 items)
+[menu]     CONVERSION >  (3 items)
+[menu]     LOGIC >  (6 items)
+[menu]     STATEFUL >  (5 items)
+[menu]     SEQUENCING >  (6 items)
+[menu]     GENERATIVE >  (3 items)
+[menu] cable-drop root EVENT
+[content] preset load during held notes: max sample step 0.0369981 (the held notes' own max step 0.0599174)
+[content] 10000 records: cached index 45.2687 ms, browser open 3.04287 ms, search keystroke 0.762583 ms, clear search + full paint 8.14942 ms
+[qa] MAIN IN peaks hard-left: L 0.145682 R 0.0260573
+[qa] MAIN IN peaks hard-right: L 0 R 0.126595
+[Origami P0 timing] oscillators=1 avgMs=0.0338659 medianMs=0.033875 worstMs=0.0374167 activeModules=1
+[Origami P0 topology] oscillators=1 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=2 avgMs=0.0412187 medianMs=0.0408958 worstMs=0.0509167 activeModules=2
+[Origami P0 topology] oscillators=2 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=3 avgMs=0.0515195 medianMs=0.0510833 worstMs=0.0656667 activeModules=3
+[Origami P0 topology] oscillators=3 freq=439.453 rms=0.069983 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=4 avgMs=0.0619284 medianMs=0.0612708 worstMs=0.074 activeModules=4
+[Origami P0 topology] oscillators=4 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+PASS: 1608978 plugin/UI checks
+<end of output>
+Test time =  28.95 sec
+----------------------------------------------------------
+Test Passed.
+"origami_plugin_ui" end time: Oct 08 12:12 EDT
+"origami_plugin_ui" time elapsed: 00:00:28
+----------------------------------------------------------
+
+7/7 Testing: origami_content
+7/7 Test: origami_content
+Command: "/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_content_tests"
+Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+"origami_content" start time: Oct 08 12:12 EDT
+Output:
+----------------------------------------------------------
+[content scale] 100 records: sort(name) 0.046625 ms, search "metallic" 0.024334 ms (28), search "met" 0.032916 ms, filter 0.008792 ms (25), sort(date) 0.026416 ms, facets 0.061042 ms, index ~52 KB
+[content scale] 1000 records: sort(name) 0.627667 ms, search "metallic" 0.399125 ms (300), search "met" 0.406583 ms, filter 0.123375 ms (211), sort(date) 0.198375 ms, facets 0.585083 ms, index ~487 KB
+[content scale] 10000 records: sort(name) 4.93738 ms, search "metallic" 2.76025 ms (2931), search "met" 2.69592 ms, filter 1.27708 ms (2040), sort(date) 1.01396 ms, facets 3.20396 ms, index ~5882 KB
+[content scale] cached index of 10000 records loaded in 42.0718 ms
+[content scale] rescan of a folder whose files are gone: 3.04263 ms
+[content scale] 1000 preset files: cold scan 45.781 ms, rescan with index 27.5275 ms
+PASS: 98 content library checks
+<end of output>
+Test time =   1.60 sec
+----------------------------------------------------------
+Test Passed.
+"origami_content" end time: Oct 08 12:12 EDT
+"origami_content" time elapsed: 00:00:01
+----------------------------------------------------------
+
+End testing: Oct 08 12:12 EDT
