@@ -1,5 +1,6 @@
 #pragma once
 #include "core/dsp/Filter.h"
+#include "core/SynthFilter.h"
 #include "core/fx/FxFilter.h"
 #include <fstream>
 #include <iostream>
@@ -26,6 +27,29 @@ template<class Check> void run(Check check) {
             check(std::isfinite(p.magnitude) && (analytic>1e-5?error<.02:std::abs(p.magnitude-analytic)<2e-7),"independent Synth DSP versus shared analytical transfer");
         }
     };
+    // Manual PEAK case and center/bandwidth regressions, independently measured
+    // through the Synth runtime and the canonical Nodes SVF recurrence.
+    std::ofstream peakCsv("/tmp/origami-peak-response.csv");peakCsv<<"center,gain,resonance,probe,measured_db,analytic_db,nodes_db,error_db\n";
+    double peakWorst=0;
+    for(float center:{370.f,1000.f,8000.f}) for(float gain:{-12.f,-6.f,0.f,6.f,12.f}) for(float res:{0.f,.25f,.5f,.547f,.75f,1.f}) {
+        dsp::LowPassCoefficientTable table;table.prepare(48000);const auto base=table.make(center,res);
+        const auto c=dsp::filterDesign(dsp::FilterType::Bell,base,gain);const auto nodes=fx::svfDesign(dsp::FilterType::Bell,center,.5+3.5*res,gain,48000);
+        check(std::abs(20*std::log10(dsp::filterMagnitude(c,center,48000))-gain)<.01,"PEAK center equals boost/cut Gain, not Resonance");
+        for(double ratio:{.5,1.,1.5,2.}) {
+            SynthFilterRuntime runtime;runtime.adopt(1,dsp::FilterType::Bell);runtime.typedCoefficients=c;
+            const auto measured=sine(48000,center*ratio,center,[&](float x){return runtime.process(x,base,0,1,false);},64);
+            fx::SvfState state;const auto measuredNodes=sine(48000,center*ratio,center,[&](float x){return state.process(x,nodes);},64);
+            const double analytic=dsp::filterMagnitude(c,measured.hz,48000),error=std::abs(20*std::log10(measured.magnitude/analytic));peakWorst=std::max(peakWorst,error);
+            check(error<.02 && std::abs(20*std::log10(measuredNodes.magnitude/analytic))<.02,"PEAK actual Synth/Nodes DSP agrees with displayed analytical response");
+            if(gain==0) check(std::abs(measured.magnitude-1)<1e-6 && std::abs(analytic-1)<1e-12,"PEAK zero Gain is unity for every Q");
+            peakCsv<<center<<','<<gain<<','<<res<<','<<measured.hz<<','<<20*std::log10(measured.magnitude)<<','<<20*std::log10(analytic)<<','<<20*std::log10(measuredNodes.magnitude)<<','<<error<<'\n';
+        }
+        if(gain!=0) {
+            const auto wide=dsp::filterDesign(dsp::FilterType::Bell,table.make(center,0),gain),narrow=dsp::filterDesign(dsp::FilterType::Bell,table.make(center,1),gain);
+            check(std::abs(20*std::log10(dsp::filterMagnitude(wide,center*1.5,48000)))>std::abs(20*std::log10(dsp::filterMagnitude(narrow,center*1.5,48000)))+.5,"PEAK increasing Q narrows nonzero-Gain bell");
+        }
+    }
+    std::cout<<"[PEAK response] 360 Synth/Nodes probe pairs; worst Synth error "<<peakWorst<<" dB\n";
     for(const auto& info:dsp::filterTypes) if(info.synth) for(double rate:{44100.,48000.,96000.,192000.}) {
         for(float cutoff:{20.f,100.f,500.f,1000.f,5000.f,10000.f,20000.f}) for(float res:{0.f,.1f,.6f,1.f}) for(float gain:info.gain?std::vector<float>{-24,0,24}:std::vector<float>{0}) measure(info.id,rate,cutoff,res,gain,1);
         for(float mix:{0.f,.35f,1.f}) measure(info.id,rate,1000,.1f,info.gain?6.f:0.f,mix);

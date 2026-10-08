@@ -86,6 +86,9 @@ void FilterPanel::syncFromModel() {
     for(std::size_t i=0;i<knobs_.size();++i) {knobs_[i].setVisible(active && (!legacy_ || i<2));labels_[i].setVisible(knobs_[i].isVisible());if(!knobs_[i].isMouseButtonDown()) knobs_[i].setValue(v[i],juce::dontSendNotification);if(i<5) knobs_[i].getProperties().set("mct.mod.destination",int(!selectedId_?(i==0?ModDestination::Cutoff:ModDestination::Resonance):static_cast<ModDestination>(401+i)));knobs_[i].getProperties().set("mct.mod.oscillator",0);knobs_[i].getProperties().set("mct.mod.itemId",int(selectedId_));}
     type_.setButtonText(juce::String(slot<maxSynthFilters?dsp::filterTypeInfo(state_.modulation.synthFilters.filters[slot].type)->name:dsp::filterTypeInfo(dsp::FilterType::LowPass)->name)+" ▾");type_.setEnabled(!legacy_ && active);labels_[0].setText(slot<maxSynthFilters?dsp::filterTypeInfo(state_.modulation.synthFilters.filters[slot].type)->frequencyLabel:"CUTOFF",juce::dontSendNotification);
     const bool gain=slot<maxSynthFilters && dsp::filterTypeInfo(state_.modulation.synthFilters.filters[slot].type)->gain;knobs_[5].setVisible(gain);labels_[5].setVisible(gain);
+    knobs_[1].setTooltip(peakHandle()?"Bell bandwidth (Q = 0.5 + 3.5 × Resonance); Gain 0 dB is unity at every Q":slot<maxSynthFilters && state_.modulation.synthFilters.filters[slot].type==dsp::FilterType::AllPass?"Q controls phase; full-wet magnitude remains unity":"Filter resonance / Q");
+    knobs_[5].setTooltip(peakHandle()?"Bell boost/cut in dB; PEAK graph vertical drag edits Gain":"Shelf boost/cut in dB");
+    knobs_[2].setTooltip("Nonlinear pre-filter drive; graph shows the linear filter and dry/wet response");
     syncing_=false;resized();repaint();
 }
 void FilterPanel::editValues() {
@@ -112,15 +115,19 @@ juce::Point<float> FilterPanel::responseHandle() const {
     const auto c=dsp::filterDesign(type,responseTable_.make(values.cutoff,values.resonance),values.gain);const double hz=std::min({double(values.cutoff),20000.,rate*.45});
     return {plot.getX()+float(axis.x(hz))*plot.getWidth(),plot.getY()+float(axis.y(dsp::filterMagnitude(c,hz,rate,values.mix)))*plot.getHeight()};
 }
-bool FilterPanel::editResponseParameters(juce::Point<float> point,float resonance) {
+bool FilterPanel::peakHandle() const {
+    const auto slot=synthFilterSlot(state_.modulation.synthFilters,selectedId_);
+    return slot<maxSynthFilters && state_.modulation.synthFilters.filters[slot].type==dsp::FilterType::Bell;
+}
+bool FilterPanel::editResponseParameters(juce::Point<float> point,float verticalValue) {
     const auto plot=editorRegions().plot.toFloat();if(plot.isEmpty()) return false;
     const auto visual=bindings_.visualization?bindings_.visualization():RuntimeVisualizationSnapshot{};const dsp::FilterResponseAxis axis{visual.sampleRate>0?visual.sampleRate:48000};
     const auto cutoff=axis.frequency((point.x-plot.getX())/plot.getWidth());
-    {const juce::ScopedValueSetter<bool> guard(syncing_,true);knobs_[0].setValue(juce::jlimit(20.,20000.,cutoff),juce::dontSendNotification);knobs_[1].setValue(juce::jlimit(0.f,1.f,resonance),juce::dontSendNotification);}editValues();return true;
+    {const juce::ScopedValueSetter<bool> guard(syncing_,true);knobs_[0].setValue(juce::jlimit(20.,20000.,cutoff),juce::dontSendNotification);if(peakHandle()) knobs_[5].setValue(juce::jlimit(-24.f,24.f,verticalValue),juce::dontSendNotification);else knobs_[1].setValue(juce::jlimit(0.f,1.f,verticalValue),juce::dontSendNotification);}editValues();return true;
 }
 bool FilterPanel::editResponseHandle(juce::Point<float> point) {
     const auto plot=editorRegions().plot.toFloat();if(plot.isEmpty()) return false;
-    return editResponseParameters(point,float(knobs_[1].getValue())+(responseHandle().y-point.y)/plot.getHeight());
+    return editResponseParameters(point,float(knobs_[peakHandle()?5:1].getValue())+(responseHandle().y-point.y)/plot.getHeight()*(peakHandle()?96.f:1.f));
 }
 void FilterPanel::showOutputMenu() {
     const auto slot=synthFilterSlot(state_.modulation.synthFilters,selectedId_);if(slot==maxSynthFilters) return;
@@ -131,7 +138,7 @@ void FilterPanel::showOutputMenu() {
 FilterPanel::EditorRegions FilterPanel::editorRegions() const noexcept {
     const auto layout=sourceRailLayout(contentBounds());auto body=layout.editor.reduced(EditorMetrics::inset,0);EditorRegions r;
     r.header={body.getX(),layout.header.getCentreY()-EditorMetrics::selectorHeight/2,body.getWidth(),EditorMetrics::selectorHeight};
-    body.setY(r.header.getBottom()+EditorMetrics::gap);body.setBottom(layout.editor.getBottom()-EditorMetrics::bottom);
+    body.setY(r.header.getBottom()+EditorMetrics::gap);body.setBottom(layout.editor.getBottom()-EditorMetrics::parameterBottom);
     const int parameterHeight=juce::jmin(EditorMetrics::parameterHeight,body.getHeight()/2);
     r.parameters=body.removeFromBottom(parameterHeight);body.removeFromBottom(EditorMetrics::bottom);r.response=body;
     auto inner=r.response.reduced(EditorMetrics::gap,EditorMetrics::plotInset);r.levelAxis=inner.removeFromLeft(EditorMetrics::levelWidth);
@@ -177,9 +184,8 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     const double rate=visual.sampleRate>0?visual.sampleRate:48000;if(rate!=responseRate_) {responseTable_.prepare(rate);responseRate_=rate;}
     const auto type=slot<maxSynthFilters?state_.modulation.synthFilters.filters[slot].type:dsp::FilterType::LowPass;const auto c=dsp::filterDesign(type,responseTable_.make(values.cutoff,values.resonance),values.gain);
     const dsp::FilterResponseAxis axis{rate,dsp::filterTypeInfo(type)->gain?36.:18.};
-    g.setColour(Palette::borderSoft().withAlpha(.50f));
     for(double hz:{100.,1000.,10000.}) if(hz<axis.maximum()) {
-        const int x=juce::roundToInt(plot.getX()+float(axis.x(hz))*plot.getWidth());g.drawVerticalLine(x,plot.getY(),plot.getBottom());
+        const int x=juce::roundToInt(plot.getX()+float(axis.x(hz))*plot.getWidth());g.setColour(Palette::borderSoft().withAlpha(.35f));g.drawVerticalLine(x,plot.getY(),plot.getBottom());
         text(g,juce::String(hz<1000?"100":hz<10000?"1k":"10k"),{x-16,regions.frequencyAxis.getY(),32,EditorMetrics::axisHeight},Type::secondary,Palette::muted(),juce::Justification::centred);
     }
     for(double db:{axis.topDb,0.,-24.,dsp::FilterResponseAxis::bottomDb}) {
@@ -193,7 +199,8 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         if(!i) curve.startNewSubPath(x,y);
         else {if(!inserted && x>=handle.x) {curve.lineTo(handle);inserted=true;}curve.lineTo(x,y);}
     }
-    juce::Path fill=curve;fill.lineTo(plot.getRight(),plot.getBottom());fill.lineTo(plot.getX(),plot.getBottom());fill.closeSubPath();
+    const float fillBase=dsp::filterTypeInfo(type)->gain?plot.getY()+float(axis.y(1.))*plot.getHeight():plot.getBottom();
+    juce::Path fill=curve;fill.lineTo(plot.getRight(),fillBase);fill.lineTo(plot.getX(),fillBase);fill.closeSubPath();
     g.setColour(signalSurfaceColour(EditorMetrics::fillExposure,EditorMetrics::fillAlpha));g.fillPath(fill);
     g.setColour(Palette::text());g.strokePath(curve,juce::PathStrokeType(1.3f));
     const float size=handleHovered_ || handleDragging_?8.f:7.f;const auto circle=juce::Rectangle<float>(size,size).withCentre(handle);
@@ -261,11 +268,11 @@ void FilterPanel::paintOverChildren(juce::Graphics& g) {
     else for(std::size_t i=0;i<5;++i) drawRing(knobs_[i],static_cast<ModDestination>(401+i),selectedId_);
 }
 
-void FilterPanel::mouseDown(const juce::MouseEvent& e) {dragStarted_=false;handleDragging_=e.eventComponent==this && editorRegions().plot.contains(e.getPosition());if(handleDragging_) {handleDragStart_=e.position;handleDragResonance_=float(knobs_[1].getValue());editResponseParameters(e.position,handleDragResonance_);repaint();}}
+void FilterPanel::mouseDown(const juce::MouseEvent& e) {dragStarted_=false;handleDragging_=e.eventComponent==this && editorRegions().plot.contains(e.getPosition());if(handleDragging_) {handleDragStart_=e.position;handleDragValue_=float(knobs_[peakHandle()?5:1].getValue());editResponseParameters(e.position,handleDragValue_);repaint();}}
 void FilterPanel::mouseUp(const juce::MouseEvent&) {handleDragging_=false;repaint();}
 void FilterPanel::mouseMove(const juce::MouseEvent& e) {const bool hover=e.position.getDistanceFrom(responseHandle())<9; if(hover!=handleHovered_) {handleHovered_=hover;setMouseCursor(hover?juce::MouseCursor::PointingHandCursor:juce::MouseCursor::NormalCursor);repaint();}}
 void FilterPanel::mouseExit(const juce::MouseEvent&) {handleHovered_=false;setMouseCursor(juce::MouseCursor::NormalCursor);repaint();}
-void FilterPanel::mouseDrag(const juce::MouseEvent& e) {if(handleDragging_) {editResponseParameters(e.position,handleDragResonance_-(e.position.y-handleDragStart_.y)/float(editorRegions().plot.getHeight()));return;}if(dragStarted_ || e.getDistanceFromDragStart()<7) return;for(std::size_t i=0;i<tabCount_;++i) if(e.eventComponent==&tabs_[i]) {if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) {dragStarted_=true;container->startDragging("MCT_SYNTH_FILTER:"+juce::String(tabIds_[i]),&tabs_[i]);}return;}}
+void FilterPanel::mouseDrag(const juce::MouseEvent& e) {if(handleDragging_) {editResponseParameters(e.position,handleDragValue_-(e.position.y-handleDragStart_.y)/float(editorRegions().plot.getHeight())*(peakHandle()?96.f:1.f));return;}if(dragStarted_ || e.getDistanceFromDragStart()<7) return;for(std::size_t i=0;i<tabCount_;++i) if(e.eventComponent==&tabs_[i]) {if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) {dragStarted_=true;container->startDragging("MCT_SYNTH_FILTER:"+juce::String(tabIds_[i]),&tabs_[i]);}return;}}
 bool FilterPanel::isInterestedInDragSource(const SourceDetails& d) {const auto text=d.description.toString();return !legacy_ && selectedId_ && (text.startsWith("MCT_SYNTH_OSC:") || text.startsWith("MCT_SYNTH_FILTER:"));}
 void FilterPanel::itemDragEnter(const SourceDetails&) {dropOver_=true;repaint();}
 void FilterPanel::itemDragExit(const SourceDetails&) {dropOver_=false;repaint();}

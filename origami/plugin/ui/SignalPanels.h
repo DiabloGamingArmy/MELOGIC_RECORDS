@@ -26,7 +26,7 @@ public:
     juce::Rectangle<int> sourceRailBounds() const noexcept {return sourceRailLayout(contentBounds()).rail;}
     struct EditorMetrics {
         static constexpr int inset=4,gap=8,bottom=12,selectorHeight=24,typeWidth=104,outWidth=100,powerWidth=42,typeLabelWidth=32,outLabelWidth=28,minCellWidth=70;
-        static constexpr int parameterHeight=80,axisHeight=16,levelWidth=36,plotInset=6,stackHeight=72,labelHeight=16,stackGap=2,valueWidth=64,valueHeight=16;
+        static constexpr int parameterHeight=80,axisHeight=16,levelWidth=36,plotInset=6,stackHeight=72,labelHeight=16,stackGap=2,valueWidth=64,valueHeight=16,parameterBottom=4;
         static constexpr float bankFraction=.90f,fillExposure=.32f,fillAlpha=.16f;
     };
     struct EditorRegions {juce::Rectangle<int> header,routing,response,parameters,plot,frequencyAxis,levelAxis,parameterBank,typeLabel,outputLabel;};
@@ -50,7 +50,8 @@ private:
     void mouseMove(const juce::MouseEvent&) override;
     void mouseExit(const juce::MouseEvent&) override;
     void editValues();
-    bool editResponseParameters(juce::Point<float>,float resonance);
+    bool editResponseParameters(juce::Point<float>,float verticalValue);
+    bool peakHandle() const;
     SynthFilterValues responseValues(const RuntimeVisualizationSnapshot&) const;
     void showOutputMenu();
     bool commit(ModulationState);
@@ -59,7 +60,7 @@ private:
     SynthFilterId selectedId_=0,revealedId_=0;
     juce::Point<int> revealedViewportSize_{};
     bool legacy_=false,dragStarted_=false,dropOver_=false,syncing_=false,handleDragging_=false,handleHovered_=false;
-    juce::Point<float> handleDragStart_{};float handleDragResonance_=0;
+    juce::Point<float> handleDragStart_{};float handleDragValue_=0;
     std::array<SourceEntityButton,maxSynthFilters+1> tabs_{};
     std::array<SynthFilterId,maxSynthFilters+1> tabIds_{};
     std::size_t tabCount_=0;
