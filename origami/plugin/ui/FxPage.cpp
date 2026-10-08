@@ -7,6 +7,7 @@
 #include "SourceEntity.h"
 #include "ModulationUiTelemetry.h"
 #include "core/fx/FxFilter.h"
+#include "core/fx/SpectralTune.h"
 #include "core/dsp/Comb.h"
 #include <cmath>
 #include <cstring>
@@ -112,7 +113,9 @@ float physical(const FxNode& n,std::size_t index) {
 }
 
 juce::String valueText(const FxNode& n,const FxParameterDescriptor& p) {
-    return juce::String(fxParameterText(p,n.parameter(p.id).value_or(p.defaultValue)));
+    auto shown=p;
+    if(n.effect==FxEffectType::SpectralTune && p.id==spectral::Shift) shown.unit=n.parameter(spectral::ShiftMode).value_or(0)>=.5f ? "Hz" : "st";
+    return juce::String(fxParameterText(shown,n.parameter(p.id).value_or(p.defaultValue)));
 }
 
 juce::String sourceName(ModSource s) {
@@ -190,8 +193,7 @@ float eqResponseDb(const FxNode& n,float hz) {
     return float(20.0*std::log10(std::max(magnitude,1.0e-6)));
 }
 
-// UI-generated pictures of what each effect does, driven by its canonical
-// parameters. No audio is streamed to the UI to draw these.
+// Cached parameter/model annotations. Live DSP telemetry is drawn separately.
 void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode& n,double sampleRate) {
     well(g,r.toNearestInt());
     const auto* d=findFxEffect(n.effect);
@@ -211,6 +213,23 @@ void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode&
         }
     };
     switch(d->visual) {
+    case FxVisual::Spectrum: {
+        const double top=std::min(20000.0,sampleRate*0.49);
+        const auto xpos=[&](double hz){return in.getX()+float(std::log(hz/20)/std::log(top/20))*in.getWidth();};
+        const auto mask=unsigned(physicalById(n,spectral::Mask));
+        const float low=physicalById(n,spectral::Low),high=physicalById(n,spectral::High);
+        g.setColour(Palette::panel().withAlpha(.65f));
+        if(low>20) g.fillRect(in.withRight(xpos(std::min(double(low),top))));
+        if(high<top) g.fillRect(in.withLeft(xpos(std::max(double(high),20.0))));
+        for(int midi=0;midi<140;++midi) {
+            const double hz=440*std::exp2((midi-69)/12.0); if(hz<20 || hz>top || !(mask&(1u<<(midi%12)))) continue;
+            const bool root=midi%12==int(physicalById(n,spectral::Root));
+            g.setColour(ink.withAlpha(root ? .13f : .18f)); g.drawVerticalLine(juce::roundToInt(xpos(hz)),root ? in.getY() : in.getBottom()-6,in.getBottom());
+        }
+        g.setColour(Palette::secondary().withAlpha(.55f));
+        for(float hz:{low,high}) if(hz>=20 && hz<=top) g.drawVerticalLine(juce::roundToInt(xpos(hz)),in.getY(),in.getBottom());
+        return;
+    }
     case FxVisual::Transfer: {
         const float gain=std::pow(10.0f,physical(n,0)/20.0f),bias=physical(n,3);
         const float norm=std::max(std::abs(std::tanh(gain+bias)),std::abs(std::tanh(-gain+bias)));
@@ -391,7 +410,8 @@ void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode&
 
 // P03: live overlays consume the bounded P02 snapshot on the message thread.
 // They never feed values back into DSP. Frequency displays use a deliberately
-// tiny direct DFT (64 input samples / 24 bins) only while a node is visible.
+// tiny direct DFT for legacy effects; Spectral Tune consumes prepared DSP FFT
+// magnitude buckets without a UI transform.
 void paintLiveEffectTelemetry(juce::Graphics& g,juce::Rectangle<float> r,const FxNode& n,
                               const FxRenderer::NodeTelemetrySnapshot& t) {
     if(!t.valid || !n.enabled) return;
@@ -402,6 +422,23 @@ void paintLiveEffectTelemetry(juce::Graphics& g,juce::Rectangle<float> r,const F
     g.reduceClipRegion(in.toNearestInt());
     const auto live=signalShade(.88f,.72f);
     const float activity=juce::jlimit(0.0f,1.0f,std::max(t.peakLeft,t.peakRight)*1.4f);
+    if(d->visual==FxVisual::Spectrum) {
+        if(!t.hasSpectrum) return;
+        for(int trace=0;trace<2;++trace) {
+            juce::Path path;
+            for(std::size_t i=0;i<t.spectrum.bins;++i) {
+                const float magnitude=trace ? t.spectrum.output[i] : t.spectrum.input[i];
+                const float db=20*std::log10(std::max(magnitude,1.0e-5f));
+                const float x=in.getX()+float(i)/float(t.spectrum.bins-1)*in.getWidth();
+                const float y=in.getBottom()-juce::jlimit(0.0f,1.0f,(db+80)/80)*in.getHeight();
+                if(i==0) path.startNewSubPath(x,y); else path.lineTo(x,y);
+            }
+            if(trace) { auto fill=path; fill.lineTo(in.getRight(),in.getBottom()); fill.lineTo(in.getX(),in.getBottom()); fill.closeSubPath(); g.setColour(live.withAlpha(.08f)); g.fillPath(fill); }
+            g.setColour(trace ? Palette::accent().withAlpha(.8f) : Palette::secondary().withAlpha(.45f));
+            g.strokePath(path,juce::PathStrokeType(trace ? 1.2f : .8f));
+        }
+        return;
+    }
     if(activity<=1.0e-4f) return;
 
     if(d->visual==FxVisual::Spatial || (d->visual==FxVisual::Utility && n.effect!=FxEffectType::Gain)) {
@@ -498,6 +535,17 @@ std::optional<FxModuleSpec> FxModuleMenu::decode(int id) {
 
 FxNodeComponent::FxNodeComponent(FxPage& page,FxNodeId id):page_(page),id_(id) {
     for(auto* b:{&power_,&menu_,&remove_,&accessory_}) addChildComponent(b);
+    for(int i=0;i<12;++i) {
+        auto& key=notes_[i]; const auto label=spectral::parameters()[10].choiceLabels[i];
+        key.setButtonText(label); key.setName("Spectral Tune note "+juce::String(label)); key.setClickingTogglesState(true); addChildComponent(key);
+        key.onClick=[this,i] { const unsigned mask=unsigned(physicalById(node_,spectral::Mask))^(1u<<i); page_.setParameter(id_,spectral::Mask,float(mask)/4095); };
+    }
+    for(auto* b:{&root_,&scale_,&all_,&clear_,&invert_}) addChildComponent(b);
+    root_.setName("Spectral Tune root"); scale_.setName("Spectral Tune scale");
+    root_.onClick=[this]{chooseSpectral(spectral::Root,root_);}; scale_.onClick=[this]{chooseSpectral(spectral::Scale,scale_);};
+    all_.onClick=[this]{page_.setParameter(id_,spectral::Mask,1);}; clear_.onClick=[this]{page_.setParameter(id_,spectral::Mask,0);};
+    invert_.onClick=[this]{page_.setParameter(id_,spectral::Mask,float(unsigned(physicalById(node_,spectral::Mask))^4095)/4095);};
+    all_.setName("Spectral Tune all notes"); clear_.setName("Spectral Tune clear notes"); invert_.setName("Spectral Tune invert notes");
     power_.setClickingTogglesState(true);
     power_.setName("Power FX "+juce::String(id));
     power_.onClick=[this]{page_.setNodeEnabled(id_,power_.getToggleState());};
@@ -518,6 +566,17 @@ FxNodeComponent::FxNodeComponent(FxPage& page,FxNodeId id):page_(page),id_(id) {
 }
 
 FxNodeComponent::~FxNodeComponent()=default;
+AudioCardLayout FxNodeComponent::cardLayout() const noexcept {
+    return AudioCardLayout::forBody(getLocalBounds().withTrimmedTop(node_.effect==FxEffectType::SpectralTune ? 96 : 40).withTrimmedLeft(12).withTrimmedRight(12),int(quick_.size()),46,22);
+}
+void FxNodeComponent::chooseSpectral(FxParameterId pid,juce::TextButton& anchor) {
+    const auto* p=findFxParameter(*findFxEffect(FxEffectType::SpectralTune),pid);
+    std::vector<NativeChoiceItem> items;
+    for(int i=0;i<p->choices;++i) items.push_back({i+1,p->choiceLabels[i],true,p->label});
+    juce::Component::SafePointer<FxNodeComponent> safe(this);
+    showNativeChoiceMenu(anchor,p->label,items,0,[safe,pid,p](int value){if(safe && value>0) safe->page_.setParameter(safe->id_,pid,fxChoiceNormalized(*p,value-1));});
+}
+
 
 juce::Rectangle<int> FxNodeComponent::sizeFor(const FxNode& n) noexcept {
     switch(n.kind) {
@@ -529,6 +588,7 @@ juce::Rectangle<int> FxNodeComponent::sizeFor(const FxNode& n) noexcept {
     }
     case FxNodeKind::Effect: case FxNodeKind::Send: case FxNodeKind::Return: break;
     }
+    if(n.effect==FxEffectType::SpectralTune) return {0,0,300,260};
     return {0,0,216,180};
 }
 
@@ -539,6 +599,12 @@ void FxNodeComponent::update(const FxNode& node,bool selected) {
         if(node_.parameters[i].id!=node.parameters[i].id || node_.parameters[i].value!=node.parameters[i].value) { previewDirty_=true; break; }
     node_=node;
     selected_=selected;
+    if(node.effect==FxEffectType::SpectralTune) {
+        root_.setButtonText(fxParameterText(spectral::parameters()[10],node.parameter(spectral::Root).value_or(0)));
+        scale_.setButtonText(fxParameterText(spectral::parameters()[11],node.parameter(spectral::Scale).value_or(0)));
+        const auto mask=unsigned(physicalById(node,spectral::Mask));
+        for(int i=0;i<12;++i) notes_[i].setToggleState((mask&(1u<<i))!=0,juce::dontSendNotification);
+    }
     power_.setVisible(effect);
     menu_.setVisible(effect);
     remove_.setVisible(effect || node.isRouting());
@@ -581,6 +647,9 @@ void FxNodeComponent::update(const FxNode& node,bool selected) {
 void FxNodeComponent::updateDetail() {
     const bool controls=page_.graphZoom()>=0.45f;
     for(auto& q:quick_) { q->setVisible(controls); q->setAlpha(node_.enabled ? 1.0f : .38f); }
+    const bool spectralVisible=node_.effect==FxEffectType::SpectralTune && page_.graphZoom()>=0.6f;
+    for(auto& key:notes_) key.setVisible(spectralVisible);
+    for(auto* b:{&root_,&scale_,&all_,&clear_,&invert_}) b->setVisible(spectralVisible);
     menu_.setVisible(node_.kind==FxNodeKind::Effect && page_.graphZoom()>=0.6f);
     repaint();
 }
@@ -604,7 +673,7 @@ void FxNodeComponent::setTelemetry(const FxRenderer::NodeTelemetrySnapshot& tele
     // Only the shared audio viewport is dynamic. Cached parameter/model art remains
     // untouched, avoiding expensive response redesign at timer cadence.
     if(node_.kind==FxNodeKind::Effect && page_.graphZoom()>=0.6f)
-        repaint(AudioCardLayout::forBounds(getLocalBounds(),int(quick_.size())).viewport);
+        repaint(cardLayout().viewport);
 }
 
 float FxNodeComponent::hitRadius() const noexcept {
@@ -637,7 +706,15 @@ void FxNodeComponent::resized() {
         remove_.setBounds(row.removeFromRight(28));
         row.removeFromRight(4);
         menu_.setBounds(row.removeFromRight(30));
-        const auto layout=AudioCardLayout::forBounds(getLocalBounds(),int(quick_.size()));
+        const auto layout=cardLayout();
+        if(node_.effect==FxEffectType::SpectralTune) {
+            auto row=juce::Rectangle<int>(12,40,getWidth()-24,20);
+            root_.setBounds(row.removeFromLeft(36)); row.removeFromLeft(4);
+            invert_.setBounds(row.removeFromRight(30)); row.removeFromRight(3);
+            clear_.setBounds(row.removeFromRight(40)); row.removeFromRight(3);
+            all_.setBounds(row.removeFromRight(30)); row.removeFromRight(4); scale_.setBounds(row);
+            for(int i=0;i<12;++i) { const int a=12+(getWidth()-24)*i/12,b=12+(getWidth()-24)*(i+1)/12; notes_[i].setBounds(a,64,b-a-1,24); }
+        }
         for(std::size_t i=0;i<quick_.size();++i) quick_[i]->setBounds(layout.knob(int(i),int(quick_.size())));
     } else if(node_.isRouting()) {
         remove_.setBounds(getWidth()-32,4,26,22);
@@ -677,7 +754,7 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         if(!detailed) break;
         // Parameter previews are cached; a moving modulation dot must not
         // repeatedly design EQ filters or redraw an unchanged response.
-        const auto layout=AudioCardLayout::forBounds(local,int(quick_.size()));
+        const auto layout=cardLayout();
         const auto viewport=layout.viewport;
         const double previewRate=page_.responseSampleRate();
         if(previewDirty_ || !previewImage_.isValid() || previewRate_!=previewRate || previewImage_.getWidth()!=viewport.getWidth() || previewImage_.getHeight()!=viewport.getHeight()) {
@@ -691,7 +768,7 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         paintLiveEffectTelemetry(g,viewport.toFloat(),node_,telemetry_);
         // The preview itself is primary. Keep model/bypass provenance as a quiet
         // caption rather than laying a prominent label over the visualization.
-        text(g,node_.enabled ? "MODEL" : "BYPASSED",{18,42,getWidth()-36,12},Type::secondary,
+        text(g,node_.enabled ? (node_.effect==FxEffectType::SpectralTune ? "INPUT / TUNED" : "MODEL") : "BYPASSED",{18,viewport.getY()+2,getWidth()-36,12},Type::secondary,
              Palette::muted().withAlpha(.62f),juce::Justification::topRight);
         const auto quick=parametersFor(node_,true,std::nullopt);
         auto labels=layout.labels;
@@ -2893,6 +2970,7 @@ private:
             return;
         }
         for(const auto* p:parametersFor(*node_,false,tab_==0 ? FxParameterPage::Main : FxParameterPage::Advanced)) {
+            if(node_->effect==FxEffectType::SpectralTune && p->id==spectral::Mask) continue; // authored by the compact 12-key strip
             Entry entry;
             entry.descriptor=p;
             const auto pid=p->id;
@@ -4309,8 +4387,7 @@ const ControlOpInfo* catalogOpInfo(ControlOpType type) noexcept {
 
 std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
     std::vector<NativeChoiceItem> items;
-    for(const auto category:{FxCategory::Dynamics,FxCategory::FilterEq,FxCategory::Distortion,FxCategory::Modulation,
-                             FxCategory::Spatial,FxCategory::Time,FxCategory::Utility})
+    for(const auto category:fxCategoryOrder())
         for(const auto& d:fxEffectCatalog())
             if(d.processesAudio && d.category==category)
                 // One category (FxCategory), even when its name reads "FILTER / EQ".

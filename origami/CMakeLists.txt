@@ -36,12 +36,15 @@ if(ORIGAMI_ENABLE_AUX_RT_THREADS)
 endif()
 add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp
   core/fx/FxGraph.cpp core/fx/FxDevelopmentGraph.cpp core/BusModel.cpp
-  core/fx/FxEffects.cpp core/fx/FxRenderer.cpp
+  core/fx/FxEffects.cpp core/fx/FxRenderer.cpp core/fx/SpectralTune.cpp core/dsp/StreamingSpectrum.cpp
   core/fx/FxEnvironment.cpp core/fx/FxWorkspace.cpp
   core/nodes/ControlGraph.cpp)
 add_library(mct::origami ALIAS origami_core)
 target_include_directories(origami_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(origami_core PUBLIC Threads::Threads)
+if(APPLE)
+  target_link_libraries(origami_core PUBLIC "-framework Accelerate")
+endif()
 target_compile_features(origami_core PUBLIC cxx_std_17)
 set_target_properties(origami_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(origami_patch STATIC core/preset/Patch.cpp core/preset/StateCodec.cpp)
@@ -131,6 +134,16 @@ if(ORIGAMI_BUILD_TESTS)
     target_compile_definitions(origami_fx_tests PRIVATE ORIGAMI_SANITIZED=1)
   endif()
   add_test(NAME origami_fx_graph COMMAND origami_fx_tests)
+  add_executable(origami_spectral_tests tests/SpectralTuneTests.cpp)
+  target_link_libraries(origami_spectral_tests PRIVATE origami_patch)
+  if(APPLE AND NOT ORIGAMI_SANITIZE)
+    add_library(origami_spectral_heap_probe SHARED tests/SpectralHeapProbe.cpp)
+    target_link_libraries(origami_spectral_tests PRIVATE origami_spectral_heap_probe)
+  endif()
+  if(ORIGAMI_SANITIZE)
+    target_compile_definitions(origami_spectral_tests PRIVATE ORIGAMI_SANITIZED=1)
+  endif()
+  add_test(NAME origami_spectral_tune COMMAND origami_spectral_tests)
 
   # mct-origami-nodes-n07-consolidation: deterministic NODES benchmark.
   add_executable(origami_nodes_bench tools/nodes_bench.cpp)

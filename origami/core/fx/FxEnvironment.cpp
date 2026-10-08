@@ -20,12 +20,33 @@ FxEnvironment::FxEnvironment():dry_(2*chunk,0.0f) {
     }
 }
 
+FxEnvironment::~FxEnvironment() { drainTransactions(); delete pendingTransaction_.exchange(nullptr); }
+void FxEnvironment::drainTransactions() noexcept {
+    auto read=transactionRead_.load(std::memory_order_relaxed),write=transactionWrite_.load(std::memory_order_acquire);
+    while(read!=write) { delete retiredTransactions_[read%transactionCapacity]; retiredTransactions_[read%transactionCapacity]=nullptr; ++read; }
+    transactionRead_.store(read,std::memory_order_release);
+}
+void FxEnvironment::adoptTransaction() noexcept {
+    if(pendingTransaction_.load(std::memory_order_acquire)==nullptr) return;
+    const auto write=transactionWrite_.load(std::memory_order_relaxed);
+    if(write-transactionRead_.load(std::memory_order_acquire)>=transactionCapacity) return;
+    for(auto& renderer:renderers_) if(!renderer->canAdoptPlan()) return;
+    auto* transaction=pendingTransaction_.exchange(nullptr,std::memory_order_acq_rel); if(!transaction) return;
+    for(std::size_t b=0;b<maxRenderBuses;++b) if(transaction->plans[b]) {
+        renderers_[b]->adoptPlan(transaction->plans[b]); transaction->plans[b]=nullptr;
+    }
+    audioBuses_=transaction->buses;
+    retiredTransactions_[write%transactionCapacity]=transaction; transactionWrite_.store(write+1,std::memory_order_release);
+}
+
 void FxEnvironment::prepare(double sampleRate) {
+    drainTransactions(); delete pendingTransaction_.exchange(nullptr);
     smoothing_=float(std::exp(-1.0/(0.02*sampleRate)));
     for(auto& r:renderers_) r->prepare(sampleRate);
 }
 
 void FxEnvironment::emergencyResetRuntime() noexcept {
+    adoptTransaction();
     for(auto& renderer:renderers_) renderer->emergencyResetRuntime();
     std::fill(dry_.begin(),dry_.end(),0.0f);
     inputNow_=inputGain_.load(std::memory_order_relaxed);
@@ -39,18 +60,37 @@ void FxEnvironment::emergencyResetRuntime() noexcept {
 }
 
 void FxEnvironment::sync(const std::vector<BusGraph>& slots,const FxGlobalSettings& g) {
+    drainTransactions();
+    auto transaction=std::unique_ptr<PlanTransaction>(pendingTransaction_.exchange(nullptr,std::memory_order_acq_rel));
+    if(!transaction) transaction=std::make_unique<PlanTransaction>();
     const std::size_t count=std::clamp<std::size_t>(slots.size(),1,maxRenderBuses);
+    int maximumLatency=0;
     for(std::size_t b=0;b<count;++b) {
         auto& r=*renderers_[b];
-        r.bind(slots[b].bus);
+        r.bind(b<slots.size() ? slots[b].bus : fxMainBusId);
         r.setBypassMode(g.bypass);
-        if(slots[b].graph!=nullptr) r.sync(*slots[b].graph,false);
+        if(b<slots.size() && slots[b].graph!=nullptr) r.sync(*slots[b].graph,false);
+        else r.sync(makeDefaultFxGraph(r.boundBus()),false);
+        maximumLatency=std::max(maximumLatency,r.graphLatencySamples());
     }
+    for(std::size_t b=0;b<count;++b) {
+        renderers_[b]->setAlignedLatency(maximumLatency);
+        auto plan=renderers_[b]->detachPendingPlan();
+        if(plan) { delete transaction->plans[b]; transaction->plans[b]=plan.release(); }
+    }
+    for(std::size_t b=count;b<maxRenderBuses;++b) {
+        auto& renderer=*renderers_[b]; renderer.bind(FxBusId(1000+b));
+        renderer.sync(makeDefaultFxGraph(renderer.boundBus()),false);renderer.setAlignedLatency(0);
+        auto plan=renderer.detachPendingPlan();if(plan){delete transaction->plans[b];transaction->plans[b]=plan.release();}
+    }
+    transaction->buses=count;
+    latency_.store(maximumLatency,std::memory_order_release);
     activeBuses_.store(count,std::memory_order_release);
     inputGain_.store(dbToGain(g.inputGainDb),std::memory_order_relaxed);
     dryWet_.store(g.dryWet,std::memory_order_relaxed);
     width_.store(g.width,std::memory_order_relaxed);
     outputGain_.store(dbToGain(g.outputGainDb),std::memory_order_relaxed);
+    delete pendingTransaction_.exchange(transaction.release(),std::memory_order_acq_rel);
 }
 
 std::uint64_t FxEnvironment::compileCount() const noexcept {
@@ -85,8 +125,9 @@ std::pair<float,float> FxEnvironment::consumePeaks() noexcept {
 
 void FxEnvironment::process(float* mainLeft,float* mainRight,float* const* aux,std::size_t busCount,int samples,
                             const FxModulationOutput* modulation,bool preMaster,float masterGain) noexcept {
+    adoptTransaction();
     if(samples<=0 || mainLeft==nullptr || mainRight==nullptr) return;
-    const std::size_t buses=aux==nullptr ? 1 : std::min(busCount,activeBuses_.load(std::memory_order_acquire));
+    const std::size_t buses=aux==nullptr ? 1 : std::min(busCount,audioBuses_);
     const float postTarget=preMaster && std::isfinite(masterGain) ? std::clamp(masterGain,0.0f,4.0f) : 1.0f;
     if(preMaster!=postActive_) { postNow_=postTarget; postActive_=preMaster; } // engine switched this block too
     postTarget_=postTarget;
@@ -133,8 +174,7 @@ void FxEnvironment::processChunk(float* mainLeft,float* mainRight,float* const* 
         for(int i=0;i<n;++i) {
             l[i]=(std::isfinite(l[i]) ? l[i] : 0.0f)*gains[i];
             r[i]=(std::isfinite(r[i]) ? r[i] : 0.0f)*gains[i];
-            dryL[i]+=l[i];
-            dryR[i]+=r[i];
+
             il=std::max(il,std::abs(l[i])); ir=std::max(ir,std::abs(r[i]));
         }
         noteInputPeak(b,il,ir); // the bus IN node's signal (after GLOBAL input gain)
@@ -143,7 +183,11 @@ void FxEnvironment::processChunk(float* mainLeft,float* mainRight,float* const* 
     for(std::size_t b=0;b<buses;++b) {
         float* l=busPointer(b,0);
         float* r=busPointer(b,1);
-        if(l!=nullptr && r!=nullptr) renderers_[b]->process(l,r,n,modulation_);
+        if(l!=nullptr && r!=nullptr) {
+            std::array<float,chunk> alignedL{},alignedR{};
+            renderers_[b]->process(l,r,n,modulation_,false,1.0f,alignedL.data(),alignedR.data());
+            for(int i=0;i<n;++i) { dryL[i]+=alignedL[i]; dryR[i]+=alignedR[i]; }
+        }
     }
     // 3) sum bus outputs into the master, 4) GLOBAL FX.
     const float mixTarget=dryWet_.load(std::memory_order_relaxed);

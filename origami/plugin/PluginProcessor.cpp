@@ -78,6 +78,7 @@ void OrigamiAudioProcessor::syncFxRenderer() {
     {
         const juce::ScopedLock lock(fxCompileLock_);
         fxEnvironment_.sync(slots,fxWorkspace_.globals());
+        setLatencySamples(fxEnvironment_.latencySamples());
     }
     engine_.setMasterAfterFx(fxWorkspace_.globals().order==mct::origami::fx::FxOrder::PreMaster);
     pruneFxModulationRoutes();

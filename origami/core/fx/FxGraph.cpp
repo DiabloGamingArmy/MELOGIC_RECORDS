@@ -4,6 +4,7 @@
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #include "core/fx/FxGraph.h"
+#include "core/fx/SpectralTune.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -85,6 +86,11 @@ float fxChoiceNormalized(const FxParameterDescriptor& d,int index) noexcept {
     return std::clamp(float(index)/float(states-1),0.0f,1.0f);
 }
 
+const std::array<FxCategory,8>& fxCategoryOrder() noexcept {
+    static constexpr std::array<FxCategory,8> order{FxCategory::Dynamics,FxCategory::FilterEq,FxCategory::Distortion,FxCategory::Modulation,FxCategory::Spectral,FxCategory::Spatial,FxCategory::Time,FxCategory::Utility};
+    return order;
+}
+
 const char* fxCategoryName(FxCategory c) noexcept {
     switch(c) {
     case FxCategory::Distortion: return "DISTORTION";
@@ -94,6 +100,7 @@ const char* fxCategoryName(FxCategory c) noexcept {
     case FxCategory::FilterEq: return "FILTER / EQ";
     case FxCategory::Dynamics: return "DYNAMICS";
     case FxCategory::Utility: return "UTILITY";
+    case FxCategory::Spectral: return "SPECTRAL";
     }
     return "EFFECTS";
 }
@@ -550,6 +557,7 @@ FxEditResult FxGraph::setParameter(FxNodeId id,FxParameterId parameter,float val
     for(auto& p:node->parameters) {
         if(p.id!=parameter) continue;
         p.value=std::clamp(value,0.0f,1.0f);
+        if(node->effect==FxEffectType::SpectralTune) spectral::normalizeState(*node,parameter);
         return FxEditResult::Ok;
     }
     return FxEditResult::InvalidPort;
@@ -904,6 +912,7 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
             }
         }
         if(!graph.validate()) return false;
+        for(auto& n:graph.nodes_) if(n.effect==FxEffectType::SpectralTune) spectral::normalizeState(n);
         output=std::move(graph);
         return true;
     } catch(...) {

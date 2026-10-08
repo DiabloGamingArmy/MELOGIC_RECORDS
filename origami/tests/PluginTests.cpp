@@ -1,3 +1,4 @@
+#include "core/fx/SpectralTune.h"
 // mct-origami-deep-audit-p03-fix2-canonical-state-repair
 // mct-origami-deep-audit-p03-canonical-state
 // mct-origami-audio-reengineer-p17-global-qos-budget
@@ -3804,8 +3805,8 @@ void nodesMenuHierarchyAudit() {
     check(slashFree && emptyFree,"no top-level path labels, no blank category or blank item (the \"CONTROL /\" ghost is gone)");
     const auto* audio=find(tree,"AUDIO");
     const auto* effects=audio ? find(*audio,"EFFECTS") : nullptr;
-    check(effects && names(*effects)==juce::StringArray("DYNAMICS","FILTER / EQ","DISTORTION","MODULATION","SPATIAL","TIME","UTILITY") && effects->items.empty(),
-          "EFFECTS > DYNAMICS, FILTER / EQ (one canonical category), DISTORTION, MODULATION, SPATIAL, TIME, UTILITY");
+    check(effects && names(*effects)==juce::StringArray("DYNAMICS","FILTER / EQ","DISTORTION","MODULATION","SPECTRAL","SPATIAL","TIME","UTILITY") && effects->items.empty(),
+          "EFFECTS > DYNAMICS, FILTER / EQ (one canonical category), DISTORTION, MODULATION, SPECTRAL, SPATIAL, TIME, UTILITY");
     const auto* control=find(tree,"CONTROL");
     check(control && names(*control)==juce::StringArray("MODULATION SOURCES","MATH","SHAPING","UTILITY","UTILITIES"),
           "CONTROL groups sources, processors, and parameter utility");
@@ -6602,7 +6603,7 @@ void audioCardLayoutAudit() {
     walk(*editor,[&](auto& c){if(auto* x=dynamic_cast<ui::FxPage*>(&c))page=x;if(auto* b=dynamic_cast<juce::TextButton*>(&c))if(b->getButtonText()=="NODES" && !nodes)nodes=b;});
     check(page && nodes,"audio layout Nodes page exists");nodes->onClick();
     for(const auto& d:fx::fxEffectCatalog()) {
-        if(!d.processesAudio)continue;
+        if(!d.processesAudio || d.type==fx::FxEffectType::SpectralTune)continue; // separate keyboard/spectrum card audit
         fx::FxNodeId id=0;
         page->document().replace(fx::makeDefaultFxGraph());
         page->document().edit([&](fx::FxGraph& g){id=g.insertEffectBeforeOutput(d.type);return id!=0;});page->syncFromModel();
@@ -6637,6 +6638,39 @@ void audioCardLayoutAudit() {
     for(int count:{1,2,3,4,5})for(auto size:{juce::Point<int>{216,180},juce::Point<int>{280,220}}){auto layout=ui::AudioCardLayout::forBounds({0,0,size.x,size.y},count);juce::Rectangle<int> previous;for(int i=0;i<count;++i){auto knob=layout.knob(i,count);check(!knob.intersects(layout.viewport) && !knob.intersects(layout.labels) && !knob.intersects(previous),"shared audio 1-5 control bounds do not overlap");previous=knob;}}
 }
 
+void spectralTunePluginAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,128);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());editor->setVisible(true);
+    ui::FxPage* page=nullptr;juce::TextButton* nodes=nullptr;
+    walk(*editor,[&](auto& c){if(auto* x=dynamic_cast<ui::FxPage*>(&c))page=x;if(auto* b=dynamic_cast<juce::TextButton*>(&c))if(b->getButtonText()=="NODES" && !nodes)nodes=b;});check(page && nodes,"Spectral Nodes page");nodes->onClick();
+    bool listed=false;for(const auto& item:page->moduleMenuItems(false))if(item.id==int(fx::FxEffectType::SpectralTune))listed=item.path.contains("SPECTRAL");check(listed,"Spectral category canonical menu");
+    fx::FxNodeId id=0;page->document().edit([&](fx::FxGraph& g){id=g.insertEffectBeforeOutput(fx::FxEffectType::SpectralTune);return id!=0;});page->syncFromModel();page->selectNode(id);
+    check(p.getLatencySamples()==2048,"host reports Spectral latency");
+    ui::FxNodeComponent* node=nullptr;walk(*page,[&](auto& c){if(auto* x=dynamic_cast<ui::FxNodeComponent*>(&c))if(x->id()==id)node=x;});check(node && node->getWidth()==300 && node->getHeight()==260,"Spectral card has compact keyboard footprint");
+    int keys=0,knobs=0;std::vector<juce::Rectangle<int>> bounds;
+    for(auto* child:node->getChildren()) {
+        if(auto* key=dynamic_cast<juce::TextButton*>(child))if(key->getName().startsWith("Spectral Tune note ")) { ++keys;check(node->getComponentAt(key->getBounds().getCentre())==key,"Spectral key hit target");for(auto b:bounds)check(!b.intersects(key->getBounds()),"Spectral keys do not overlap");bounds.push_back(key->getBounds()); }
+        if(auto* knob=dynamic_cast<juce::Slider*>(child)){++knobs;check(knob->getHeight()==46 && knob->getY()==192,"Spectral footer controls retain hit size and low placement");check(int(knob->getProperties()["mct.mod.destination"])==int(ModDestination::FxParameter),"Spectral canonical modulation destination");}
+    }
+    check(keys==12 && knobs==4,"Spectral twelve keys and four primary controls");
+    auto named=[&](const juce::String& name)->juce::TextButton* {juce::TextButton* found=nullptr;for(auto* c:node->getChildren())if(auto* b=dynamic_cast<juce::TextButton*>(c))if(b->getName()==name)found=b;check(found,"Spectral named control exists");return found;};
+    named("Spectral Tune note C")->onClick();check(std::round(*page->graph().findNode(id)->parameter(fx::spectral::Mask)*4095)==4094 && *page->graph().findNode(id)->parameter(fx::spectral::Scale)==1,"key edit canonical Custom mask");
+    named("Spectral Tune clear notes")->onClick();check(*page->graph().findNode(id)->parameter(fx::spectral::Mask)==0,"clear mask");named("Spectral Tune invert notes")->onClick();check(*page->graph().findNode(id)->parameter(fx::spectral::Mask)==1,"invert mask");named("Spectral Tune all notes")->onClick();
+    page->setParameter(id,fx::spectral::Scale,.2f);page->setParameter(id,fx::spectral::Root,3.f/11);page->setParameter(id,fx::spectral::Snap,.63f);
+    for(auto source:{ModSource::Env1,ModSource::Lfo1,ModSource::Random}){const auto routeId=p.addUiRoute();ModRoute route{routeId,true,source,fxParameterAddress(mainBusId,id,fx::spectral::Snap),.1f,false};check(p.setUiRoute(route),"Spectral ENV/LFO/Random routes");}
+    p.setUiFxNodeTelemetryEnabled(mainBusId,true);juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;for(int i=0;i<80;++i){audio.clear();midi.clear();if(i==0)midi.addEvent(juce::MidiMessage::noteOn(1,60,juce::uint8(100)),0);p.processBlock(audio,midi);check(std::isfinite(magnitude(audio)),"Spectral actual engine graph output finite");}
+    page->syncFromModel();page->refreshVisualFeedback();const auto telemetry=page->nodeTelemetry(id);check(telemetry.hasSpectrum,"Spectral live DSP telemetry reaches UI");
+    // Offscreen test editors have no desktop peer, so their visibility-gated
+    // timer does not run. Feed the real host snapshot through the card API.
+    node->setTelemetry(telemetry);check(*std::max_element(telemetry.spectrum.input.begin(),telemetry.spectrum.input.end())>0 && *std::max_element(telemetry.spectrum.output.begin(),telemetry.spectrum.output.end())>0,"Spectral captures contain actual nonzero input and mapped spectra");
+    if(const char* folder=std::getenv("ORIGAMI_SPECTRAL_REPORT"))for(float scale:{.75f,1.f,1.5f,2.f}){const auto image=node->createComponentSnapshot(node->getLocalBounds(),true,scale);juce::FileOutputStream out(juce::File(juce::String(folder)+"/spectral-card-"+juce::String(scale,2)+".png"));out.setPosition(0);out.truncate();juce::PNGImageFormat{}.writeImageToStream(image,out);}
+    for(auto size:{juce::Point<int>{1100,760},juce::Point<int>{1440,900}}){editor->setSize(size.x,size.y);editor->resized();check(node->getLocalBounds().contains(named("Spectral Tune scale")->getBounds()),"responsive scale selector remains in card");if(const char* folder=std::getenv("ORIGAMI_SPECTRAL_REPORT")){auto image=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.f);juce::FileOutputStream out(juce::File(juce::String(folder)+"/spectral-editor-"+juce::String(size.x)+".png"));out.setPosition(0);out.truncate();juce::PNGImageFormat{}.writeImageToStream(image,out);}}
+    juce::MemoryBlock state;p.getStateInformation(state);auto restored=std::make_unique<OrigamiAudioProcessor>();restored->prepareToPlay(48000,128);restored->setStateInformation(state.getData(),int(state.getSize()));check(restored->getUiFxDocument().graph()==page->graph() && restored->getLatencySamples()==2048,"Spectral processor save/load exact graph and host latency");
+    int routes=0;for(const auto& route:restored->getUiInstrumentState().modulation.routes)routes+=route.id && isFxDestination(route.destination.parameter);check(routes==3,"Spectral modulation routes survive state restore");
+    check(page->deleteNode(id),"Spectral canonical delete");for(const auto& route:p.getUiInstrumentState().modulation.routes)check(!route.id || !isFxDestination(route.destination.parameter),"Spectral deletion cleans modulation routes");check(p.getLatencySamples()==0,"deleting final spectral node clears host latency");
+    std::cout<<"PASS Spectral Tune plugin/UI audit\n";
+}
+
 int main(){juce::ScopedJuceInitialiser_GUI gui;
 // Preferences stay in memory (the user's file is never touched). The
 // shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
@@ -6646,5 +6680,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

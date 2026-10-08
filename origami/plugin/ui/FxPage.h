@@ -93,6 +93,10 @@ public:
     void mouseUp(const juce::MouseEvent&) override;
 private:
     void showMenu();
+    AudioCardLayout cardLayout() const noexcept;
+    void chooseSpectral(fx::FxParameterId,juce::TextButton&);
+    std::array<juce::TextButton,12> notes_;
+    juce::TextButton root_,scale_,all_{"ALL"},clear_{"CLEAR"},invert_{"INV"};
     float hitRadius() const noexcept;
     FxPage& page_;
     fx::FxNodeId id_;

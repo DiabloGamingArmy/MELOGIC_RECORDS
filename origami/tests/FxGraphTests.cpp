@@ -1083,7 +1083,8 @@ std::vector<std::pair<const char*,FxGraph>> goldenGraphs() {
     out.push_back({"parallel",makeParallelTemplate()});
     out.push_back({"development",makeDevelopmentFxGraph()});
     FxGraph library=makeDefaultFxGraph();
-    for(const auto& d:fxEffectCatalog()) if(d.processesAudio) library.insertEffectBeforeOutput(d.type);
+    // Freeze the historical library fixture; new effects have independent regression coverage.
+    for(const auto& d:fxEffectCatalog()) if(d.processesAudio && d.type!=FxEffectType::SpectralTune) library.insertEffectBeforeOutput(d.type);
     out.push_back({"library",library});
     FxGraph branches=makeDefaultFxGraph();
     const auto wire=branches.connections().front().id;

@@ -1,0 +1,20 @@
+# Spectral Tune audit — completed before implementation
+
+Baseline: 214c479e11eef21e42727bfef409646a3d718aca. Branch: mct-origami-nodes-visual-feedback-p03.
+
+| Existing infrastructure | Scope | Reuse decision |
+| --- | --- | --- |
+| core/dsp/Wavetable.cpp: fft2048, SpectralCompiler, renderProcessedFrame2048 | Prepared, periodic 2048-sample wavetable frames; bounded worker queues/cache; oscillator reads prepared tables | Preserve unchanged. Neither streaming framing nor live resynthesis. Its radix-2 mathematics informs a separately prepared reusable FFT, without sharing private mutable cache state. |
+| plugin/ui/WavetableFrameOps.h: fft and spectral frame operations | Offline/editor frame transforms and correlation | Preserve unchanged. UI-owned double-complex FFT has no prepared streaming plan. |
+| PluginProcessor.cpp: imported-frame transforms | Non-realtime wavetable import and bandlimited-table generation | Preserve unchanged. |
+| OscillatorRack.cpp: Spectral mode menu | Disabled menu entry; preview uses prepared periodic oscillator data | No live-audio backend to reuse. |
+| Existing audio effects | Time-domain processors; no STFT, ISTFT, analysis/synthesis windows, overlap-add, arbitrary-input spectral frame representation or live spectral resynthesis | A small core-only prepared FFT/STFT backend is justified. No additional FFT library is required initially. |
+| FxRenderer telemetry | 64 decimated time-domain samples and peaks, optional lock-free publication | Preserve waveform telemetry; extend through a bounded processor spectrum snapshot sourced from the actual DSP analysis, without UI FFTs. |
+| FxGraphCompiler / FxRenderer | Prepared stable-ID effect instances, canonical descriptors and graph codec; bounded audio execution and retired-plan publication | Reuse this architecture for the effect and modulation. Append stable effect/category IDs. Existing normalized parameter payload supports all new state including a 4096-state mask without a global schema bump. |
+| Effect latency metadata | All effects report zero; descriptor field is unused. No host latency reporting, merge-path alignment, delayed effect bypass, bus alignment or global delayed dry path | Must implement prepared latency compensation across these paths before claiming correct Mix/bypass/routing. No blanket large arrays in generic instances. |
+
+Search covered core/plugin/tests sources for spectral, FFT, JUCE FFT, STFT, ISTFT, windows, overlap/add, frequency-domain buffers, frame/cache/compiler and telemetry. There is no existing suitable real-time STFT pipeline or reusable prepared FFT plan/window table. New plans, windows, stream buffers and effect state will be allocated only during prepare/graph compilation; processing/reset must remain bounded, lock-free and allocation-free.
+
+Algorithm reference: [Laroche and Dolson, 1999, peak-region frequency-domain pitch transformations](https://www.ee.columbia.edu/~dpwe/papers/LaroD99-pvoc.pdf). The implementation will use peak regions, fractional frequency translation and coherent phase rotation, with instantaneous-frequency estimation and stereo linkage. The reference is architectural guidance, not evidence that this implementation meets its audio quality requirements; those need measured validation and listening.
+
+After the documented audit and first portable implementation, timing exposed excessive FFT-frame spikes at 192 kHz / 64 samples. The macOS backend therefore uses Apple's prepared Accelerate FFT, with the independent portable radix-2 plan retained as the non-Apple / plan-unavailable fallback. This is a platform framework, not an added third-party FFT dependency. Plans and split-complex scratch are created in prepare, never on the callback. Peak-only phase estimation, relative evidence thresholds, cached per-peak phase factors, power-of-two ring addressing, and stable node/bus-derived hop phases reduce callback spikes without auxiliary audio threads or changing wavetable infrastructure. Final CPU measurements supersede the initial portable diagnostic CSV.

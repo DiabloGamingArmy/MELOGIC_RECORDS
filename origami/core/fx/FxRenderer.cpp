@@ -75,6 +75,7 @@ std::unique_ptr<PreparedFxPlan> FxGraphCompiler::compile(const FxGraph& graph) {
     std::vector<int> bufferOf(nodes.size(),-1);
     for(std::size_t s=0;s<order.size();++s) bufferOf[order[s]]=static_cast<int>(s);
     std::map<FxNodeId,std::shared_ptr<FxNodeInstance>> nextCache;
+    std::array<int,FxGraph::maxNodes> arrival{};
     for(std::size_t s=0;s<order.size();++s) {
         const auto& node=nodes[order[s]];
         auto& step=plan->steps[s];
@@ -86,6 +87,10 @@ std::unique_ptr<PreparedFxPlan> FxGraphCompiler::compile(const FxGraph& graph) {
             if(from<0) continue; // upstream not executable: treated as silence
             step.inputs[step.inputCount++]=static_cast<std::uint8_t>(from);
         }
+        int inputLatency=0;
+        for(unsigned k=0;k<step.inputCount;++k) inputLatency=std::max(inputLatency,arrival[step.inputs[k]]);
+        for(unsigned k=0;k<step.inputCount;++k) step.inputDelays[k].prepare(inputLatency-arrival[step.inputs[k]]);
+        arrival[s]=inputLatency;
         switch(node.kind) {
         case FxNodeKind::Source: step.kind=FxStepKind::Source; step.bus=node.bus; break;
         case FxNodeKind::Split: step.kind=FxStepKind::Split; break;
@@ -110,7 +115,11 @@ std::unique_ptr<PreparedFxPlan> FxGraphCompiler::compile(const FxGraph& graph) {
                 instance->node=node.id;
                 instance->descriptor=descriptor;
                 instance->processor=descriptor->create();
+                const auto* source=graph.findNode(graph.sourceNode());
+                instance->processor->setProcessingPhase(node.id*0x9e3779b9u ^ (source ? source->bus : 0)*0x85ebca6bu);
                 instance->processor->prepare(sampleRate_);
+                instance->bypassDry.prepare(instance->processor->latencySamples());
+                instance->tailGate.prepare(instance->processor->latencySamples());
                 for(std::size_t i=0;i<descriptor->parameterCount;++i) {
                     const float v=node.parameter(descriptor->parameters[i].id).value_or(descriptor->parameters[i].defaultValue);
                     instance->targets[i].store(v,std::memory_order_relaxed);
@@ -120,6 +129,7 @@ std::unique_ptr<PreparedFxPlan> FxGraphCompiler::compile(const FxGraph& graph) {
                 instance->wet=node.enabled ? 1.0f : 0.0f;
                 instance->processing=node.enabled;
             }
+            arrival[s]+=instance->processor->latencySamples();
             step.instance=instance.get();
             nextCache[node.id]=instance;
             plan->instances.push_back(std::move(instance));
@@ -129,6 +139,8 @@ std::unique_ptr<PreparedFxPlan> FxGraphCompiler::compile(const FxGraph& graph) {
         }
     }
     plan->stepCount=order.size();
+    plan->latencySamples=plan->hasOutput ? arrival[plan->outputBuffer] : 0;
+    plan->dryDelay.prepare(plan->latencySamples);
     plan->identity=plan->stepCount==2 && plan->steps[0].kind==FxStepKind::Source
         && plan->steps[1].kind==FxStepKind::Output && plan->steps[1].inputCount==1;
     cache_=std::move(nextCache);
@@ -191,7 +203,13 @@ void FxRenderer::prepare(double sampleRate) {
     bypassStep_=float(1.0/(0.01*sampleRate));
     compiler_.prepare(sampleRate);
     auto plan=compiler_.compile(lastGraph_.nodes().empty() ? makeDefaultFxGraph(bus_.load(std::memory_order_relaxed)) : lastGraph_);
-    if(plan) identity_.store(plan->identity,std::memory_order_relaxed);
+    if(plan) {
+        latency_.store(plan->latencySamples,std::memory_order_relaxed);
+        const int padding=std::max(0,alignedLatency_-plan->latencySamples);
+        plan->outputPadding.prepare(padding); plan->dryDelay.prepare(plan->latencySamples+padding);
+        renderedLatency_.store(plan->latencySamples+padding,std::memory_order_release);
+        identity_.store(plan->identity && padding==0,std::memory_order_relaxed);
+    }
     lastKey_=topologyKey(lastGraph_);
     active_=plan.release();
     ++compileCount_;
@@ -209,11 +227,16 @@ void FxRenderer::bind(FxBusId bus) {
 }
 
 bool FxRenderer::sync(const FxGraph& graph,bool applyGraphGlobals) {
+    drainRetired();
     auto key=topologyKey(graph);
     if(key!=lastKey_) {
         auto plan=compiler_.compile(graph);
         if(!plan) return false;
-        identity_.store(plan->identity,std::memory_order_relaxed);
+        latency_.store(plan->latencySamples,std::memory_order_release);
+        const int padding=std::max(0,alignedLatency_-plan->latencySamples);
+        plan->outputPadding.prepare(padding); plan->dryDelay.prepare(plan->latencySamples+padding);
+        renderedLatency_.store(plan->latencySamples+padding,std::memory_order_release);
+        identity_.store(plan->identity && padding==0,std::memory_order_relaxed);
         lastKey_=std::move(key);
         ++compileCount_;
         publish(std::move(plan));
@@ -246,19 +269,21 @@ void FxRenderer::drainRetired() noexcept {
     retireRead_.store(read,std::memory_order_release);
 }
 
-void FxRenderer::adoptPending() noexcept {
-    if(pending_.load(std::memory_order_acquire)==nullptr) return;
-    const auto write=retireWrite_.load(std::memory_order_relaxed);
-    // Never free on the audio thread: if the retire ring is full, adopt later.
-    if(active_!=nullptr && write-retireRead_.load(std::memory_order_acquire)>=retireCapacity) return;
-    auto* next=pending_.exchange(nullptr,std::memory_order_acq_rel);
+bool FxRenderer::canAdoptPlan() const noexcept {
+    return active_==nullptr || retireWrite_.load(std::memory_order_relaxed)-retireRead_.load(std::memory_order_acquire)<retireCapacity;
+}
+void FxRenderer::adoptPlan(PreparedFxPlan* next) noexcept {
     if(next==nullptr) return;
-    if(active_!=nullptr) {
-        retired_[write%retireCapacity]=active_;
-        retireWrite_.store(write+1,std::memory_order_release);
-    }
-    active_=next;
-    releaseStaleTelemetry(); // deleted / replaced nodes give their slots back
+    const auto write=retireWrite_.load(std::memory_order_relaxed);
+    if(active_!=nullptr) { retired_[write%retireCapacity]=active_; retireWrite_.store(write+1,std::memory_order_release); }
+    active_=next; releaseStaleTelemetry();
+}
+void FxRenderer::adoptPending() noexcept {
+    if(canAdoptPlan()) adoptPlan(pending_.exchange(nullptr,std::memory_order_acq_rel));
+}
+void FxRenderer::setAlignedLatency(int samples) {
+    if(samples==alignedLatency_) return;
+    alignedLatency_=samples; lastKey_.clear(); sync(lastGraph_,false);
 }
 
 void FxRenderer::emergencyResetRuntime() noexcept {
@@ -268,11 +293,17 @@ void FxRenderer::emergencyResetRuntime() noexcept {
         auto* fx=active_->steps[s].instance;
         if(fx==nullptr || fx->processor==nullptr) continue;
         fx->processor->reset();
+        fx->bypassDry.reset(); fx->tailGate.reset();
         fx->wet=fx->enabled.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
         fx->processing=fx->wet>0.0f;
         fx->silentSamples=0;
         fx->modulation.fill(0.0f);
     }
+    if(active_!=nullptr) {
+        active_->dryDelay.reset(); active_->outputPadding.reset();
+        for(auto& step:active_->steps) for(auto& delay:step.inputDelays) delay.reset();
+    }
+    for(auto& slot:nodeTelemetry_) releaseTelemetrySlot(slot);
     std::fill(pool_.begin(),pool_.end(),0.0f);
     inputGainNow_=inputGain_.load(std::memory_order_relaxed);
     dryWetNow_=dryWet_.load(std::memory_order_relaxed);
@@ -287,7 +318,8 @@ std::pair<float,float> FxRenderer::consumePeaks() noexcept {
     return {peakLeft_.exchange(0.0f,std::memory_order_acq_rel),peakRight_.exchange(0.0f,std::memory_order_acq_rel)};
 }
 
-void FxRenderer::publishNodeTelemetry(FxNodeId node,const float* left,const float* right,int n) noexcept {
+void FxRenderer::publishNodeTelemetry(FxNodeInstance& instance,const float* left,const float* right,int n) noexcept {
+    const auto node=instance.node;
     if(!telemetryEnabled_.load(std::memory_order_acquire) || node==invalidFxNodeId || left==nullptr || right==nullptr || n<=0) return;
     NodeTelemetrySlot* slot=nullptr;
     for(auto& candidate:nodeTelemetry_) {
@@ -308,6 +340,12 @@ void FxRenderer::publishNodeTelemetry(FxNodeId node,const float* left,const floa
         slot->left[i].store(left[source],std::memory_order_relaxed);
         slot->right[i].store(right[source],std::memory_order_relaxed);
     }
+    FxSpectrumSnapshot spectrum;
+    if(instance.processor->spectrumSnapshot(spectrum)) {
+        for(std::size_t i=0;i<spectrum.bins;++i) { slot->spectrumInput[i].store(spectrum.input[i],std::memory_order_relaxed); slot->spectrumOutput[i].store(spectrum.output[i],std::memory_order_relaxed); }
+        slot->spectrumLow.store(spectrum.low,std::memory_order_relaxed); slot->spectrumHigh.store(spectrum.high,std::memory_order_relaxed); slot->spectrumRate.store(spectrum.sampleRate,std::memory_order_relaxed);
+        slot->spectrumMask.store(spectrum.mask,std::memory_order_relaxed); slot->spectrumSequence.store(spectrum.sequence,std::memory_order_relaxed);
+    } else slot->spectrumSequence.store(0,std::memory_order_relaxed);
     slot->published.store(slot->published.load(std::memory_order_relaxed)+1,std::memory_order_relaxed);
     slot->guard.store(g+2,std::memory_order_release);
     // Peaks are a separate consume / reset channel (max since the last read).
@@ -321,6 +359,7 @@ void FxRenderer::releaseTelemetrySlot(NodeTelemetrySlot& slot) noexcept {
     std::atomic_thread_fence(std::memory_order_release);
     slot.node.store(invalidFxNodeId,std::memory_order_relaxed);
     slot.published.store(0,std::memory_order_relaxed);
+    slot.spectrumSequence.store(0,std::memory_order_relaxed);
     slot.guard.store(g+2,std::memory_order_release);
     slot.peakLeft.store(0.0f,std::memory_order_relaxed);
     slot.peakRight.store(0.0f,std::memory_order_relaxed);
@@ -354,6 +393,9 @@ FxRenderer::NodeTelemetrySnapshot FxRenderer::consumeNodeTelemetry(FxNodeId node
                 out.left[i]=slot.left[i].load(std::memory_order_relaxed);
                 out.right[i]=slot.right[i].load(std::memory_order_relaxed);
             }
+            for(std::size_t i=0;i<out.spectrum.bins;++i) { out.spectrum.input[i]=slot.spectrumInput[i].load(std::memory_order_relaxed); out.spectrum.output[i]=slot.spectrumOutput[i].load(std::memory_order_relaxed); }
+            out.spectrum.low=slot.spectrumLow.load(std::memory_order_relaxed); out.spectrum.high=slot.spectrumHigh.load(std::memory_order_relaxed); out.spectrum.sampleRate=slot.spectrumRate.load(std::memory_order_relaxed);
+            out.spectrum.mask=std::uint16_t(slot.spectrumMask.load(std::memory_order_relaxed)); out.spectrum.sequence=slot.spectrumSequence.load(std::memory_order_relaxed); out.hasSpectrum=out.spectrum.sequence!=0;
             std::atomic_thread_fence(std::memory_order_acquire);
             if(slot.guard.load(std::memory_order_relaxed)!=before) continue;
             if(!ours) return NodeTelemetrySnapshot{node,{},{},0.0f,0.0f,0,false}; // released meanwhile
@@ -401,7 +443,7 @@ void FxRenderer::applyModulation(const FxModulationOutput* mod) noexcept {
 }
 
 void FxRenderer::process(float* left,float* right,int samples,const FxModulationOutput* modulation,
-                         bool preMaster,float masterGain) noexcept {
+                         bool preMaster,float masterGain,float* alignedDryLeft,float* alignedDryRight) noexcept {
     adoptPending();
     if(samples<=0 || left==nullptr || right==nullptr) return;
     applyModulation(modulation);
@@ -419,7 +461,8 @@ void FxRenderer::process(float* left,float* right,int samples,const FxModulation
 
     // Neutral path: BUS 1 -> MASTER OUT with neutral globals is bit-exact
     // pass-through. Old presets and the Init patch sound exactly as before.
-    if(active_==nullptr || (active_->identity && neutralGlobals)) {
+    if(active_==nullptr || (active_->identity && active_->outputPadding.latency()==0 && neutralGlobals)) {
+        if(alignedDryLeft && alignedDryRight) { std::copy_n(left,samples,alignedDryLeft); std::copy_n(right,samples,alignedDryRight); }
         float pl=0.0f,pr=0.0f;
         for(int i=0;i<samples;++i) { pl=std::max(pl,std::abs(left[i])); pr=std::max(pr,std::abs(right[i])); }
         if(pl>peakLeft_.load(std::memory_order_relaxed)) peakLeft_.store(pl,std::memory_order_relaxed);
@@ -427,10 +470,10 @@ void FxRenderer::process(float* left,float* right,int samples,const FxModulation
         return;
     }
     for(int offset=0;offset<samples;offset+=chunk)
-        renderChunk(left+offset,right+offset,std::min(chunk,samples-offset));
+        renderChunk(left+offset,right+offset,std::min(chunk,samples-offset),alignedDryLeft ? alignedDryLeft+offset : nullptr,alignedDryRight ? alignedDryRight+offset : nullptr);
 }
 
-void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
+void FxRenderer::renderChunk(float* left,float* right,int n,float* alignedDryLeft,float* alignedDryRight) noexcept {
     const float inputTarget=inputGain_.load(std::memory_order_relaxed);
     const float mixTarget=dryWet_.load(std::memory_order_relaxed);
     const float widthTarget=width_.load(std::memory_order_relaxed);
@@ -474,7 +517,7 @@ void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
                 for(std::uint8_t k=0;k<step.inputCount;++k) {
                     const float* inL=buffer(step.inputs[k],0);
                     const float* inR=buffer(step.inputs[k],1);
-                    for(int i=0;i<n;++i) { outL[i]+=inL[i]*step.inputGain; outR[i]+=inR[i]*step.inputGain; }
+                    for(int i=0;i<n;++i) { float l=inL[i],r=inR[i]; step.inputDelays[k].tick(l,r); outL[i]+=l*step.inputGain; outR[i]+=r*step.inputGain; }
                 }
                 break;
             case FxStepKind::Effect:
@@ -483,7 +526,7 @@ void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
                 // P03 telemetry is observational only: capture the signal that
                 // actually leaves the node, after bypass/crossfade semantics.
                 // This call is a no-op unless the NODES UI enabled telemetry.
-                if(step.instance!=nullptr) publishNodeTelemetry(step.instance->node,outL,outR,n);
+                if(step.instance!=nullptr) publishNodeTelemetry(*step.instance,outL,outR,n);
                 break;
             }
         }
@@ -495,7 +538,10 @@ void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
         }
     }
 
-    // Global stage: dry/wet -> stereo width (mid/side) -> output gain.
+    plan.outputPadding.process(wetL,wetR,n);
+    plan.dryDelay.process(dryL,dryR,n);
+    if(alignedDryLeft && alignedDryRight) { std::copy_n(dryL,n,alignedDryLeft); std::copy_n(dryR,n,alignedDryRight); }
+    // Global stage: aligned dry/wet -> stereo width -> output gain.
     float pl=0.0f,pr=0.0f;
     for(int i=0;i<n;++i) {
         dryWetNow_=approach(dryWetNow_,mixTarget,smoothing_);
@@ -519,16 +565,42 @@ void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
 }
 void FxRenderer::processEffect(const FxPlanStep& step,float* outL,float* outR,int n) noexcept {
     auto& fx=*step.instance;
+    fx.processor->setSpectrumTelemetryEnabled(telemetryEnabled_.load(std::memory_order_relaxed));
     const auto bytes=static_cast<std::size_t>(n)*sizeof(float);
     const auto mode=static_cast<FxBypassMode>(bypassMode_.load(std::memory_order_relaxed));
     const float target=fx.enabled.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     const auto latch=[&] {
         for(std::size_t i=0;i<fx.descriptor->parameterCount;++i)
-            fx.latched[i]=std::clamp(fx.targets[i].load(std::memory_order_relaxed)+fx.modulation[i],0.0f,1.0f);
+            fx.latched[i]=std::clamp(fx.targets[i].load(std::memory_order_relaxed)+(fx.descriptor->parameters[i].curve==FxParameterCurve::Choice ? 0.0f : fx.modulation[i]),0.0f,1.0f);
     };
     float* tmpL=buffer(wetBuffer,0);
     float* tmpR=buffer(wetBuffer,1);
 
+    if(fx.processor->latencySamples()>0) {
+        fx.processing=true;
+        // Streaming effects keep history warm and retain latency in every mode.
+        // Hard removes processing without a tail, with a bounded 2 ms declick;
+        // Crossfade uses the canonical 10 ms; TailPreserve gates the input and
+        // aligns both its dry bypass and the gate with the processor output.
+        std::memcpy(tmpL,outL,bytes); std::memcpy(tmpR,outR,bytes);
+        fx.bypassDry.process(tmpL,tmpR,n); latch();
+        float* gate=buffer(gateBuffer,0);
+        const float stepSize=mode==FxBypassMode::Hard ? bypassStep_*5 : bypassStep_;
+        for(int i=0;i<n;++i) {
+            fx.wet=target>fx.wet ? std::min(target,fx.wet+stepSize) : std::max(target,fx.wet-stepSize);
+            gate[i]=fx.wet;
+            float delayed=gate[i],other=gate[i];fx.tailGate.tick(delayed,other);
+            if(mode==FxBypassMode::TailPreserve) {
+                outL[i]*=gate[i];outR[i]*=gate[i];gate[i]=delayed;
+            }
+        }
+        fx.processor->process(outL,outR,n,fx.latched.data());
+        for(int i=0;i<n;++i) {
+            if(mode==FxBypassMode::TailPreserve) {outL[i]+=(1-gate[i])*tmpL[i];outR[i]+=(1-gate[i])*tmpR[i];}
+            else {outL[i]=tmpL[i]+gate[i]*(outL[i]-tmpL[i]);outR[i]=tmpR[i]+gate[i]*(outR[i]-tmpR[i]);}
+        }
+        return;
+    }
     if(mode==FxBypassMode::Hard) {
         if(fx.wet!=target) {
             fx.wet=target;

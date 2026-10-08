@@ -1,0 +1,4 @@
+Command: origami/build-multihost/origami_spectral_tests --audio-fixtures origami/docs/qa/spectral-tune/audio
+Exit status: 0 (October 8, 2026).
+Six paired synthetic diagnostic fixtures and audio-metrics.csv regenerated from final DSP.
+Listening was not performed.
