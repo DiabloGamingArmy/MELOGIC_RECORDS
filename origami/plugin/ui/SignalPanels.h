@@ -27,6 +27,7 @@ public:
     struct EditorRegions {juce::Rectangle<int> header,routing,response,parameters;};
     EditorRegions editorRegions() const noexcept;
     juce::Rectangle<int> responseBounds() const noexcept {return editorRegions().response;}
+    std::vector<juce::String> typeChoices() const {return {"LOW-PASS"};}
     SynthFilterId selectedFilter() const noexcept {return selectedId_;}
     bool isInterestedInDragSource(const SourceDetails&) override;
     void itemDragEnter(const SourceDetails&) override;
@@ -50,7 +51,7 @@ private:
     std::size_t tabCount_=0;
     std::array<juce::Slider,5> knobs_{};
     std::array<juce::Label,5> labels_{};
-    juce::TextButton add_{"+"},remove_{"-"},output_{"MAIN"},power_{"ON"};
+    juce::TextButton add_{"+"},remove_{"-"},output_{"MAIN"},power_{"ON"},type_{"LOW-PASS"};
     juce::Viewport viewport_;juce::Component railContent_;
     dsp::LowPassCoefficientTable responseTable_;
     double responseRate_=0;

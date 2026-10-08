@@ -158,6 +158,20 @@ bool removeSourceInstance(ModulationState& s,ModSource source) noexcept {
     s.instances[slot]={};return true;
 }
 
+OscillatorModuleState oscillatorOutputRouting(const ModulationState& s,const OscillatorModuleState& module) noexcept {
+    auto out=module;for(const auto& in:s.synthFilters.inputs) if(in.oscillator==module.id) {
+        if(in.filter) {out.busRoutes={};out.busRoutes[0]={in.filter,1,true};out.busRouteCount=1;}
+        else if(in.busCount) {out.busRoutes=in.buses;out.busRouteCount=in.busCount;}
+    }return out;
+}
+bool setOscillatorOutputRouting(ModulationState& s,const OscillatorModuleState& module) noexcept {
+    if(!module.id || !module.busRouteCount || module.busRouteCount>maxOscBusRoutes) return false;
+    for(auto& in:s.synthFilters.inputs) if(in.oscillator==module.id || !in.oscillator) {
+        // Prefer existing identity over an earlier free slot.
+        if(!in.oscillator) {bool exists=false;for(const auto& other:s.synthFilters.inputs) exists|=other.oscillator==module.id;if(exists) continue;}
+        in.oscillator=module.id;in.filter=0;in.buses=module.busRoutes;in.busCount=module.busRouteCount;return true;
+    }return false;
+}
 SynthFilterId addSynthFilter(ModulationState& s) noexcept {
     auto& c=s.synthFilters;
     if(c.nextId==0 || c.nextId>maxSynthFilterId) return 0;
@@ -167,9 +181,14 @@ SynthFilterId addSynthFilter(ModulationState& s) noexcept {
 bool removeSynthFilter(ModulationState& s,SynthFilterId id) noexcept {
     auto& c=s.synthFilters;const auto slot=synthFilterSlot(c,id);if(slot==maxSynthFilters) return false;
     const auto removed=c.filters[slot];
-    for(auto& in:c.inputs) if(in.oscillator && in.filter==id) {
-        in.filter=removed.next;
-        if(!removed.next) {in.buses=removed.buses;in.busCount=removed.busCount;}
+    for(auto& in:c.inputs) if(in.oscillator) {
+        if(in.filter==id) {in.filter=0;in.busCount=1;in.buses[0]={mainBusId,1};}
+        std::size_t kept=0;bool removedRoute=false;
+        for(std::size_t r=0;r<in.busCount;++r) if(in.buses[r].filter && in.buses[r].bus==id) removedRoute=true;else in.buses[kept++]=in.buses[r];
+        in.busCount=std::uint8_t(kept);
+        if(removedRoute) {bool active=false;for(std::size_t r=0;r<kept;++r) active|=in.buses[r].level>0;
+            if(!active) {bool main=false;for(std::size_t r=0;r<kept;++r) if(!in.buses[r].filter && in.buses[r].bus==mainBusId) {in.buses[r].level=1;main=true;}if(!main) in.buses[in.busCount++]={mainBusId,1};}
+        }
     }
     for(auto& f:c.filters) if(f.id && f.next==id) {f.next=removed.next;f.buses=removed.buses;f.busCount=removed.busCount;}
     std::array<std::uint32_t,ModulationState::capacity> routes{};std::size_t count=0;
@@ -181,12 +200,13 @@ bool validSynthFilters(const SynthFilterCollection& c,const std::array<Oscillato
     if(!c.nextId || c.nextId>maxSynthFilterId+1u) return false;
     const auto busesValid=[](const auto& buses,std::size_t count,bool optional) {
         if(count>maxOscBusRoutes || (!optional && count==0)) return false;
-        for(std::size_t i=0;i<count;++i) {if(!buses[i].bus || !range(buses[i].level,0,1)) return false;for(std::size_t j=0;j<i;++j) if(buses[i].bus==buses[j].bus) return false;}return true;
+        for(std::size_t i=0;i<count;++i) {if(!buses[i].bus || !range(buses[i].level,0,1)) return false;for(std::size_t j=0;j<i;++j) if(buses[i].filter==buses[j].filter && buses[i].bus==buses[j].bus) return false;}return true;
     };
     for(std::size_t i=0;i<c.filters.size();++i) {
         const auto& f=c.filters[i];if(!f.id) continue;
         if(f.id>=c.nextId || !range(f.values.cutoff,20,20000) || !range(f.values.resonance,0,1) || !range(f.values.drive,0,24) || !range(f.values.mix,0,1) || !range(f.values.keytrack,0,1) || !busesValid(f.buses,f.busCount,false)) return false;
         for(std::size_t j=0;j<i;++j) if(c.filters[j].id==f.id) return false;
+        for(std::size_t r=0;r<f.busCount;++r) if(f.buses[r].filter) return false;
         auto next=f.next;
         for(std::size_t n=0;next;++n) {if(n>=maxSynthFilters || next==f.id) return false;const auto slot=synthFilterSlot(c,next);if(slot==maxSynthFilters) return false;next=c.filters[slot].next;}
     }
@@ -195,6 +215,7 @@ bool validSynthFilters(const SynthFilterCollection& c,const std::array<Oscillato
         bool found=false;for(const auto& m:modules) found|=m.id==in.oscillator;if(!found) return false;
         if(in.filter && synthFilterSlot(c,in.filter)==maxSynthFilters) return false;
         if(!busesValid(in.buses,in.busCount,true)) return false;
+        for(std::size_t r=0;r<in.busCount;++r) if(in.buses[r].filter && synthFilterSlot(c,in.buses[r].bus)==maxSynthFilters) return false;
         for(std::size_t j=0;j<i;++j) if(c.inputs[j].oscillator==in.oscillator) return false;
     }
     return true;
@@ -202,25 +223,16 @@ bool validSynthFilters(const SynthFilterCollection& c,const std::array<Oscillato
 bool insertSynthFilter(ModulationState& s,const std::array<OscillatorModuleState,16>& modules,SynthFilterId id,OscillatorModuleId osc) noexcept {
     const auto slot=synthFilterSlot(s.synthFilters,id);if(slot==maxSynthFilters) return false;
     const OscillatorModuleState* module=nullptr;for(const auto& m:modules) if(m.id==osc) module=&m;if(!module) return false;
-    auto next=s;auto& c=next.synthFilters;
-    SynthFilterInput* input=nullptr;for(auto& in:c.inputs) if(in.oscillator==osc) input=&in;
-    if(!input) for(auto& in:c.inputs) if(!in.oscillator) {input=&in;in.oscillator=osc;break;}
-    if(!input || input->filter==id) return false;
-    auto& f=c.filters[slot];
-    const auto old=input->filter;const auto buses=input->busCount ? input->buses : module->busRoutes;
-    const auto count=input->busCount ? input->busCount : module->busRouteCount;
-    bool used=false;for(const auto& in:c.inputs) used|=in.filter==id;for(const auto& upstream:c.filters) used|=upstream.id && upstream.next==id;
-    if(used) { // Joining an existing stage must not reroute its other inputs.
-        if(f.next!=old) return false;
-        if(!old) {if(f.busCount!=count) return false;for(std::size_t b=0;b<count;++b) if(f.buses[b].bus!=buses[b].bus || f.buses[b].level!=buses[b].level) return false;}
-    } else {f.next=old;f.buses=buses;f.busCount=count;}
-    input->filter=id;input->busCount=0;
-    if(!validSynthFilters(c,modules)) return false;s=next;return true;
+    auto next=s;auto routing=oscillatorOutputRouting(s,*module);
+    bool found=false;for(std::size_t r=0;r<routing.busRouteCount;++r) {auto& route=routing.busRoutes[r];route.level=route.filter && route.bus==id ? 1 : 0;found|=route.filter && route.bus==id;}
+    if(!found) {if(routing.busRouteCount==maxOscBusRoutes) return false;routing.busRoutes[routing.busRouteCount++]={id,1,true};}
+    if(!setOscillatorOutputRouting(next,routing) || !validSynthFilters(next.synthFilters,modules)) return false;
+    s=next;return true;
 }
 bool insertSynthFilterAfter(ModulationState& s,SynthFilterId inserted,SynthFilterId before) noexcept {
     auto next=s;auto& c=next.synthFilters;const auto a=synthFilterSlot(c,inserted),b=synthFilterSlot(c,before);
     if(a==maxSynthFilters || b==maxSynthFilters || a==b) return false;
-    for(const auto& in:c.inputs) if(in.filter==inserted) return false;
+    for(const auto& in:c.inputs) {if(in.filter==inserted) return false;for(std::size_t r=0;r<in.busCount;++r) if(in.buses[r].filter && in.buses[r].bus==inserted && in.buses[r].level>0) return false;}
     for(const auto& f:c.filters) if(f.id && f.next==inserted) return false;
     c.filters[a].next=c.filters[b].next;c.filters[a].buses=c.filters[b].buses;c.filters[a].busCount=c.filters[b].busCount;c.filters[b].next=inserted;
     auto id=c.filters[a].next;for(std::size_t n=0;id;++n) {if(n>=maxSynthFilters || id==inserted || id==before) return false;const auto slot=synthFilterSlot(c,id);if(slot==maxSynthFilters) return false;id=c.filters[slot].next;}
@@ -229,17 +241,14 @@ bool insertSynthFilterAfter(ModulationState& s,SynthFilterId inserted,SynthFilte
 SynthFilterPlan prepareSynthFilters(ModulationState& s,const std::array<OscillatorModuleState,16>& modules,const std::array<BusId,8>& buses,std::size_t busCount) noexcept {
     SynthFilterPlan plan;plan.busCount=static_cast<std::uint8_t>(busCount);plan.busIds=buses;
     std::array<bool,maxSynthFilters> reachable{},emitted{};
+    for(std::size_t f=0;f<maxSynthFilters;++f) plan.filterIds[f]=s.synthFilters.filters[f].id;
     for(std::size_t m=0;m<modules.size();++m) {
-        plan.oscillatorIds[m]=modules[m].id;
-        for(std::size_t b=0;b<busCount;++b) plan.directSends[m][b]=oscBusSend(modules[m],buses[b]);
-        for(const auto& in:s.synthFilters.inputs) if(in.oscillator && in.oscillator==modules[m].id) {
-            if(in.filter) {
-                const auto slot=synthFilterSlot(s.synthFilters,in.filter);if(slot<maxSynthFilters) plan.oscillatorSlots[m]=static_cast<std::int8_t>(slot);
-                if(modules[m].enabled) {auto id=in.filter;for(std::size_t n=0;id && n<maxSynthFilters;++n) {const auto f=synthFilterSlot(s.synthFilters,id);if(f==maxSynthFilters) break;reachable[f]=true;id=s.synthFilters.filters[f].next;}}
-            } else if(in.busCount) {
-                plan.directMask|=std::uint16_t(1u<<m);plan.directSends[m].fill(0);
-                for(std::size_t b=0;b<busCount;++b) for(std::size_t r=0;r<in.busCount;++r) if(in.buses[r].bus==buses[b]) plan.directSends[m][b]=in.buses[r].level;
-            }
+        plan.oscillatorIds[m]=modules[m].id;const auto routing=oscillatorOutputRouting(s,modules[m]);
+        for(std::size_t r=0;r<routing.busRouteCount;++r) {
+            const auto& route=routing.busRoutes[r];
+            if(route.filter) {const auto slot=synthFilterSlot(s.synthFilters,route.bus);if(slot==maxSynthFilters) continue;plan.filterSends[m][slot]=route.level;
+                if(modules[m].enabled) {auto id=route.bus;for(std::size_t n=0;id && n<maxSynthFilters;++n) {const auto f=synthFilterSlot(s.synthFilters,id);if(f==maxSynthFilters) break;reachable[f]=true;id=s.synthFilters.filters[f].next;}}
+            } else for(std::size_t b=0;b<busCount;++b) if(route.bus==buses[b]) plan.directSends[m][b]=route.level;
         }
     }
     for(std::size_t pass=0;pass<maxSynthFilters;++pass) for(std::size_t f=0;f<maxSynthFilters;++f) if(reachable[f] && !emitted[f]) {

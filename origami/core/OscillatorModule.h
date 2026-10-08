@@ -120,10 +120,11 @@ struct OscProcessSlot {
 // BUS 1 is the required default instrument output bus.
 using BusId = std::uint32_t;
 inline constexpr BusId mainBusId = 1;
-inline constexpr std::size_t maxOscBusRoutes = 8;
+inline constexpr std::size_t maxOscBusRoutes = 16;
 struct OscBusRoute {
     BusId bus = 0;
     float level = 1.0f;
+    bool filter = false; // destination ID is a Synth Filter rather than a bus
 };
 
 struct OscRouteSlot {
@@ -184,7 +185,7 @@ struct OscillatorModuleState {
 // Send level of one oscillator into one bus (0 when it has no route there).
 inline float oscBusSend(const OscillatorModuleState& s,BusId bus) noexcept {
     for(std::size_t i=0;i<std::min<std::size_t>(s.busRouteCount,maxOscBusRoutes);++i)
-        if(s.busRoutes[i].bus==bus) return s.busRoutes[i].level;
+        if(!s.busRoutes[i].filter && s.busRoutes[i].bus==bus) return s.busRoutes[i].level;
     return 0.0f;
 }
 

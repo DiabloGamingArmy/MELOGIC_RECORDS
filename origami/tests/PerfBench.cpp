@@ -303,6 +303,22 @@ std::vector<Scenario> matrix() {
             p.setUiModulationState(mod);
         }});
     }
+    for(int voices:{1,8,16}) for(int mode=0;mode<7;++mode) {
+        const char* names[]{"MAIN only","FILTER only","MAIN + FILTER","MAIN + FILTER + BUS","four OSC multi sends","maximum 16 OSC 16 sends","dry + serial chain"};
+        m.push_back({std::string("Route mixer ")+names[mode]+", "+std::to_string(voices)+" voices",48000,256,voices,[mode](OrigamiAudioProcessor& p){
+            oscillators(p,mode==5?16:mode==4?4:1);const int buses=mode==5?7:mode>=3?1:0;
+            for(int b=0;b<buses;++b) p.addUiBus();auto state=p.getUiInstrumentState();auto mod=state.modulation;
+            std::array<SynthFilterId,8> filters{};const int count=mode==0?0:mode==5?8:mode==6?2:1;
+            for(int f=0;f<count;++f) {filters[std::size_t(f)]=addSynthFilter(mod);mod.synthFilters.filters[std::size_t(f)].values.cutoff=1200+float(f)*400;}
+            if(mode==6) insertSynthFilterAfter(mod,filters[1],filters[0]);
+            for(auto osc:state.oscillators) if(osc.id) {
+                osc.busRouteCount=0;osc.busRoutes={};if(mode!=1) osc.busRoutes[osc.busRouteCount++]={mainBusId,mode==0?1.f:.25f};
+                for(int f=0;f<(mode==6?1:count);++f) osc.busRoutes[osc.busRouteCount++]={filters[std::size_t(f)],mode==5?.1f:1.f,true};
+                for(std::size_t b=1;b<state.buses.count;++b) osc.busRoutes[osc.busRouteCount++]={state.buses.buses[b].id,mode==5?.1f:.5f};
+                setOscillatorOutputRouting(mod,osc);
+            }p.setUiModulationState(mod);
+        }});
+    }
     const auto typical=[](OrigamiAudioProcessor& p){ oscillators(p,2,4); chain(p,false); routes(p,8,false); };
     m.push_back({"idle (no notes)",48000,256,0,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});
     for(int v:{1,8,16}) m.push_back({"1 osc, "+std::to_string(v)+" voices",48000,256,v,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});

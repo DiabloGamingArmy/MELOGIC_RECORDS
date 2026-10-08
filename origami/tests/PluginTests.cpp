@@ -6299,13 +6299,13 @@ void synthFilterCompletionUi() {
     auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,256);
     auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;ui::OscillatorCard* card=nullptr;ui::FxPage* page=nullptr;
     walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;if(auto* osc=dynamic_cast<ui::OscillatorCard*>(&c)) if(osc->id()==1) card=osc;if(auto* fx=dynamic_cast<ui::FxPage*>(&c)) page=fx;});
-    check(panel && card,"Synth routing surfaces exist");check(p.getUiInstrumentState().modulation.synthFilters.nextId==1,"fresh UI has zero explicit filters");
+    check(panel && card,"Synth routing surfaces exist");check(panel->typeChoices()==std::vector<juce::String>{"LOW-PASS"},"only implemented low-pass type is selectable");check(p.getUiInstrumentState().modulation.synthFilters.nextId==1,"fresh UI has zero explicit filters");
     const auto bus=p.addUiBus();auto osc=p.getUiOscillatorState(1);osc.busRoutes[0]={bus,1};check(p.setUiOscillatorState(1,osc),"OSC previous destination authors bus");
     const auto f=panel->addFilter();check(f && card->dropSynthFilter(f),"Filter -> oscillator invokes canonical insertion");
-    auto state=p.getUiInstrumentState();check(state.modulation.synthFilters.filters[0].buses[0].bus==bus,"UI insertion preserves previous bus");
-    const auto second=panel->addFilter();check(second && panel->dropFilterOnOscillator(second,1),"reverse oscillator -> filter uses same insertion command");
+    auto state=p.getUiInstrumentState();check(state.modulation.synthFilters.filters[0].buses[0].bus==mainBusId && oscillatorOutputRouting(state.modulation,state.oscillators[0]).busRoutes[0].level==0,"UI drop is exclusive and preserves filter output");
+    const auto second=panel->addFilter();check(card->addOutputRoute(second,true),"Add Route chooses neutral filter destination");{const auto st=p.getUiInstrumentState();const auto r=oscillatorOutputRouting(st.modulation,st.oscillators[0]);check(r.busRoutes[r.busRouteCount-1].level==0 && r.busRoutes[1].level==1,"neutral addition preserves existing gains");}check(second && panel->dropFilterOnOscillator(second,1),"reverse oscillator -> filter uses same insertion command");
     const auto third=panel->addFilter();check(third && panel->dropFilterAfter(third,f),"explicit AFTER insertion preserves chain");
-    state=p.getUiInstrumentState();check(state.modulation.synthFilters.filters[1].next==f && state.modulation.synthFilters.filters[0].next==third,"UI serial routing is canonical engine state");
+    state=p.getUiInstrumentState();check(!state.modulation.synthFilters.filters[1].next && state.modulation.synthFilters.filters[0].next==third,"UI serial routing is canonical engine state");
     auto mod=state.modulation;const auto env=addSourceInstance(mod,SourceFamily::Envelope);const auto random=addSourceInstance(mod,SourceFamily::Random);
     mod.routes[0]={mod.nextRouteId++,true,env,{ModDestination::SynthCutoff,0,f},-.5f,false};mod.routes[1]={mod.nextRouteId++,true,random,{ModDestination::SynthDrive,0,f},.2f,true};check(p.setUiModulationState(mod),"scalable sources modulate filter knobs");
     auto catalog=ui::modulationDestinationCatalog(p.getUiInstrumentState(),{});check(std::count_if(catalog.begin(),catalog.end(),[](const auto& entry){return isSynthFilterDestination(entry.address.parameter);})==15,"Nodes/Matrix canonical catalog has five destinations per filter");
@@ -6318,7 +6318,7 @@ void synthFilterCompletionUi() {
     check(rows.size()==3 && add && remove,"filter rail uses shared source-card primitive and collection buttons");
     rows[0]->onClick();check(panel->selectedFilter()==f && rows[0]->getToggleState() && !rows[1]->getToggleState(),"rail selection preserves stable FilterId");
     juce::Slider* cutoff=nullptr;walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)) if(k->getName()=="CUTOFF") cutoff=k;});
-    cutoff->setValue(1300,juce::sendNotificationSync);check(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.cutoff==1300 && p.getUiInstrumentState().modulation.synthFilters.filters[1].values.cutoff==8000,"selected row edits its own working cutoff control");
+    check(cutoff->getTextFromValue(8000)=="8000 Hz" && cutoff->getTextFromValue(20000)=="20.0 kHz" && cutoff->getDoubleClickReturnValue()==8000,"cutoff units and canonical default reset");cutoff->setValue(1300,juce::sendNotificationSync);check(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.cutoff==1300 && p.getUiInstrumentState().modulation.synthFilters.filters[1].values.cutoff==8000,"selected row edits its own working cutoff control");
     rows[2]->onClick();
     ui::ModulationSourceRow reference(ModSource::Lfo1,"FILTER 1","MOD SOURCE TAB LFO 1");reference.setLookAndFeel(&panel->getLookAndFeel());
     for(bool selected:{false,true}) {
@@ -6340,14 +6340,39 @@ void synthFilterCompletionUi() {
     juce::MemoryBlock saved;p.getStateInformation(saved);OrigamiAudioProcessor restored;restored.setStateInformation(saved.getData(),int(saved.getSize()));
     auto decoded=restored.getUiInstrumentState();check(decoded.modulation.synthFilters.filters[0].next==third && decoded.modulation.routes[0].destination.itemId==f,"plugin binary wrapper restores serial chain and modulation");
     check(restored.getUiControlLayout().find(nodes::parameterKey(resonance))!=nullptr,"placed Synth parameter node survives wrapper restore");
-    check(panel->removeFilter(f),"UI removal splices filter");state=p.getUiInstrumentState();check(state.modulation.synthFilters.filters[1].next==third && !state.modulation.routes[0].id,"UI splice preserves downstream and prunes destinations");
+    check(panel->removeFilter(f),"UI removal splices filter");state=p.getUiInstrumentState();check(!state.modulation.synthFilters.filters[1].next && !state.modulation.routes[0].id,"UI splice preserves downstream and prunes destinations");
     page->syncFromModel();check(!p.getUiControlLayout().find(nodes::parameterKey(resonance)) && !page->controlGraph().find(nodes::parameterKey(resonance)),"deleted filter leaves no placed Nodes destination or cable");
     check(p.removeUiBus(bus),"bus deletion handles Synth filter output");check(validInstrumentState(p.getUiInstrumentState()),"no dangling Synth bus destination");
     check(p.removeUiOscillator(2),"oscillator deletion preserves valid filter model");
     for(int n=2;n<8;++n) {add->onClick();check(panel->selectedFilter()!=0,"Add creates and selects a stable filter");}
     check(!add->isEnabled() && add->getTooltip().contains("8") && panel->addFilter()==0,"eight-filter capacity disables Add truthfully");
+    for(int n=0;n<7;++n) check(p.addUiBus()!=0,"maximum route UI adds remaining buses");
+    {const auto st=p.getUiInstrumentState();for(std::size_t b=0;b<st.buses.count;++b) card->addOutputRoute(st.buses.buses[b].id,false);for(const auto& filter:st.modulation.synthFilters.filters) if(filter.id) card->addOutputRoute(filter.id,true);}
+    card->setSize(662,355);card->syncFromModel();juce::TextButton* routingButton=nullptr;walk(*card,[&](auto& c){if(auto* button=dynamic_cast<juce::TextButton*>(&c)) if(button->getBounds()==card->headerLayout().selectors[2]) routingButton=button;});check(routingButton!=nullptr,"route header opens workspace");routingButton->onClick();
+    juce::Viewport* routeView=nullptr;walk(*card,[&](auto& c){if(auto* viewport=dynamic_cast<juce::Viewport*>(&c)) if(viewport->isVisible() && viewport->getViewedComponent()) {for(auto* child:viewport->getViewedComponent()->getChildren()) if(child->getName().startsWith("Output route level")) routeView=viewport;}});
+    check(routeView && routeView->getViewedComponent()->getHeight()>=16*48,"maximum destinations live in scrollable route list");routeView->setViewPosition(0,16*48);check(routeView->getViewPositionY()>0,"last destination remains reachable by scrolling");
+    {juce::Image image(juce::Image::ARGB,662,355,true);juce::Graphics g(image);card->paintEntireComponent(g,true);juce::File file("/tmp/origami-route-mixer-max.png");file.deleteFile();if(auto out=file.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(image,*out);}}
     const auto selected=panel->selectedFilter();remove->onClick();check(synthFilterSlot(p.getUiInstrumentState().modulation.synthFilters,selected)==maxSynthFilters && add->isEnabled() && panel->selectedFilter()!=selected,"Remove splices selected filter and leaves valid selection/capacity");
     check(p.loadUiInitPreset(),"Init loads after explicit filter patch");for(const auto& filter:p.getUiInstrumentState().modulation.synthFilters.filters) check(!filter.id,"Init contains zero Synth instances");
+}
+
+void synthResponseFillAudit() {
+    InstrumentState state;const auto f=addSynthFilter(state.modulation);RuntimeVisualizationSnapshot observed;observed.sampleRate=48000;observed.synthFilterIds[0]=f;observed.synthFilters[0]={1200,.1f,0,1,0};
+    ui::ModulationBindings bindings;bindings.snapshot=[&]{return state;};bindings.visualization=[&]{return observed;};
+    ui::FilterPanel panel({}, {},bindings);panel.setSize(662,355);const auto plot=panel.responseBounds().reduced(8);
+    const auto render=[&] {juce::Image image(juce::Image::ARGB,662,355,true);juce::Graphics g(image);panel.paintEntireComponent(g,true);return image;};
+    const auto theme=ui::gTheme;auto red=render();auto blueTheme=theme;blueTheme.signal=juce::Colour(0xff40aaff);ui::setDeclarativeTheme(blueTheme);auto blue=render();
+    const int x=plot.getX()+12,above=plot.getY()+20,below=plot.getBottom()-5;
+    check(red.getPixelAt(x,above)==blue.getPixelAt(x,above),"theme does not flood area above curve");
+    check(red.getPixelAt(x,below)!=blue.getPixelAt(x,below),"accent fill reaches graph floor below curve and follows theme");
+    // At 2 kHz, 300 Hz and 8 kHz responses must move BOTH stroke and fill.
+    observed.synthFilters[0].cutoff=300;auto low=render();observed.synthFilters[0].cutoff=8000;auto high=render();
+    dsp::LowPassCoefficientTable table;table.prepare(48000);const int i=170;const double hz=20*std::pow(1000.,double(i)/255);const int column=plot.getX()+juce::roundToInt(float(i)/255*float(plot.getWidth()));
+    const auto curveY=[&](float cutoff) {const double magnitude=dsp::lowPassMagnitude(table.make(cutoff,.1f),hz,48000,1);return plot.getY()+juce::roundToInt(float(juce::jlimit(0.,1.,(12-20*std::log10(std::max(magnitude,1e-6)))/72))*float(plot.getHeight()));};
+    const int lowY=curveY(300),highY=curveY(8000),middle=(lowY+highY)/2;
+    check(lowY-highY>20 && low.getPixelAt(column,middle)!=high.getPixelAt(column,middle),"observed cutoff moves fill boundary with truthful response");
+    const auto whiteNear=[&](const juce::Image& img,int y) {float brightness=0;for(int dy=-2;dy<=2;++dy) brightness=std::max(brightness,img.getPixelAt(column,y+dy).getBrightness());return brightness;};
+    check(whiteNear(low,lowY)>.65f && whiteNear(high,highY)>.65f,"response stroke follows actual coefficient magnitudes");ui::setDeclarativeTheme(theme);
 }
 
 void synthFilterVisualComposition() {
@@ -6397,5 +6422,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

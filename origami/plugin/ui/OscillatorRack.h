@@ -122,6 +122,7 @@ public:
         juce::Rectangle<int> title,power,remove;
         std::array<juce::Rectangle<int>,3> labels{},selectors{};
     };
+    bool addOutputRoute(std::uint32_t destination,bool filter);
     HeaderLayout headerLayout() const;
     static constexpr float headerLabelSize=Type::control;
 private:
@@ -240,6 +241,8 @@ private:
     std::array<RackSlider,maxOscBusRoutes> busLevels_;
     std::array<juce::TextButton,maxOscBusRoutes> busRemoves_;
     std::array<juce::Rectangle<int>,maxOscBusRoutes> busRowBounds_{};
+    struct RouteContent final : juce::Component {std::function<void(juce::Graphics&)> draw;void paint(juce::Graphics& g) override {if(draw) draw(g);}};
+    RouteContent routeContent_;juce::Viewport routeViewport_;
     juce::TextButton busAdd_{"+ ADD ROUTE"};
     std::size_t busRowCount_=0;
     bool syncingBus_=false;

@@ -22,8 +22,9 @@ struct SynthFilterState {
 };
 struct SynthFilterInput {
     OscillatorModuleId oscillator=0; SynthFilterId filter=0;
-    // A splice can restore a changed terminal destination without editing a
-    // separate oscillator mailbox. Zero means the oscillator's authored sends.
+    // Canonical typed output sends, published with filter topology atomically.
+    // Zero count inherits the historical oscillator bus sends. The filter
+    // field is retained solely for pre-v37 in-memory compatibility.
     std::array<OscBusRoute,maxOscBusRoutes> buses{};
     std::uint8_t busCount=0;
 };
@@ -41,10 +42,10 @@ struct SynthFilterPlan {
         std::array<float,8> sends{};
     };
     std::array<Stage,maxSynthFilters> stages{};
-    std::array<std::int8_t,16> oscillatorSlots{{-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}};
     std::array<OscillatorModuleId,16> oscillatorIds{};
+    std::array<SynthFilterId,8> filterIds{};
+    std::array<std::array<float,8>,16> filterSends{};
     std::array<std::array<float,8>,16> directSends{};
-    std::uint16_t directMask=0;
     std::array<BusId,8> busIds{{mainBusId}};
     std::uint8_t count=0,busCount=1;
 };

@@ -601,8 +601,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         }
 
         if constexpr(Synth) {
-        const int synthFilter=filterPlan.oscillatorIds[m]==topology.ids[m] ? filterPlan.oscillatorSlots[m] : -1;
-        if(synthFilter>=0) {
+        {
             const float rightLevel=Stereo && ((effective->stereo.levelMask>>m)&1u) ? std::clamp(effective->stereo.level[m],0.0f,1.0f) : level;
             float left=oscillatorMix*envelopeValue,right=(rightSplit ? oscillatorMixRight : oscillatorMix)*envelopeValue;
             // Historical implicit filters stay in front of explicit routing.
@@ -614,8 +613,10 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
                 else right=left;
                 filtersQuiet=filtersQuiet && moduleFilters_[m].quiet() && (!split || moduleFiltersRight_[m].quiet());
             }
-            auto& input=filterInputs[static_cast<std::size_t>(synthFilter)];
-            input.left+=left*level*panLeft;input.right+=right*rightLevel*panRight;
+            const float leveledLeft=left*level*panLeft,leveledRight=right*rightLevel*panRight;
+            for(std::size_t f=0;f<maxSynthFilters;++f) if(modulePlan.filterSend[f]!=0) {auto& input=filterInputs[f];input.left+=leveledLeft*modulePlan.filterSend[f];input.right+=leveledRight*modulePlan.filterSend[f];}
+            outputs.left+=leveledLeft*modulePlan.busSend[0];outputs.right+=leveledRight*modulePlan.busSend[0];outputs.mono+=.5f*(left*level+right*rightLevel)*modulePlan.busSend[0];
+            if(modulePlan.auxSends) for(std::size_t b=1;b<filterPlan.busCount;++b) {aux_[2*(b-1)]+=leveledLeft*modulePlan.busSend[b];aux_[2*(b-1)+1]+=leveledRight*modulePlan.busSend[b];}
             continue;
         }
         }

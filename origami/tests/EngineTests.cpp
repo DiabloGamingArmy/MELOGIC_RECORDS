@@ -9,6 +9,7 @@
 #include "core/dsp/Filter.h"
 #include "core/RealtimeThreadPolicy.h"
 #include "core/preset/Patch.h"
+#include "core/preset/StateCodec.h"
 #include "tests/OptimizedPathGolden.h"
 #include <algorithm>
 #include <atomic>
@@ -1360,6 +1361,37 @@ void correctiveSpectralPreview() {
     check(last>.99f,"saw viewport ends on final positive sample rather than artificial negative edge");
 }
 
+void oscillatorRouteMixerAudit() {
+    const auto fixture=std::string(__FILE__).substr(0,std::string(__FILE__).find_last_of('/'))+"/fixtures/";
+    std::ifstream patch(fixture+"synth-serial-v36.bin",std::ios::binary);std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(patch)),{});InstrumentState legacy;
+    check(!bytes.empty() && decodeInstrumentState(bytes.data(),bytes.size(),legacy),"actual v36 fixture migrates");
+    check(legacy.modulation.synthFilters.inputs[0].buses[0].filter && legacy.modulation.synthFilters.inputs[0].buses[0].level==1,"v36 single edge becomes unity typed send");
+    auto old=std::make_unique<OrigamiEngine>();check(old->prepare(48000,256,2) && old->restoreInstrumentState(legacy),"migrated fixture restores");old->noteOn(60,.7f);
+    std::ifstream reference(fixture+"synth-serial-v36.f32",std::ios::binary);std::array<float,256> l{},r{},expected{};float* output[]{l.data(),r.data()};
+    for(int block=0;block<16;++block) {check(old->process(output,2,256),"legacy audio renders");for(auto* channel:output) {reference.read(reinterpret_cast<char*>(expected.data()),sizeof(expected));check(bool(reference),"legacy reference exists");for(int n=0;n<256;++n) check(std::abs(channel[n]-expected[n])<1e-6f,"v36 audio matches pre-change engine");}}
+    const auto make=[] {auto e=std::make_unique<OrigamiEngine>();check(e->prepare(48000,256,2),"route fixture prepares");e->setMasterAfterFx(true);return e;};
+    for(bool chain:{false,true}) {
+        auto dry=make(),wet=make(),parallel=make();auto s=wet->instrumentState();const auto f=addSynthFilter(s.modulation);check(insertSynthFilter(s.modulation,s.oscillators,f,1),"wet route inserts");s.modulation.synthFilters.filters[0].values={1200,.2f,0,1,0};
+        if(chain) {const auto next=addSynthFilter(s.modulation);check(insertSynthFilterAfter(s.modulation,next,f),"serial chain inserts");s.modulation.synthFilters.filters[1].values.cutoff=2400;}
+        check(wet->restoreInstrumentState(s),"wet fixture restores");auto p=s;const auto bus=addBus(p.buses);auto routing=oscillatorOutputRouting(p.modulation,p.oscillators[0]);routing.busRoutes[0].level=.25f;routing.busRoutes[routing.busRouteCount++]={bus,.5f};
+        check(setOscillatorOutputRouting(p.modulation,routing) && parallel->restoreInstrumentState(p),"parallel fixture restores");
+        dry->noteOn(60,.2f);wet->noteOn(60,.2f);parallel->noteOn(60,.2f);
+        std::array<float,256> dl{},dr{},wl{},wr{},pl{},pr{},bl{},br{};float* d[]{dl.data(),dr.data()},*w[]{wl.data(),wr.data()},*o[]{pl.data(),pr.data()};std::array<float*,14> aux{};aux[0]=bl.data();aux[1]=br.data();
+        for(int block=0;block<16;++block) {check(dry->process(d,2,256) && wet->process(w,2,256) && parallel->beginHostBlock(2) && parallel->processSpan(o,2,256,aux.data()),"parallel buses render");parallel->endHostBlock();for(int n=0;n<256;++n) {check(std::abs(pl[n]-(.25f*dl[n]+wl[n]))<3e-6f && std::abs(pr[n]-(.25f*dr[n]+wr[n]))<3e-6f,"dry plus filtered sum is unnormalized");check(std::abs(bl[n]-.5f*dl[n])<3e-6f && std::abs(br[n]-.5f*dr[n])<3e-6f,"third bus gets independent half-level dry send");}}
+        // Prepared gain adoption is smooth and allocation-free during a held note.
+        auto mod=parallel->instrumentState().modulation;routing=oscillatorOutputRouting(mod,p.oscillators[0]);for(std::size_t n=0;n<routing.busRouteCount;++n) routing.busRoutes[n].level=0;
+        check(setOscillatorOutputRouting(mod,routing) && parallel->setModulationState(mod),"held gains publish");
+        allocations.store(0);frees.store(0);guardAllocations.store(true);const bool ok=parallel->process(o,2,256);parallel->emergencyResetRuntime();guardAllocations.store(false);
+        check(ok,"held gain adoption renders");
+#ifndef ORIGAMI_SANITIZED
+        check(!allocations.load() && !frees.load(),"gain adoption/render/Panic allocate and free zero objects");
+#endif
+    }
+    // Pure bus gain smoothing can be checked sample-for-sample against an unchanged held oscillator.
+    auto control=make(),smooth=make();control->noteOn(60,.2f);smooth->noteOn(60,.2f);std::array<float,256> a{},b{},ar{},br{};float* x[]{a.data(),ar.data()},*y[]{b.data(),br.data()};check(control->process(x,2,256) && smooth->process(y,2,256),"held smoothing fixtures warm");
+    auto s=smooth->instrumentState();auto routing=s.oscillators[0];routing.busRoutes[0].level=0;check(setOscillatorOutputRouting(s.modulation,routing) && smooth->setModulationState(s.modulation),"zero gain publishes");check(control->process(x,2,256) && smooth->process(y,2,256),"smoothed gain renders");for(int n=0;n<256;++n) check(std::abs(b[n]-a[n]*std::max(0.f,1-float(n+1)/240))<3e-6f,"bus gain follows continuous five millisecond ramp");
+}
+
 void synthFilterRoutingAudit() {
     const auto make=[](int oscillators) {
         auto e=std::make_unique<OrigamiEngine>();check(e->prepare(48000,256,2),"Synth filter engine prepares");
@@ -1420,7 +1452,7 @@ int main() {
     // test runner cannot overflow before it reaches its first diagnostic.
     // Production engine ownership already follows this pattern.
     try {
-        synthFilterRoutingAudit();
+        oscillatorRouteMixerAudit();synthFilterRoutingAudit();
         correctiveSpectralPreview();
         sourceInstanceRealtimeAudit();
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();

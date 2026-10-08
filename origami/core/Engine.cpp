@@ -161,7 +161,7 @@ void OrigamiEngine::reset() noexcept {
     for(std::size_t i=0;i<maxSourceInstances;++i) {const auto& a=audioModulation_.instances[i];if(a.id && !sourceIsVoice(instanceSource(a.id),audioModulation_) && compiledModulation_.usesGlobalSource(CompiledModulation::instanceGlobalSlot(i))) globalInstanceSlots_[globalInstanceCount_++]=std::uint8_t(i);}
     publishNodesDiagnostics();
     compiledModulation_.resetOperatorState();
-    oscillatorPlan_.compile(resetModules,slotMapFor(buses_));oscillatorPlan_.adoptSynthFilters(audioSynthFilters_);
+    oscillatorPlan_.compile(resetModules,slotMapFor(buses_));oscillatorPlan_.adoptSynthFilters(audioSynthFilters_,true);
     dezipModules_=resetModules; dezipActive_=0; // a reset never glides
     for(std::size_t i=0;i<resetModules.size();++i) compiledModuleIds_[i]=resetModules[i].id;
     for (auto& voice : voices_) { voice.reset(); voice.restartLifecycles(); }
@@ -579,7 +579,10 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
         oscillatorPlan_.compile(hostModules_,hostBusSlots_);
         rebuildHostWavetables();
     }
-    if(modulationChanged || oscillatorGenerationChanged || moduleTopologyChanged || slotsChanged || tablesChanged) oscillatorPlan_.adoptSynthFilters(audioSynthFilters_);
+    if(modulationChanged || oscillatorGenerationChanged || moduleTopologyChanged || slotsChanged || tablesChanged) {
+        bool audibleVoice=false;for(const auto& voice:voices_) audibleVoice|=voice.info().envelope>0;
+        oscillatorPlan_.adoptSynthFilters(audioSynthFilters_,!audibleVoice,std::uint32_t(std::max(1.0,sampleRate_*.005)));
+    }
     if(modulationChanged) compiledModulation_.markStateRevision();
     if(modulationChanged || moduleTopologyChanged || oscillatorGenerationChanged) {
         compiledModulation_.compile(audioModulation_,hostModules_);
@@ -657,6 +660,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         static_cast<std::size_t>(std::lround(sampleRate_/1000.0))) * (reduceVisualizationRate_ ? 4u : 1u);
 
     for(std::size_t sample=0;sample<sampleCount;++sample) {
+        if(oscillatorPlan_.routeRamp) oscillatorPlan_.advanceRoutes();
         if(dezipActive_) advanceDezip(modules);
         for(auto& s:smooth_) if(s.remaining) {
             s.value+=static_cast<float>(s.step);

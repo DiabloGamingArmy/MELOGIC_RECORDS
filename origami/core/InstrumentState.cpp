@@ -77,7 +77,7 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
     }
     if(!validBusState(s.buses)) return false;
     for(const auto& f:s.modulation.synthFilters.filters) if(f.id) for(std::size_t b=0;b<f.busCount;++b) if(!s.buses.find(f.buses[b].bus)) return false;
-    for(const auto& in:s.modulation.synthFilters.inputs) if(in.oscillator) for(std::size_t b=0;b<in.busCount;++b) if(!s.buses.find(in.buses[b].bus)) return false;
+    for(const auto& in:s.modulation.synthFilters.inputs) if(in.oscillator) for(std::size_t b=0;b<in.busCount;++b) if(!in.buses[b].filter && !s.buses.find(in.buses[b].bus)) return false;
     auto first=s.oscillators[0];applyLegacyOscillatorParameters(first,s.parameters);
     const auto& m=s.oscillators[0];
     return first.waveform==m.waveform && first.wtPosition==m.wtPosition &&
@@ -93,7 +93,7 @@ bool removeBus(InstrumentState& s,BusId id) noexcept {
     for(std::size_t i=index;i+1<b.count;++i) b.buses[i]=b.buses[i+1];
     b.buses[--b.count]={};
     const auto prune=[&](auto& sends,auto& count) {
-        std::size_t kept=0;for(std::size_t i=0;i<count;++i) if(sends[i].bus!=id) sends[kept++]=sends[i];
+        std::size_t kept=0;for(std::size_t i=0;i<count;++i) if(sends[i].filter || sends[i].bus!=id) sends[kept++]=sends[i];
         if(count && !kept) {sends[0]={mainBusId,1};kept=1;}
         for(std::size_t i=kept;i<sends.size();++i) sends[i]={};count=static_cast<std::uint8_t>(kept);
     };

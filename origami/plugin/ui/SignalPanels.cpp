@@ -40,15 +40,19 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter,Modulatio
     :Panel("SYNTH FILTERS"),setter_(std::move(setter)),getter_(std::move(getter)),bindings_(std::move(bindings)) {
     addAndMakeVisible(viewport_);viewport_.setViewedComponent(&railContent_,false);viewport_.setScrollBarsShown(false,false,true,false);
     for(auto& tab:tabs_) {railContent_.addAndMakeVisible(tab);tab.addMouseListener(this,false);tab.setName("MOD SOURCE TAB FILTER");}
-    for(auto* button:{&add_,&remove_,&output_,&power_}) addAndMakeVisible(*button);
+    for(auto* button:{&add_,&remove_,&output_,&power_,&type_}) addAndMakeVisible(*button);
     add_.setTooltip("Add a per-voice Synth low-pass filter (8 instance slots)");
     remove_.setTooltip("Splice out this filter and remove its modulation routes");
     add_.onClick=[this]{addFilter();};remove_.onClick=[this]{if(legacy_) {auto mod=state_.modulation;mod.filterEnabled=false;std::array<std::uint32_t,32> ids{};std::size_t n=0;for(const auto& r:mod.routes) if(r.id && (r.destination.parameter==ModDestination::Cutoff || r.destination.parameter==ModDestination::Resonance)) ids[n++]=r.id;for(std::size_t i=0;i<n;++i) removeRouteCascade(mod,ids[i]);commit(mod);} else removeFilter(selectedId_);};
+    type_.setName("Synth filter type");type_.setTooltip("Per-voice Synth DSP: low-pass. Additional types are not implemented.");
+    type_.onClick=[this]{showNativeChoiceMenu(type_,"Synth Filter Type",{{1,"LOW-PASS",true,"PER VOICE",true}},1,[](int){});};
     output_.onClick=[this]{showOutputMenu();};
     power_.onClick=[this]{const auto slot=synthFilterSlot(state_.modulation.synthFilters,selectedId_);if(slot==maxSynthFilters) return;auto mod=state_.modulation;mod.synthFilters.filters[slot].power=!mod.synthFilters.filters[slot].power;commit(mod);};
     constexpr const char* names[]{"CUTOFF","RESONANCE","DRIVE","MIX","KEYTRACK"};
     for(std::size_t i=0;i<knobs_.size();++i) {
         auto& knob=knobs_[i];addAndMakeVisible(knob);knob.setName(names[i]);knob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);knob.setTextBoxStyle(juce::Slider::TextBoxBelow,false,66,17);knob.setMouseDragSensitivity(220);
+        knob.setDoubleClickReturnValue(true,i==0?8000:i==1?.1:i==3?1:0);
+        if(i==0) {knob.textFromValueFunction=[](double v){return v>=10000?juce::String(v/1000,1)+" kHz":juce::String(int(v))+" Hz";};knob.valueFromTextFunction=[](const juce::String& t){return t.getDoubleValue()*(t.containsIgnoreCase("kHz")?1000:1);};}
         knob.setRange(i==0?20:0,i==0?20000:i==2?24:1,i==0?1:.001);if(i==0) knob.setSkewFactorFromMidPoint(1000);if(i==4) knob.setTooltip("Full keytracking doubles cutoff per octave above MIDI note 60");
         knob.onValueChange=[this]{if(!syncing_) editValues();};
         auto& label=labels_[i];addAndMakeVisible(label);label.setText(names[i],juce::dontSendNotification);label.setJustificationType(juce::Justification::centred);label.setFont(juce::FontOptions(Type::label));
@@ -71,6 +75,7 @@ void FilterPanel::syncFromModel() {
     const bool active=legacy_ || slot<maxSynthFilters;
     add_.setEnabled(state_.modulation.synthFilters.nextId<=maxSynthFilterId && std::any_of(state_.modulation.synthFilters.filters.begin(),state_.modulation.synthFilters.filters.end(),[](const auto& f){return !f.id;}));remove_.setEnabled(active);
     add_.setTooltip(add_.isEnabled()?"Add a per-voice Synth low-pass filter":state_.modulation.synthFilters.nextId>maxSynthFilterId?"Filter identity history exhausted":"All 8 Synth filter slots are in use");
+    type_.setVisible(active);
     output_.setVisible(active && !legacy_);power_.setVisible(active && !legacy_);
     SynthFilterValues values;
     if(slot<maxSynthFilters) {const auto& f=state_.modulation.synthFilters.filters[slot];values=f.values;output_.setButtonText(f.next ? "OUT: FILTER "+juce::String(f.next) : "OUT: "+(state_.buses.find(f.buses[0].bus)?juce::String(state_.buses.find(f.buses[0].bus)->label()):juce::String("BUS"))+(f.busCount>1?" +":""));power_.setButtonText(f.power?"ON":"BYPASS");}
@@ -111,6 +116,7 @@ void FilterPanel::resized() {
     }
     revealedId_=selectedId_;revealedViewportSize_=viewportSize;
     const auto regions=editorRegions();auto head=regions.header.reduced(4);
+    type_.setBounds(head.removeFromLeft(104));
     power_.setBounds(head.removeFromRight(48));head.removeFromRight(4);
     output_.setBounds(head.removeFromRight(juce::jmin(145,head.getWidth()/2)));
     auto controls=regions.parameters.reduced(0,12);const int cellWidth=controls.getWidth()/5;
@@ -120,14 +126,14 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     const auto layout=sourceRailLayout(body);paintSourceRail(g,layout);body=layout.editor;
     if(!tabCount_) {text(g,"NO SYNTH FILTERS — + TO ADD",body,Type::label,Palette::muted(),juce::Justification::centred);return;}
     const auto regions=editorRegions();well(g,regions.header);
-    auto caption=regions.header.reduced(8,0);caption.setRight(output_.isVisible()?output_.getX()-4:caption.getRight());
-    text(g,legacy_?"LEGACY / PER OSCILLATOR":"LOW-PASS / PER VOICE",caption,Type::secondary,Palette::secondary());
+    auto caption=regions.header.reduced(8,0).withTrimmedLeft(108);caption.setRight(output_.isVisible()?output_.getX()-4:caption.getRight());
+    text(g,legacy_?"PER OSCILLATOR":"PER VOICE",caption,Type::secondary,Palette::secondary());
     g.setColour(Palette::borderSoft());
     g.drawHorizontalLine(regions.routing.getBottom(),float(regions.routing.getX()),float(regions.routing.getRight()));
     g.drawHorizontalLine(regions.parameters.getY(),float(regions.parameters.getX()),float(regions.parameters.getRight()));
     juce::String inputs="IN: ";
     if(legacy_) inputs+="ALL OSCILLATORS";
-    else {bool first=true;for(const auto& in:state_.modulation.synthFilters.inputs) if(in.filter==selectedId_) {if(!first) inputs+=", ";unsigned ordinal=0;for(const auto& m:state_.oscillators) if(m.id) {++ordinal;if(m.id==in.oscillator) inputs+="OSC "+juce::String(ordinal);}first=false;}for(const auto& f:state_.modulation.synthFilters.filters) if(f.id && f.next==selectedId_) {if(!first) inputs+=", ";inputs+="FILTER "+juce::String(f.id);first=false;}if(first) inputs+="UNCONNECTED";}
+    else {bool first=true;for(const auto& in:state_.modulation.synthFilters.inputs) if(std::any_of(in.buses.begin(),in.buses.begin()+in.busCount,[this](const auto& r){return r.filter && r.bus==selectedId_ && r.level>0;}) || in.filter==selectedId_) {if(!first) inputs+=", ";unsigned ordinal=0;for(const auto& m:state_.oscillators) if(m.id) {++ordinal;if(m.id==in.oscillator) inputs+="OSC "+juce::String(ordinal);}first=false;}for(const auto& f:state_.modulation.synthFilters.filters) if(f.id && f.next==selectedId_) {if(!first) inputs+=", ";inputs+="FILTER "+juce::String(f.id);first=false;}if(first) inputs+="UNCONNECTED";}
     text(g,inputs,regions.routing.reduced(8,0),Type::secondary,Palette::secondary());body=regions.response;well(g,body);auto plot=body.reduced(8).toFloat();
     SynthFilterValues values;const auto slot=synthFilterSlot(state_.modulation.synthFilters,selectedId_);if(slot<maxSynthFilters) values=state_.modulation.synthFilters.filters[slot].values;else if(getter_) {values.cutoff=getter_(ParameterId::Cutoff);values.resonance=getter_(ParameterId::Resonance);}
     auto visual=bindings_.visualization?bindings_.visualization():RuntimeVisualizationSnapshot{};
@@ -136,13 +142,15 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     const double rate=visual.sampleRate>0?visual.sampleRate:48000;if(rate!=responseRate_) {responseTable_.prepare(rate);responseRate_=rate;}
     const auto c=responseTable_.make(values.cutoff,values.resonance);
     juce::Path curve;for(int i=0;i<256;++i) {const float t=float(i)/255;const double hz=20*std::pow(std::min(20000.0,rate*.45)/20,t);const double magnitude=dsp::lowPassMagnitude(c,hz,rate,values.mix);const float db=float(20*std::log10(std::max(magnitude,1e-6)));const float y=plot.getY()+juce::jlimit(0.0f,1.0f,(12-db)/72)*plot.getHeight();if(!i) curve.startNewSubPath(plot.getX(),y);else curve.lineTo(plot.getX()+t*plot.getWidth(),y);}
-    g.setColour(Palette::accent());g.strokePath(curve,juce::PathStrokeType(1.3f));
+    juce::Path fill=curve;fill.lineTo(plot.getRight(),plot.getBottom());fill.lineTo(plot.getX(),plot.getBottom());fill.closeSubPath();
+    g.setColour(signalSurfaceColour(.46f,.22f));g.fillPath(fill);
+    g.setColour(Palette::text());g.strokePath(curve,juce::PathStrokeType(1.3f));
     g.setColour(signalSourceColour());
     g.fillRect(body.getX()+1,body.getBottom()-2,juce::jmax(0,body.getWidth()-2),2);
     text(g,"LINEAR RESPONSE / DRIVE IS NONLINEAR",body.removeFromTop(16),Type::secondary,Palette::muted());
 }
 void FilterPanel::paintOverChildren(juce::Graphics& g) {
-    if(dropOver_) {g.setColour(signalSourceColour());g.drawRect(contentBounds().reduced(2),2);text(g,"DROP FILTER: INSERT AFTER / DROP OSC: INSERT FILTER",contentBounds().removeFromBottom(22),Type::secondary,Palette::text(),juce::Justification::centred);}
+    if(dropOver_) {g.setColour(signalSourceColour());g.drawRect(contentBounds().reduced(2),2);text(g,"DROP FILTER: INSERT AFTER / DROP OSC: EXCLUSIVE ROUTE",contentBounds().removeFromBottom(22),Type::secondary,Palette::text(),juce::Justification::centred);}
     const auto& telemetry=modulationUiTelemetry();
 
 

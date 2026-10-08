@@ -444,6 +444,10 @@ std::size_t sourceInstanceSlot(const ModulationState&,ModSource) noexcept;
 const SourceInstance* findSourceInstance(const ModulationState&,ModSource) noexcept;
 ModSource addSourceInstance(ModulationState&,SourceFamily) noexcept;
 bool removeSourceInstance(ModulationState&,ModSource) noexcept;
+// Effective output sends use the existing splice override as an atomic,
+// generalized bus/filter mixer. No override means the oscillator's bus sends.
+OscillatorModuleState oscillatorOutputRouting(const ModulationState&,const OscillatorModuleState&) noexcept;
+bool setOscillatorOutputRouting(ModulationState&,const OscillatorModuleState&) noexcept;
 SynthFilterId addSynthFilter(ModulationState&) noexcept;
 bool removeSynthFilter(ModulationState&,SynthFilterId) noexcept;
 bool insertSynthFilter(ModulationState&,const std::array<OscillatorModuleState,16>&,SynthFilterId,OscillatorModuleId) noexcept;
@@ -884,7 +888,7 @@ struct ModulationFrame {
 
 // Fields copied by ModulationFrame::copyForVoice: the size is pinned so any
 // field change trips here and forces copyForVoice to be updated with it.
-static_assert(sizeof(ModulationFrame)==8928+4*maxSourceInstances+2*sizeof(float)*ModulationState::capacity+sizeof(StereoModulationFrame)+sizeof(SynthFilterValues)*maxSynthFilters+8,"ModulationFrame changed: update copyForVoice");
+static_assert(sizeof(ModulationFrame)==10976+4*maxSourceInstances+2*sizeof(float)*ModulationState::capacity+sizeof(StereoModulationFrame)+sizeof(SynthFilterValues)*maxSynthFilters+8,"ModulationFrame changed: update copyForVoice");
 
 class CompiledModulation {
 public:
