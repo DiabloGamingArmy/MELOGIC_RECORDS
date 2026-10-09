@@ -91,3 +91,7 @@ origami/build-multihost/origami_perf_bench '1 osc,' 'typical' 'heavy everything'
 ## EQ follow-up
 
 The subsequent [EQ headroom investigation and correction](../eq-headroom/REPORT.md) reproduces the original 52,983,876 peak, classifies it as a parameter-domain defect and establishes a +24 dB maximum static cascade transfer without output limiting. Its complete Release/UBSan regressions pass. The extreme EQ-domain concern above is resolved by that correction; the separate ASan runtime and real-device/DAW deadline uncertainties remain.
+
+## ASan runtime follow-up
+
+The subsequent [memory/ASan validation pass](../memory-asan/REPORT.md) independently reproduces the initialization lock with standalone minimal probes using both installed Apple clang runtimes, including ASan without UBSan. Neither reaches application initializers/main. Classification remains ASan unavailable due to toolchain/runtime failure; no Origami ASan-clean claim is made. The report retains the fresh compiler/runtime evidence and repeated clean Release/UBSan validation.

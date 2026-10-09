@@ -1,0 +1,27 @@
+Test project <repo>/origami/build-multihost
+      Start  1: origami_state
+ 1/11 Test  #1: origami_state .......................   Passed    0.26 sec
+      Start  2: origami_foundation
+ 2/11 Test  #2: origami_foundation ..................   Passed   14.14 sec
+      Start  3: origami_wavetable_bank_foundation
+ 3/11 Test  #3: origami_wavetable_bank_foundation ...   Passed    0.24 sec
+      Start  4: origami_modulation_core
+ 4/11 Test  #4: origami_modulation_core .............   Passed    2.15 sec
+      Start  5: origami_fx_graph
+ 5/11 Test  #5: origami_fx_graph ....................   Passed    2.11 sec
+      Start  6: origami_spectral_tune
+ 6/11 Test  #6: origami_spectral_tune ...............   Passed    0.95 sec
+      Start  7: origami_spectral_quality
+ 7/11 Test  #7: origami_spectral_quality ............   Passed    1.36 sec
+      Start  8: origami_plugin_ui
+ 8/11 Test  #8: origami_plugin_ui ...................   Passed   46.17 sec
+      Start  9: origami_content
+ 9/11 Test  #9: origami_content .....................   Passed    1.96 sec
+      Start 10: origami_eq_headroom
+10/11 Test #10: origami_eq_headroom .................   Passed    4.77 sec
+      Start 11: origami_dsp_torture
+11/11 Test #11: origami_dsp_torture .................   Passed   75.35 sec
+
+100% tests passed out of 11
+
+Total Test time (real) = 149.48 sec

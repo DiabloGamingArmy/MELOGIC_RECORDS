@@ -1,0 +1,6 @@
+LEGACY FINAL peak=52983838.7595 CORRECTED peak=12.1969661713
+TRANSITION mode=0 legacy peak=1568492.75 rms=76341.0776183 corrected peak=8.00447654724 rms=5.65661713272 legacy final-quarter RMS=6.65609730922 corrected final-quarter RMS=5.6562135243
+TRANSITION mode=1 legacy peak=3398698752 rms=152682546.392 corrected peak=7.99987792969 rms=2.73624239153 legacy final-quarter RMS=40423.2167818 corrected final-quarter RMS=5.35665514933
+TRANSITION mode=2 legacy peak=22392714 rms=3971520.74831 corrected peak=0.0791884884238 rms=0.0274175691525 legacy final-quarter RMS=3378375.55739 corrected final-quarter RMS=0.0290627722324
+TRANSITION mode=3 legacy peak=682326848 rms=33723819.9299 corrected peak=8.00050354004 rms=5.22674644771 legacy final-quarter RMS=6.66538899975 corrected final-quarter RMS=5.65621294934
+PASS EQ checks=373552 inspectedSamples=157011364

@@ -1,0 +1,27 @@
+Test project <repo>/origami/build-b01-sanitizers
+      Start  1: origami_state
+ 1/11 Test  #1: origami_state .......................   Passed    0.27 sec
+      Start  2: origami_foundation
+ 2/11 Test  #2: origami_foundation ..................   Passed   17.17 sec
+      Start  3: origami_wavetable_bank_foundation
+ 3/11 Test  #3: origami_wavetable_bank_foundation ...   Passed    0.23 sec
+      Start  4: origami_modulation_core
+ 4/11 Test  #4: origami_modulation_core .............   Passed    2.86 sec
+      Start  5: origami_fx_graph
+ 5/11 Test  #5: origami_fx_graph ....................   Passed    2.38 sec
+      Start  6: origami_spectral_tune
+ 6/11 Test  #6: origami_spectral_tune ...............   Passed    1.65 sec
+      Start  7: origami_spectral_quality
+ 7/11 Test  #7: origami_spectral_quality ............   Passed    3.14 sec
+      Start  8: origami_plugin_ui
+ 8/11 Test  #8: origami_plugin_ui ...................   Passed   49.57 sec
+      Start  9: origami_content
+ 9/11 Test  #9: origami_content .....................   Passed    2.30 sec
+      Start 10: origami_eq_headroom
+10/11 Test #10: origami_eq_headroom .................   Passed    6.81 sec
+      Start 11: origami_dsp_torture
+11/11 Test #11: origami_dsp_torture .................   Passed  154.17 sec
+
+100% tests passed out of 11
+
+Total Test time (real) = 240.57 sec

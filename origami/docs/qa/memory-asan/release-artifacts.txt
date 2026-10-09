@@ -1,0 +1,12 @@
+Final clean Release artifact inspection (ASan runtime investigation).
+AU/MCT Origami.component
+No ASan/UBSan/LSan linkage or undefined instrumentation symbols.
+No probe constructor/main marker strings.
+VST3/MCT Origami.vst3
+No ASan/UBSan/LSan linkage or undefined instrumentation symbols.
+No probe constructor/main marker strings.
+Standalone/MCT Origami.app
+No ASan/UBSan/LSan linkage or undefined instrumentation symbols.
+No probe constructor/main marker strings.
+Release ORIGAMI_SANITIZE=OFF; no probe target in root CMake; no inherited sanitizer/DYLD environment variables.
+Sanitizer/Release build directories and instrumentation guards are separate.
