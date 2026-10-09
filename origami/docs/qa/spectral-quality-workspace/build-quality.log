@@ -1,0 +1,5 @@
+[ 80%] Built target origami_core
+[ 90%] Built target origami_patch
+[100%] Building CXX object CMakeFiles/origami_spectral_quality_tests.dir/tests/SpectralQualityTests.cpp.o
+[100%] Linking CXX executable origami_spectral_quality_tests
+[100%] Built target origami_spectral_quality_tests

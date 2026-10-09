@@ -1,0 +1,7 @@
+[ 10%] Built target OrigamiAssets
+[ 27%] Built target origami_core
+[ 29%] Built target origami_patch
+[ 72%] Built target OrigamiPlugin
+[ 75%] Building CXX object CMakeFiles/origami_plugin_tests.dir/tests/PluginTests.cpp.o
+[ 77%] Linking CXX executable origami_plugin_tests
+[100%] Built target origami_plugin_tests

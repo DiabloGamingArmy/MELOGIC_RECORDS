@@ -43,7 +43,9 @@ private:
     std::vector<float> evidence_,collisionPower_;
     bool primed_=false,telemetryEnabled_=false;
     std::vector<int> previousRegion_;
-    std::vector<float> oldOffset_,oldRotation_,mappingBlend_,oldBlend_;
+    std::vector<float> oldRotation_,mappingBlend_,oldBlend_;
+    std::vector<float> targetMidi_,oldTargetMidi_;
+    std::vector<int> heldNote_,oldHeldNote_;
     float mix_=1.0f,mixTarget_=1.0f,mixCoefficient_=0.0f;
     std::atomic<std::uint64_t> spectrumGuard_{0},sequence_{0};
     std::array<std::atomic<float>,FxSpectrumSnapshot::bins> inputTelemetry_{},outputTelemetry_{};

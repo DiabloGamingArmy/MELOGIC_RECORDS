@@ -581,8 +581,10 @@ public:
     FxSidebar& sidebar() noexcept { return sidebar_; }
     float graphZoom() const noexcept { return view_.zoom(); }
     juce::String inspectorHeadline() const;
-    juce::String parameterTabName() const;
-    void selectParameterTab(int);
+    juce::Viewport& inspectorViewport() noexcept;
+    void refreshInspectorTelemetry();
+    bool canUndo() const noexcept {return document_->canUndo() || !controlUndo_.empty();}
+    bool canRedo() const noexcept {return document_->canRedo() || !controlRedo_.empty();}
     std::size_t modulationRowCount() const;
     std::pair<float,float> meterLevels() const noexcept { return {meterLeft_,meterRight_}; }
     // The IN node meters (displayed L / R) and one telemetry tick (tests).
@@ -711,7 +713,6 @@ public:
     juce::Slider* controlSequenceControl(std::size_t index) noexcept; // N06 SEQUENCER inspector
 
 private:
-    class SelectedPanel;
     class ParametersPanel;
     class ModuleParametersPanel;
     class FxMacrosPanel;
@@ -778,13 +779,12 @@ private:
     std::uint64_t lastRevision_=0;
     float meterLeft_=0.0f,meterRight_=0.0f;
 
-    std::array<juce::TextButton,5> modes_;
-    juce::TextButton undo_{"UNDO"},redo_{"REDO"},clear_{"CLEAR"},templates_{"TEMPLATES"},add_{"+ ADD MODULE"};
+    juce::TextButton routing_;
+    juce::TextButton clear_{"CLEAR"},templates_{"TEMPLATES"},add_{"+ ADD MODULE"};
     juce::TextButton zoomOut_{"-"},zoomReset_{"100%"},zoomIn_{"+"},zoomFit_{"FIT"};
     FxSidebar sidebar_;
     FxCanvas canvas_;
     FxGraphView view_;
-    std::unique_ptr<SelectedPanel> selectedPanel_;
     std::unique_ptr<ParametersPanel> parametersPanel_;
     std::unique_ptr<ModuleParametersPanel> modulePanel_;
     std::unique_ptr<FxMacrosPanel> macrosPanel_;

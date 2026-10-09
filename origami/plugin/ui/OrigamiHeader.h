@@ -21,10 +21,12 @@ public:
     // Navigation tab bounds in header coordinates; -1 when none is under the point.
     int modeAt(juce::Point<int>) const noexcept;
     bool modeEnabled(int mode) const noexcept;
-    // mct-origami-nested-modulation-manual-qa: the "..." utility menu's items
+    // mct-origami-nested-modulation-manual-qa: the consolidated application menu's items
     // and their action (also used by tests). CAPTURE KEYBOARD INPUT is a
     // per-user preference shared by every instance, never patch state.
-    enum UtilityItem { globalFxItem=1, captureKeyboardItem=2, initPresetItem=3 };
+    enum UtilityItem { globalFxItem=1, captureKeyboardItem=2, initPresetItem=3, undoItem=4, redoItem=5, browseItem=6, saveItem=7 };
+    std::function<bool()> canUndo,canRedo;
+    std::function<void()> onUndo,onRedo;
     // mct-origami-content-browser: the preset name opens the PRESETS browser;
     // < > step through the browser's current results; SAVE saves with metadata.
     std::function<void()> onPresetBrowserRequested,onSaveRequested,onInitRequested;
@@ -76,7 +78,15 @@ private:
         bool confirmed_=false,keyboardFocus_=false,keyboardBeforeDrag_=false,restoreKeyboardFocus_=false,dragFocusSuppressed_=false;
         unsigned dragGeneration_=0;
     } panic_;
-    juce::TextButton previous_{"<"},next_{">"},preset_{"Init"},browse_{"BROWSE"},save_{"SAVE"},settings_{"..."};
+    class MenuButton final : public juce::TextButton {
+    public:
+        void paintButton(juce::Graphics& g,bool over,bool down) override {
+            juce::TextButton::paintButton(g,over,down);
+            g.setColour(Palette::text());const auto b=getLocalBounds().toFloat().withSizeKeepingCentre(14,12);
+            for(int i=0;i<3;++i)g.drawHorizontalLine(juce::roundToInt(b.getY()+i*5),b.getX(),b.getRight());
+        }
+    } settings_;
+    juce::TextButton previous_{"<"},next_{">"},preset_{"Init"};
     std::array<juce::TextButton,5> modes_;
     juce::Image logo_;
     juce::Image wordmark_;

@@ -144,6 +144,9 @@ if(ORIGAMI_BUILD_TESTS)
     target_compile_definitions(origami_spectral_tests PRIVATE ORIGAMI_SANITIZED=1)
   endif()
   add_test(NAME origami_spectral_tune COMMAND origami_spectral_tests)
+  add_executable(origami_spectral_quality_tests tests/SpectralQualityTests.cpp)
+  target_link_libraries(origami_spectral_quality_tests PRIVATE origami_patch)
+  add_test(NAME origami_spectral_quality COMMAND origami_spectral_quality_tests)
 
   # mct-origami-nodes-n07-consolidation: deterministic NODES benchmark.
   add_executable(origami_nodes_bench tools/nodes_bench.cpp)

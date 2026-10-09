@@ -1745,9 +1745,7 @@ void fxPageAudit() {
     check(quick!=nullptr,"effect node exposes model-backed quick controls");
     quick->setValue(0.9,juce::sendNotificationSync);
     check(std::abs(*page->graph().findNode(delay)->parameter(1)-0.9f)<1.0e-4f,"quick control writes model parameter");
-    page->selectParameterTab(2);
-    check(page->parameterTabName()=="ADVANCED","parameter tabs switch");
-    page->selectParameterTab(0);
+    check(page->inspectorViewport().getViewedComponent()!=nullptr,"unified parameter viewport exists");
 
     const auto connectionsBefore=page->graph().connections().size();
     check(page->deleteNode(delay),"delete selected node");
@@ -1870,10 +1868,10 @@ void fxWorkspaceP03Audit() {
         if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) page=candidate;
         if(auto* b=dynamic_cast<juce::TextButton*>(&c)) {
             if(b->getButtonText()=="NODES") fxTab=b;
-            if(b->getName()=="Origami utility menu") utility=b;
+            if(b->getName()=="Origami menu") utility=b;
         }
     });
-    check(page && fxTab && utility,"FX page, FX tab and utility menu present");
+    check(page && fxTab && utility,"FX page, FX tab and consolidated menu present");
     check(utility->isEnabled(),"header ... utility menu enabled");
 
     // Build BUS 1 -> DELAY -> MASTER OUT.
@@ -1941,14 +1939,11 @@ void fxWorkspaceP03Audit() {
     check(matrixListsFx,"Matrix destination menus include FX parameters");
     fxTab->onClick();
 
-    // MODULATION tab lists the routes targeting the selected effect.
+    // The unified inspector lists routes targeting the selected effect.
     page->selectNode(delay);
-    page->selectParameterTab(1);
     page->syncFromModel();
-    check(page->modulationRowCount()==2,"MODULATION tab shows ENV 1 and LFO 1 routes");
-    page->selectParameterTab(2);
-    check(page->parameterTabName()=="ADVANCED","ADVANCED tab");
-    page->selectParameterTab(0);
+    check(page->modulationRowCount()==2,"Inline modulation shows ENV 1 and LFO 1 routes");
+    check(page->inspectorViewport().getViewedComponent()!=nullptr,"advanced parameters share the inspector viewport");
 
     // Deleting the node prunes its routes: no dangling destinations.
     check(page->deleteNode(delay),"delete delay");
@@ -2470,7 +2465,7 @@ void nodesN01Audit() {
     check(!oldPanels,"no separate SELECTED EFFECT / EFFECT PARAMETERS panels");
     const auto filter=page->addEffect(fx::FxEffectType::Filter);
     page->selectNode(filter);
-    check(page->inspectorHeadline()=="FILTER" && page->parameterTabName()=="MAIN","MODULE PARAMETERS follows selection");
+    check(page->inspectorHeadline()=="FILTER","MODULE PARAMETERS follows selection");
 
     // New route defaults: ON / UNIPOLAR / no source / no destination / 0%.
     const auto routeById=[&](std::uint32_t id) {
@@ -6622,14 +6617,15 @@ void audioCardLayoutAudit() {
         }
         check(i==count,"all quick controls audited");
         page->selectNode(id);
-        juce::Component* inspector=nullptr;
-        walk(*page,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c))if(k->getName().startsWith("FX inspector P"))inspector=k->getParentComponent();});
-        check(inspector,"all audio types have selected effect inspector");
-        int inspectorCount=0;for(auto* child:inspector->getChildren())inspectorCount+=dynamic_cast<juce::Slider*>(child)!=nullptr;
-        auto body=inspector->getLocalBounds().reduced(12,6).withTrimmedTop(12+26);
-        const auto inspectorLayout=ui::AudioCardLayout::forBody(body,inspectorCount,48,28);
-        check(inspectorLayout.viewport.getHeight()>60,"selected audio inspector viewport enlarged");
-        int ordinal=0;for(auto* child:inspector->getChildren())if(auto* k=dynamic_cast<juce::Slider*>(child))check(k->getBounds()==inspectorLayout.knob(ordinal++,inspectorCount),"selected inspector shared low controls");
+        auto* inspector=page->inspectorViewport().getViewedComponent();
+        check(inspector,"all audio types have unified effect inspector");
+        int inspectorCount=0;
+        walk(*inspector,[&](auto& component){if(auto* k=dynamic_cast<juce::Slider*>(&component)) {
+            ++inspectorCount;auto* parent=k->getParentComponent();
+            check(parent->getLocalBounds().contains(k->getBounds()),"inspector parameter bounds stay in scroll content");
+            check(parent->getComponentAt(k->getBounds().getCentre())==k,"inspector slider center hit targets parameter");
+        }});
+        check(inspectorCount>0,"unified inspector exposes effect parameters");
         if(const char* folder=std::getenv("ORIGAMI_INIT_AUDIO_REPORT")){auto image=inspector->createComponentSnapshot(inspector->getLocalBounds(),true,2.f);juce::FileOutputStream out(juce::File(juce::String(folder)+"/"+d.key+"-inspector.png"));juce::PNGImageFormat{}.writeImageToStream(image,out);}
         for(float scale:{.75f,1.f,1.5f,2.f}) {const auto image=node->createComponentSnapshot(node->getLocalBounds(),true,scale);check(image.isValid(),"audio scale render valid");if(const char* folder=std::getenv("ORIGAMI_INIT_AUDIO_REPORT")){juce::FileOutputStream out(juce::File(juce::String(folder)+"/"+d.key+"-"+juce::String(scale,2)+".png"));juce::PNGImageFormat{}.writeImageToStream(image,out);}}
     }
@@ -6671,6 +6667,241 @@ void spectralTunePluginAudit() {
     std::cout<<"PASS Spectral Tune plugin/UI audit\n";
 }
 
+void workspaceInspectorAudit() {
+    auto owner = std::make_unique<OrigamiAudioProcessor>();
+    auto &p = *owner;
+    p.prepareToPlay(48000, 128);
+    auto editor = std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    editor->setVisible(true);
+    ui::FxPage *page = nullptr;
+    ui::OrigamiHeader *header = nullptr;
+    juce::TextButton *nodes = nullptr;
+    walk(*editor, [&](auto &c) {
+        if (auto *x = dynamic_cast<ui::FxPage *>(&c))
+            page = x;
+        if (auto *x = dynamic_cast<ui::OrigamiHeader *>(&c))
+            header = x;
+        if (auto *b = dynamic_cast<juce::TextButton *>(&c))
+            if (b->getButtonText() == "NODES" && !nodes)
+                nodes = b;
+    });
+    check(page && header && nodes, "workspace components exist");
+    nodes->onClick();
+    const auto button = [&](juce::Component &parent, const juce::String &name) {
+        juce::TextButton *found = nullptr;
+        walk(parent, [&](auto &c) {
+            if (auto *b = dynamic_cast<juce::TextButton *>(&c))
+                if (b->getName() == name)
+                    found = b;
+        });
+        check(found, "workspace named button exists");
+        return found;
+    };
+    auto *menu = button(*header, "Origami menu");
+    check(menu->getButtonText().isEmpty(), "hamburger uses an icon");
+    check(header->getComponentAt(menu->getBounds().getCentre()) == menu, "hamburger hit bounds");
+    walk(*header, [&](auto &c) {
+        if (auto *b = dynamic_cast<juce::TextButton *>(&c))
+            check(b->getButtonText() != "BROWSE" && b->getButtonText() != "SAVE" &&
+                      b->getButtonText() != "...",
+                  "header has one consolidated menu");
+    });
+    const auto item = [&](int id) {
+        for (const auto &i : header->utilityMenuItems())
+            if (i.id == id)
+                return i;
+        throw std::runtime_error("missing application menu item");
+    };
+    check(item(ui::OrigamiHeader::undoItem).enabled == page->canUndo() &&
+              item(ui::OrigamiHeader::redoItem).enabled == page->canRedo(),
+          "menu availability follows Nodes history");
+    check(item(ui::OrigamiHeader::browseItem).enabled && item(ui::OrigamiHeader::saveItem).enabled,
+          "preset commands remain available");
+    // Verify presentation routes to the existing callbacks without opening a modal save dialog.
+    auto browse = header->onPresetBrowserRequested, save = header->onSaveRequested;
+    int browsed = 0, saved = 0;
+    header->onPresetBrowserRequested = [&] { ++browsed; };
+    header->onSaveRequested = [&] { ++saved; };
+    header->chooseUtility(ui::OrigamiHeader::browseItem);
+    header->chooseUtility(ui::OrigamiHeader::saveItem);
+    check(browsed == 1 && saved == 1, "menu invokes existing preset command callbacks");
+    header->onPresetBrowserRequested = browse;
+    header->onSaveRequested = save;
+    const auto capture = [&](juce::Component &c, const juce::String &name, float scale = 1.f) {
+        auto image = c.createComponentSnapshot(c.getLocalBounds(), true, scale);
+        check(image.isValid(), "workspace capture valid");
+        if (const char *folder = std::getenv("ORIGAMI_WORKSPACE_REPORT")) {
+            juce::FileOutputStream out(juce::File(juce::String(folder) + "/" + name + ".png"));
+            out.setPosition(0);
+            out.truncate();
+            juce::PNGImageFormat{}.writeImageToStream(image, out);
+        }
+    };
+    for (auto type : {fx::FxEffectType::SpectralTune, fx::FxEffectType::Drive, fx::FxEffectType::Filter,
+                      fx::FxEffectType::Equalizer, fx::FxEffectType::Compressor, fx::FxEffectType::Flanger,
+                      fx::FxEffectType::Phaser, fx::FxEffectType::Spatial, fx::FxEffectType::Gain}) {
+        page->document().replace(fx::makeDefaultFxGraph());
+        fx::FxNodeId id = 0;
+        page->document().edit([&](fx::FxGraph &g) {
+            id = g.insertEffectBeforeOutput(type);
+            return id != 0;
+        });
+        page->syncFromModel();
+        page->selectNode(id);
+        auto &viewport = page->inspectorViewport();
+        auto *content = viewport.getViewedComponent();
+        check(content, "unified inspector content exists");
+        check(viewport.getViewPositionY() == 0, "new selection starts at top");
+        walk(page->moduleParametersPanel(), [&](auto &c) {
+            if (auto *b = dynamic_cast<juce::TextButton *>(&c))
+                check(b->getButtonText() != "MAIN" && b->getButtonText() != "MODULATION" &&
+                          b->getButtonText() != "ADVANCED",
+                      "no inspector navigation tabs");
+        });
+        juce::Component *visual = nullptr;
+        walk(*content, [&](auto &c) {
+            if (c.getName() == "Inspector visual")
+                visual = &c;
+        });
+        if (type != fx::FxEffectType::Gain && type != fx::FxEffectType::Equalizer)
+            check(visual && visual->isVisible() && visual->getHeight() >= 150 && visual->getWidth() > 600,
+                  "shared visualization enlarges to inspector width");
+        if (type == fx::FxEffectType::Gain)
+            check(!visual->isVisible(), "utility has no invented visualizer");
+        for (auto *c : content->getChildren())
+            if (c->isVisible())
+                check(content->getLocalBounds().contains(c->getBounds()),
+                      "inspector children fit scroll content");
+        for (auto *c : content->getChildren())
+            if (auto *slider = dynamic_cast<juce::Slider *>(c)) {
+                check(content->getComponentAt(slider->getBounds().getCentre()) == slider,
+                      "parameter visual and hit bounds agree");
+                const auto key = slider->getName().fromFirstOccurrenceOf("FX parameter ", false, false);
+                const fx::FxParameterDescriptor *descriptor = nullptr;
+                for (std::size_t i = 0; i < fx::findFxEffect(type)->parameterCount; ++i)
+                    if (key == fx::findFxEffect(type)->parameters[i].key)
+                        descriptor = &fx::findFxEffect(type)->parameters[i];
+                check(descriptor, "generic slider uses canonical descriptor");
+                slider->setValue(.57, juce::sendNotificationSync);
+                check(std::abs(page->graph().findNode(id)->parameter(descriptor->id).value_or(-1) - .57) <
+                          .002,
+                      "unified slider writes canonical graph parameter");
+                juce::MouseWheelDetails wheel{};
+                wheel.deltaY = -.3f;
+                slider->mouseWheelMove(event(*slider), wheel);
+                check(std::abs(slider->getValue() - .57) < .002, "wheel scrolling never changes a parameter");
+            }
+        if(type==fx::FxEffectType::Filter){
+            const auto plot=visual->getLocalBounds().toFloat().reduced(8,7).withTrimmedTop(12);
+            auto down=event(*visual).withNewPosition(juce::Point<float>{plot.getX()+plot.getWidth()*.57f,plot.getCentreY()});
+            visual->mouseDown(down);visual->mouseDrag(down.withNewPosition(juce::Point<float>{plot.getX()+plot.getWidth()*.75f,plot.getCentreY()-plot.getHeight()*.1f}));visual->mouseUp(down);
+            check(std::abs(*page->graph().findNode(id)->parameter(1)-.75f)<.002 && std::abs(*page->graph().findNode(id)->parameter(6)-.67f)<.002,"filter response drag writes cutoff and resonance in one gesture");
+        }
+        if (type == fx::FxEffectType::SpectralTune) {
+            check(button(*content, "Inspector ROOT")->getWidth() > 0 &&
+                      button(*content, "Inspector SCALE")->getWidth() > 0,
+                  "musical selectors have bounds");
+            auto *key = button(*content, "Inspector pitch class C");
+            check(content->getComponentAt(key->getBounds().getCentre()) == key,
+                  "inspector pitch key hit bounds");
+            key->onClick();
+            check(std::round(*page->graph().findNode(id)->parameter(fx::spectral::Mask) * 4095) == 4094,
+                  "inspector key edits canonical pitch mask");
+            for (auto source : {ModSource::Env1, ModSource::Lfo1, ModSource::Random}) {
+                auto rid = p.addUiRoute();
+                check(p.setUiRoute({rid, true, source, fxParameterAddress(mainBusId, id, fx::spectral::Snap),
+                                    .1f, false}),
+                      "inspector modulation fixture");
+            }
+            page->syncFromModel();
+            check(page->modulationRowCount() == 3, "inline inspector preserves three modulation routes");
+            juce::Slider *amount = nullptr;
+            walk(*content, [&](auto &c) {
+                if (auto *s = dynamic_cast<juce::Slider *>(&c))
+                    if (s->getName().startsWith("FX modulation amount"))
+                        amount = s;
+            });
+            check(amount, "inline modulation amount exists");
+            amount->setValue(-.42, juce::sendNotificationSync);
+            bool changed = false;
+            for (const auto &r : p.getUiInstrumentState().modulation.routes)
+                changed |= r.id && std::abs(r.amount + .42) < .002;
+            check(changed, "inline modulation edits shared route");
+            p.setUiFxNodeTelemetryEnabled(mainBusId, true);
+            juce::AudioBuffer<float> audio(2, 128);
+            juce::MidiBuffer midi;
+            for (int i = 0; i < 80; ++i) {
+                audio.clear();
+                midi.clear();
+                if (i == 0)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, juce::uint8(100)), 0);
+                p.processBlock(audio, midi);
+            }
+            page->refreshInspectorTelemetry();
+            check(page->nodeTelemetry(id).hasSpectrum,
+                  "large inspector receives real DSP spectral telemetry");
+            page->setParameter(id, fx::spectral::Low, 0);
+            auto pos = visual->getLocalBounds().toFloat().reduced(8, 7).withTrimmedTop(12);
+            const auto e = event(*visual).withNewPosition(juce::Point<float>{pos.getX(), pos.getCentreY()});
+            visual->mouseDown(e);
+            visual->mouseDrag(
+                e.withNewPosition(juce::Point<float>{pos.getX() + pos.getWidth() * .15f, pos.getCentreY()}));
+            visual->mouseUp(e);
+            check(std::abs(*page->graph().findNode(id)->parameter(fx::spectral::Low) - .15f) < .002,
+                  "spectral boundary drag edits eligibility parameter");
+            viewport.setViewPosition(0, 0);
+            for (auto size :
+                 {juce::Point<int>{1100, 760}, juce::Point<int>{1440, 900}, juce::Point<int>{1920, 1200}}) {
+                editor->setSize(size.x, size.y);
+                editor->resized();
+                check(menu->getParentComponent()->getLocalBounds().contains(menu->getBounds()),
+                      "responsive hamburger fits header");
+                for (float scale : {.75f, 1.f, 1.5f, 2.f})
+                    capture(*editor, "workspace-" + juce::String(size.x) + "-" + juce::String(scale, 2),
+                            scale);
+            }
+        }
+        capture(*content, juce::String(fx::findFxEffect(type)->key) + "-inspector");
+        capture(page->moduleParametersPanel(), juce::String(fx::findFxEffect(type)->key) + "-viewport");
+        const float zoom = page->graphZoom();
+        viewport.setViewPosition(0, content->getHeight());
+        if (content->getHeight() > viewport.getHeight())
+            check(viewport.getViewPositionY() > 0, "inspector scroll reaches lower controls");
+        check(page->graphZoom() == zoom, "inspector scrolling preserves graph zoom");
+        page->selectNode(0);
+        page->selectNode(id);
+        check(viewport.getViewPositionY() == 0, "changed selection resets scroll");
+    }
+    auto &panel = page->moduleParametersPanel();
+    int utilities = 0;
+    for (auto *c : panel.getChildren())
+        if (auto *b = dynamic_cast<juce::TextButton *>(c)) {
+            ++utilities;
+            check(b->getY() == 4 && b->getHeight() == 22 &&
+                      panel.getComponentAt(b->getBounds().getCentre()) == b,
+                  "graph utility hits inside existing inspector header");
+            if (b->getButtonText() == "+") {
+                auto z = page->graphZoom();
+                b->onClick();
+                check(page->graphZoom() > z, "header zoom button operates graph");
+            }
+            if (b->getButtonText() == "FIT" || b->getName() == "NODES AUTO LAYOUT")
+                b->onClick();
+        }
+    check(utilities == 5, "five graph utilities share Module Parameters header");
+    check(page->graphView().getY()==28 && panel.getHeight()==250,"workspace reclaims 16 graph pixels without growing inspector");
+    const auto graphBefore = page->graph();
+    page->setParameter(page->selectedNode(), 1, .33f);
+    check(item(ui::OrigamiHeader::undoItem).enabled, "menu Undo enabled after graph edit");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);
+    check(page->graph() == graphBefore, "menu Undo uses same graph history");
+    check(item(ui::OrigamiHeader::redoItem).enabled, "menu Redo enabled after Undo");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);
+    header->selectMode(0);
+    check(!item(ui::OrigamiHeader::undoItem).enabled && !item(ui::OrigamiHeader::redoItem).enabled,
+          "Nodes history menu disabled outside Nodes");
+}
+
 int main(){juce::ScopedJuceInitialiser_GUI gui;
 // Preferences stay in memory (the user's file is never touched). The
 // shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
@@ -6680,5 +6911,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

@@ -131,6 +131,10 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     globalFx_->onClose=[this]{globalOverlay_.dismiss();};
     header_.onGlobalFxRequested=[this]{openGlobalFx();};
     header_.onPanicRequested=[this]{processor_.requestPanic();};
+    header_.canUndo=[this]{return fxPage_.isVisible() && fxPage_.canUndo();};
+    header_.canRedo=[this]{return fxPage_.isVisible() && fxPage_.canRedo();};
+    header_.onUndo=[this]{if(fxPage_.isVisible())fxPage_.undo();};
+    header_.onRedo=[this]{if(fxPage_.isVisible())fxPage_.redo();};
     // mct-origami-content-browser
     {
         using mct::origami::content::ContentType;

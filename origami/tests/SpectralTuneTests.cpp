@@ -131,7 +131,9 @@ void motionAndBypassTests() {
     for(bool clearMask:{false,true}){SpectralTune f;f.prepare(48000);auto p=parameters();p[12]=1.f/4095;float last=0,maxJump=0;double error=0;for(int block=0;block<400;++block){if(block==150){if(clearMask)p[12]=0;else p[0]=0;}float l[128],r[128];for(int i=0;i<128;++i)l[i]=r[i]=float(.2*std::sin(tau*280*(block*128+i)/48000));setRealtime(true);f.process(l,r,128,p.data());setRealtime(false);for(int i=0;i<128;++i){maxJump=std::max(maxJump,std::abs(l[i]-last));last=l[i];if(block>300)error=std::max(error,std::abs(l[i]-.2*std::sin(tau*280*(block*128+i-2048)/48000)));}}check(maxJump<.03 && error<1.e-6,"warm Snap zero / empty mask transition restores neutral phase without clicks");std::cout<<"neutral transition clearMask="<<clearMask<<" max sample jump="<<maxJump<<" settled error="<<error<<'\n';}
 
     auto x=sine(280,48000);double phase=0;
-    for(std::size_t i=0;i<x.size();++i){const double hz=i<x.size()/2 ? 280 : 340;phase+=tau*hz/48000;x[i]=float(.2*std::sin(phase)+.07*std::sin(phase*3));}
+    for(std::size_t i=0;i<x.size();++i){const double hz=i<x.size()/2 ? 280 : 440;
+        // Cross the C-only lattice boundary: Smooth acts on target movement.
+        phase+=tau*hz/48000;x[i]=float(.2*std::sin(phase)+.07*std::sin(phase*3));}
     auto base=parameters();base[12]=1.f/4095;base[0]=1;base[3]=0;base[4]=0;
     SpectralTune a;a.prepare(48000);auto reference=process(a,x,base,128);
     for(int index:{3,4,5}){auto p=base;p[index]=1;SpectralTune f;f.prepare(48000);auto y=process(f,x,p,128);double difference=0;for(std::size_t i=x.size()/2;i<x.size();++i)difference+=std::pow(y[i]-reference[i],2);check(difference>.001,"Smooth / Response / Formant each have a real, distinct DSP effect");}

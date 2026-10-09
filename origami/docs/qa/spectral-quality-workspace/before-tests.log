@@ -1,0 +1,30 @@
+motion smooth=0 carrier=0.125655 coherence=0.803538
+motion smooth=80 carrier=0.122054 coherence=0.752591
+FAIL: high Smooth preserves low-Smooth stationary-lattice definition on moving source
+motion smooth=500 carrier=0.102984 coherence=0.535427
+FAIL: high Smooth preserves low-Smooth stationary-lattice definition on moving source
+boundary jitter carrier=0.0653043
+FAIL: bounded hysteresis holds a defined note through tiny nearest-target boundary jitter
+shift source=330 shift=7 target=494.441 amplitude=0.149129
+shift source=330 shift=12 target=660 amplitude=0.146171
+shift source=330 shift=19 target=988.883 amplitude=0.144711
+shift source=330 shift=24 target=1320 amplitude=0.139929
+FAIL: in-band upward shift retains carrier within 0.6 dB including destinations above FX HIGH
+shift source=3000 shift=7 target=4494.92 amplitude=0.14074
+shift source=3000 shift=12 target=6000 amplitude=0.149997
+shift source=3000 shift=19 target=8989.84 amplitude=0.136096
+FAIL: in-band upward shift retains carrier within 0.6 dB including destinations above FX HIGH
+shift source=3000 shift=24 target=12000 amplitude=0.149998
+shift source=7500 shift=7 target=11237.3 amplitude=0.135927
+FAIL: in-band upward shift retains carrier within 0.6 dB including destinations above FX HIGH
+shift source=7500 shift=12 target=15000 amplitude=0.15
+shift source=7500 shift=19 target=22474.6 amplitude=2.49118e-06
+FAIL: in-band upward shift retains carrier within 0.6 dB including destinations above FX HIGH
+shift source=11500 shift=7 target=17230.5 amplitude=0.135792
+FAIL: in-band upward shift retains carrier within 0.6 dB including destinations above FX HIGH
+shift source=11500 shift=12 target=23000 amplitude=6.08125e-07
+FAIL: in-band upward shift retains carrier within 0.6 dB including destinations above FX HIGH
+FAIL: above-Nyquist shifted partial is rejected, not retained untuned
+Nyquist rejection RMS=0.106066 original amplitude=0.15
+FAIL: beyond-Nyquist shift does not fold into any audible band
+FAIL: 74 quality checks

@@ -1,0 +1,6 @@
+motion smooth=0 carrier=0.125655 coherence=0.803538
+motion smooth=80 carrier=0.122054 coherence=0.752591
+FAIL: high Smooth preserves low-Smooth stationary-lattice definition on moving source
+motion smooth=500 carrier=0.102984 coherence=0.535427
+FAIL: high Smooth preserves low-Smooth stationary-lattice definition on moving source
+Rendered quality audit fixtures; convergence failures=2
