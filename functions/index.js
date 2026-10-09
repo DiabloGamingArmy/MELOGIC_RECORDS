@@ -386,3 +386,6 @@ exports.emailOnProductSubmitted = emailOnProductSubmitted
 exports.emailOnMusicReleaseSubmitted = emailOnMusicReleaseSubmitted
 exports.emailOnSupportFormCreated = emailOnSupportFormCreated
 exports.emailOnAdminAuditCreated = emailOnAdminAuditCreated
+
+// L01 shared Melogic browser authentication (no licensing enforcement).
+Object.assign(exports, require('./src/desktop/desktopAuth'))

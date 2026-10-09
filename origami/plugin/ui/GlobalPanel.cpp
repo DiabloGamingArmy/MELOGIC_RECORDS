@@ -5,11 +5,12 @@
 namespace mct::origami::ui {
 namespace {
 constexpr std::array<const char*,8> names{{"ENV","LFO","RANDOM","FUNCTION","CHAOS","DRIFT","SEQUENCER","OSC"}};
-struct Regions {juce::Rectangle<int> identity,master,voice,engine,activity,tuning,behavior;};
+struct Regions {juce::Rectangle<int> identity,account,master,voice,engine,activity,tuning,behavior;};
 Regions regions(juce::Rectangle<int> body) {
     auto area=body.reduced(28,20);
     if(area.getWidth()>1320) area=area.withSizeKeepingCentre(1320,area.getHeight());
     Regions r;r.identity=area.removeFromTop(96);area.removeFromTop(18);
+    r.account={r.identity.getX()+350,r.identity.getY(),juce::jmax(220,r.identity.getWidth()-620),96};
     auto upper=area.removeFromTop(252);const int column=(upper.getWidth()-36)/3;
     r.master=upper.removeFromLeft(column);upper.removeFromLeft(18);r.voice=upper.removeFromLeft(column);upper.removeFromLeft(18);r.engine=upper;
     area.removeFromTop(18);r.activity=area.removeFromTop(100);area.removeFromTop(18);
@@ -51,6 +52,12 @@ GlobalPanel::GlobalPanel(Getter getter,Setter setter,GlobalPanelHost host)
     addChildComponent(capture_);
     identity_.setName("Origami build identity");identity_.setText(buildIdentity(),juce::dontSendNotification);
     identity_.setFont(juce::FontOptions(12.f));identity_.setColour(juce::Label::textColourId,Palette::secondary());identity_.setJustificationType(juce::Justification::centredRight);
+    for(auto* c:std::array<juce::Component*,3>{&accountIdentity_,&accountAction_,&accountSecondary_})addAndMakeVisible(c);
+    accountIdentity_.setName("Melogic account identity");accountIdentity_.setFont(juce::FontOptions(12.f));accountIdentity_.setColour(juce::Label::textColourId,Palette::secondary());
+    accountAction_.setName("Melogic account action");accountSecondary_.setName("Melogic account logout or cancel");
+    accountAction_.setColour(juce::TextButton::buttonColourId,juce::Colour(0xff281619));
+    accountAction_.onClick=[this]{const auto s=account_->snapshot();if(s.state==melogic::account::State::SignedIn || s.state==melogic::account::State::OfflineCached)juce::URL("https://melogicrecords.studio/profile").launchInDefaultBrowser();else if(s.storageError)account_->restoreAccess();else account_->signIn();};
+    accountSecondary_.onClick=[this]{if(account_->snapshot().state==melogic::account::State::AwaitingBrowser)account_->cancel();else account_->logout();};
     for(auto* label:{&rate_,&block_,&voices_,&load_}) {
         label->setFont(juce::FontOptions(13.f));label->setColour(juce::Label::textColourId,Palette::text());label->setJustificationType(juce::Justification::centredRight);
     }
@@ -117,11 +124,24 @@ void GlobalPanel::syncFromModel() {
         load_.setText(e.loadAvailable?juce::String(e.audioLoad*100,1)+" %":"Not measured",juce::dontSendNotification);
     }
     capture_.setToggleState(preferences_->captureKeyboardInput(),juce::dontSendNotification);
+    using melogic::account::State;
+    const auto account=account_->snapshot();
+    const bool identified=account.state==State::SignedIn || account.state==State::OfflineCached;
+    accountIdentity_.setText(identified?(account.identity.displayName.isEmpty()?account.identity.email:account.identity.displayName)+"\n"+(account.state==State::OfflineCached?"Offline / cached identity":account.identity.email):account.message,juce::dontSendNotification);
+    accountIdentity_.setTooltip(account.message);
+    accountAction_.setButtonText(identified?"OPEN ACCOUNT":account.storageError?"RETRY ACCOUNT ACCESS":"SIGN IN TO MELOGIC");
+    accountAction_.setEnabled(account.state!=State::AwaitingBrowser && account.state!=State::Restoring && account.state!=State::Refreshing && account.state!=State::SigningOut);
+    accountSecondary_.setButtonText(account.state==State::AwaitingBrowser?"CANCEL":"LOG OUT");
+    accountSecondary_.setEnabled(identified || account.state==State::AwaitingBrowser || account.state==State::Error);
+    if(isShowing() && !settingsOpen_){const auto url=account_->takeBrowserURL();if(url.isNotEmpty() && !juce::URL(url).launchInDefaultBrowser())account_->cancel();}
     repaint();
 }
 void GlobalPanel::showSettings(bool open) {settingsOpen_=open;settings_.setButtonText(open?"BACK TO GLOBAL":"SETTINGS");resized();syncFromModel();}
 void GlobalPanel::resized() {
-    const auto r=regions(contentBounds());identity_.setBounds(r.identity.withTrimmedLeft(r.identity.getWidth()-juce::jmin(450,r.identity.getWidth()/2)));
+    const auto r=regions(contentBounds());identity_.setBounds(r.identity.withTrimmedLeft(r.identity.getWidth()-250));
+    accountIdentity_.setBounds(r.account.reduced(12,0).withY(r.account.getY()+25).withHeight(34));
+    auto accountButtons=r.account.reduced(12,0).withY(r.account.getY()+63).withHeight(24);
+    accountAction_.setBounds(accountButtons.removeFromLeft(juce::jmin(180,accountButtons.getWidth()-80)));accountButtons.removeFromLeft(8);accountSecondary_.setBounds(accountButtons.removeFromLeft(72));
     for(auto* c:std::array<juce::Component*,10>{{&master_,&voiceMode_,&priority_,&legato_,&glide_,&bendUp_,&bendDown_,&rate_,&block_,&voices_}})c->setVisible(!settingsOpen_);
     load_.setVisible(!settingsOpen_);for(auto& b:toggles_)b.setVisible(!settingsOpen_);capture_.setVisible(settingsOpen_);
     if(settingsOpen_) {
@@ -142,6 +162,7 @@ void GlobalPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     if(wordmark_.isValid())g.drawImageWithin(wordmark_,r.identity.getX(),r.identity.getY(),330,75,juce::RectanglePlacement::xLeft | juce::RectanglePlacement::yMid);
     text(g,"SYNTHESIS, UNFOLDED.",r.identity.withTrimmedTop(80).withWidth(330),Type::label,Palette::muted());
     g.setColour(Palette::borderStrong());g.drawHorizontalLine(r.identity.getBottom()+7,float(r.identity.getX()),float(r.identity.getRight()));
+    heading(g,r.account,"ACCOUNT");
     if(settingsOpen_) {
         auto a=r.master.withWidth(r.behavior.getRight()-r.master.getX());
         text(g,"SETTINGS / APPLICATION",a.reduced(16,10).removeFromTop(24),14.f,Palette::text());

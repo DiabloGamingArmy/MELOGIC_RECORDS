@@ -43,7 +43,9 @@
 #include <cmath>
 using namespace mct::origami;
 namespace {
-std::atomic<bool> pluginGuardAllocations{false};
+// The guard measures the calling audio-test thread. Account/background workers
+// may allocate; those allocations must not masquerade as callback work.
+thread_local std::atomic<bool> pluginGuardAllocations{false};
 std::atomic<unsigned> pluginAllocations{0},pluginFrees{0};
 }
 #ifndef ORIGAMI_SANITIZED
@@ -6767,6 +6769,41 @@ void finalOutputAudit() {
     trim->setUiFinalOutput(0);for(int i=0;i<10;++i){b.clear();trim->processBlock(b,mb);}check(b.getMagnitude(0,b.getNumSamples())==0,"processor final mute produces true silence");
 }
 
+void accountPatchBoundaryAudit() {
+    using namespace melogic::account;
+    class FixtureBackend final : public Backend {
+    public:
+        Request begin(juce::int64 now) override {const auto id=juce::String::repeatedString("c",64);return {id,juce::String::repeatedString("d",64),"https://melogicrecords.studio/auth/desktop?request="+id,now+300000};}
+        Session fixture(juce::int64 now){Session s;s.identity={"account-boundary-fixture","Boundary Fixture","boundary@example.invalid",{}};s.refreshToken="boundary-fixture-secret-not-real";s.verified=true;s.validatedAt=now;s.refreshAfter=now+3000000;return s;}
+        Poll poll(const Request& r,juce::int64 now) override{return {Poll::Approved,r.id,fixture(now)};}
+        Session refresh(const Session&,juce::int64 now) override{return fixture(now);}
+    };
+    Service::useInMemoryForTesting(std::make_unique<FixtureBackend>());auto account=Service::shared();
+    const auto wait=[&](State target){const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(6);while(account->snapshot().state!=target && std::chrono::steady_clock::now()<end)std::this_thread::sleep_for(std::chrono::milliseconds(10));check(account->snapshot().state==target,"asynchronous account fixture reaches state");};
+    auto processor=std::make_unique<OrigamiAudioProcessor>();auto& p=*processor;p.prepareToPlay(48000,128);
+    const auto state=[&]{juce::MemoryBlock b;p.getStateInformation(b);return b;};p.clearUiHistory();const auto before=state();
+    account->signIn();wait(State::SignedIn);check(state()==before && p.uiHistorySize()==0,"sign-in changes neither serialized patch nor history");
+    const auto uid=account->snapshot().identity.uid;
+    p.setUiParameter(ParameterId::Sustain,.27f);check(p.undoUi() && p.redoUi() && account->snapshot().identity.uid==uid,"Undo/Redo does not replay account identity");
+    check(p.loadUiPresetState(before,"account-boundary-preset","Account boundary fixture") && account->snapshot().identity.uid==uid,"preset load leaves machine account unchanged");
+    p.setStateInformation(before.getData(),int(before.getSize()));check(account->snapshot().identity.uid==uid,"DAW project restore leaves machine account unchanged");
+    const auto bytes=state();const auto serialized=juce::String::fromUTF8(static_cast<const char*>(bytes.getData()),int(bytes.getSize()));
+    check(bytes==before && !serialized.contains(uid) && !serialized.contains("boundary@example.invalid") && !serialized.contains("boundary-fixture-secret-not-real"),"complete state including Nodes/Matrix excludes identity and token");
+    juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;audio.clear();p.processBlock(audio,midi);
+    pluginAllocations=0;pluginFrees=0;pluginGuardAllocations=true;p.processBlock(audio,midi);pluginGuardAllocations=false;
+    check(pluginAllocations==0 && pluginFrees==0,"callback has zero allocations/frees with authenticated worker alive");
+    const auto saved=state();const auto entries=p.uiHistorySize();account->logout();wait(State::SignedOut);check(state()==saved && p.uiHistorySize()==entries,"logout leaves synth state/history intact");
+    Service::useInMemoryForTesting();
+#ifndef ORIGAMI_SANITIZED
+    std::atomic<bool> start{false},done{false};std::thread background([&]{while(!start.load())std::this_thread::yield();void* value=::operator new(17);::operator delete(value);done=true;});
+    pluginAllocations=0;pluginFrees=0;pluginGuardAllocations=true;start=true;while(!done.load())std::this_thread::yield();pluginGuardAllocations=false;background.join();
+    check(pluginAllocations==0 && pluginFrees==0,"allocation guard excludes other threads");
+    pluginGuardAllocations=true;void* value=::operator new(19);::operator delete(value);pluginGuardAllocations=false;
+    check(pluginAllocations==1 && pluginFrees==1,"allocation guard still detects calling-thread allocations and frees");
+#endif
+    std::cout<<"PASS L01 account/patch boundary audit\n";
+}
+
 void documentHistoryAudit() {
     auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;
     p.prepareToPlay(48000,128);
@@ -7358,10 +7395,11 @@ int main(){juce::ScopedJuceInitialiser_GUI gui;
 // Preferences stay in memory (the user's file is never touched). The
 // shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
 ui::UserPreferences::useVolatileStorageForTesting();
+melogic::account::Service::useInMemoryForTesting();
 // The content library lives in a temporary folder (never the user's library).
 const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("origami-plugin-tests-"+juce::String(juce::Time::currentTimeMillis()));
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{globalPageAudit();if(std::getenv("ORIGAMI_GLOBAL_ONLY")){std::cout<<"PASS focused Global: "<<checks<<" checks\n";return 0;}unisonPluginAudit();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison plugin: "<<checks<<" checks\n";return 0;}finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{accountPatchBoundaryAudit();globalPageAudit();if(std::getenv("ORIGAMI_GLOBAL_ONLY")){std::cout<<"PASS focused Global: "<<checks<<" checks\n";return 0;}unisonPluginAudit();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison plugin: "<<checks<<" checks\n";return 0;}finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

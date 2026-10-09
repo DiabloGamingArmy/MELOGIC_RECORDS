@@ -1,7 +1,8 @@
+import publicFirebaseConfig from '../../config/firebase-client.json'
 import { initializeApp, getApps } from 'firebase/app'
 import { initAppCheck } from './appCheck.js'
 
-const PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'melogic-records'
+const PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID || publicFirebaseConfig.projectId
 const APP_NAME = 'melogic-records-web'
 
 function apiKeyHint(value) {
@@ -11,16 +12,7 @@ function apiKeyHint(value) {
   return `${key.slice(0, 6)}...${key.slice(-4)}`
 }
 
-const fallbackFirebaseConfig = {
-  apiKey: 'AIzaSyAckD68tYqbvoZqdVYLUA1k6Nw2pp6UpVU',
-  authDomain: 'melogic-records.firebaseapp.com',
-  databaseURL: 'https://melogic-records-default-rtdb.firebaseio.com',
-  projectId: PROJECT_ID,
-  storageBucket: 'melogic-records.firebasestorage.app',
-  messagingSenderId: '799449606868',
-  appId: '1:799449606868:web:67ca014dc47b9cb0146941',
-  measurementId: 'G-60NKMRCX5W'
-}
+const fallbackFirebaseConfig = publicFirebaseConfig
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || fallbackFirebaseConfig.apiKey,

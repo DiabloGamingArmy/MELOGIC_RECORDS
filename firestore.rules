@@ -1496,11 +1496,11 @@ service cloud.firestore {
 
   allow list: if canReadProductResource(productId);
 
-  allow create: if productCreateIsAllowed(productId);
+  allow create: if productId != 'origami' && productCreateIsAllowed(productId);
 
-  allow update: if productUpdateIsAllowed();
+  allow update: if productId != 'origami' && productUpdateIsAllowed();
 
-  allow delete: if signedIn()
+  allow delete: if productId != 'origami' && signedIn()
     && resource.data.artistId == request.auth.uid
     && resource.data.status != 'published';
 
@@ -2641,6 +2641,15 @@ service cloud.firestore {
 
     match /stripeConnectAccounts/{uid} {
       allow read, write: if false;
+    }
+
+    // L01: only trusted backend operations may manage auth grants/ownership.
+    match /desktopAuthRequests/{id} { allow read, write: if false; }
+    match /desktopAuthRateLimits/{id} { allow read, write: if false; }
+    match /licenseKeys/{digest} { allow read, write: if false; }
+    match /activations/{id} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
     }
 
     match /{document=**} {

@@ -1,0 +1,4 @@
+#pragma once
+// Public Firebase client identifiers; no Admin SDK or signing credentials.
+#define MELOGIC_FIREBASE_PROJECT "@MELOGIC_FIREBASE_PROJECT@"
+#define MELOGIC_FIREBASE_API_KEY "@MELOGIC_FIREBASE_API_KEY@"

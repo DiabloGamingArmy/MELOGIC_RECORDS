@@ -5,6 +5,7 @@
 #include "../../core/InstrumentState.h"
 #include <array>
 #include <functional>
+#include <melogic/account/AccountService.h>
 
 namespace mct::origami::ui {
 struct GlobalEngineInfo {
@@ -53,6 +54,9 @@ private:
     juce::Slider glide_,bendUp_,bendDown_;
     juce::Label identity_,rate_,block_,voices_,load_;
     juce::Image wordmark_;
+    std::shared_ptr<melogic::account::Service> account_=melogic::account::Service::shared();
+    juce::Label accountIdentity_;
+    juce::TextButton accountAction_{"SIGN IN TO MELOGIC"},accountSecondary_{"LOG OUT"};
     GlobalEngineInfo engineInfo_{};
     juce::SharedResourcePointer<UserPreferences> preferences_;
     bool syncing_=false,settingsOpen_=false;

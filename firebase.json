@@ -711,6 +711,10 @@
         "destination": "/cart.html"
       },
       {
+        "source": "/auth/desktop",
+        "destination": "/desktop-auth.html"
+      },
+      {
         "source": "/auth",
         "destination": "/auth.html"
       },

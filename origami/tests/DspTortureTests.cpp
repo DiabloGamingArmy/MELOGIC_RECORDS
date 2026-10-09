@@ -1,3 +1,4 @@
+#include <melogic/account/AccountService.h>
 // B01: deterministic adversarial tests of production DSP and host boundaries.
 // No timing-based correctness gates, no test-only reductions of requested load.
 #include "plugin/PluginProcessor.h"
@@ -278,7 +279,7 @@ void longRender(){
     p.requestPanic();midi.clear();hostBlock(p,audio,midi,stats);for(int b=0;b<256;++b)hostBlock(p,audio,midi,stats);require(audio.getMagnitude(0,2048)==0 && p.getUiRenderBudgetSnapshot().load.activeVoices==0,"long render ends silent");std::cout<<"  five minutes / "<<total<<" frames; peak="<<stats.peak<<" rms="<<stats.rms()<<" resident warm/end bytes="<<warmResident<<"/"<<residentBytes()<<'\n';
 }
 }
-int main(int argc,char** argv){juce::ScopedJuceInitialiser_GUI gui;ui::UserPreferences::useVolatileStorageForTesting();probe::Install install;
+int main(int argc,char** argv){melogic::account::Service::useInMemoryForTesting();juce::ScopedJuceInitialiser_GUI gui;ui::UserPreferences::useVolatileStorageForTesting();probe::Install install;
 #if defined(__APPLE__) && !defined(ORIGAMI_SANITIZED)
     std::cout<<"libmalloc probe: "<<(probe::slot?"available":"unavailable (C++ only)")<<'\n';
     if(probe::slot){void* p;{probe::Guard g;auto* volatile allocate=&std::malloc;p=allocate(131073);}const bool observed=probe::allocations>0;std::free(p);if(!observed){std::cerr<<"FAIL allocation probe self-test\n";return 1;}}
