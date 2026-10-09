@@ -142,6 +142,12 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
 }
 void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& button,bool,bool) {
     auto bounds=button.getLocalBounds().reduced(3);
+    if(button.getProperties().contains("mct.topFont")) {
+        g.setColour(button.isEnabled()?Palette::text():Palette::muted());
+        g.setFont(juce::FontOptions(float(button.getProperties()["mct.topFont"])));
+        g.drawText(button.getButtonText(),bounds,juce::Justification::centred,true);
+        return;
+    }
 
     if(button.getName().startsWith("MOD SOURCE TAB")) {
         auto title=button.getLocalBounds().removeFromTop(17).reduced(4,1);

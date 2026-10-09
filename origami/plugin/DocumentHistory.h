@@ -2,6 +2,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mct::origami {
@@ -38,6 +39,10 @@ public:
     }
     bool canUndo() const {return index_>0 && depth_==0;}
     bool canRedo() const {return index_<entries_.size() && depth_==0;}
+    std::string_view nextName(bool redo) const {
+        if(redo ? index_>=entries_.size() : index_==0)return {};
+        return entries_[redo ? index_ : index_-1].name;
+    }
     bool undo() {return apply(false);}
     bool redo() {return apply(true);}
     bool replaying() const {return replaying_;}

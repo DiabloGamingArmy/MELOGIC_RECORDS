@@ -6,6 +6,52 @@
 #include <BinaryData.h>
 #include "NativeChoiceMenu.h"
 namespace mct::origami::ui {
+MasterOutputControl::MasterOutputControl() {
+    knob_.setName("MASTER OUTPUT");
+    knob_.setTooltip("Final Master Output gain (dB). Host automation only; no internal modulation.");
+    knob_.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    knob_.setScrollWheelEnabled(false);
+    knob_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+    knob_.setRotaryParameters(juce::MathConstants<float>::pi*1.2f,juce::MathConstants<float>::pi*2.8f,true);
+    knob_.setNormalisableRange(juce::NormalisableRange<double>{FinalOutputGain::floorDb,FinalOutputGain::maxDb,
+        [](double,double,double p){return double(FinalOutputGain::db(float(p)));},
+        [](double,double,double d){return double(FinalOutputGain::position(float(d)));}});
+    knob_.textFromValueFunction=[](double d){return FinalOutputGain::text(FinalOutputGain::position(float(d)));};
+    knob_.valueFromTextFunction=[](const juce::String& t){return double(FinalOutputGain::db(FinalOutputGain::fromText(t)));};
+    knob_.getProperties().set("mct.origami.knobDefault",0.0);
+    knob_.setValue(0,juce::dontSendNotification);
+    addAndMakeVisible(knob_);
+}
+void MasterOutputControl::sync(float normalized,FinalOutputMeters meters) {
+    if(!knob_.isMouseButtonDown())knob_.setValue(FinalOutputGain::db(normalized),juce::dontSendNotification);
+    meters_=meters;repaint();
+}
+void MasterOutputControl::resized() {
+    const float scale=float(getWidth())/112.f;
+    knob_.setBounds(juce::roundToInt(14.f*scale),13,juce::roundToInt(36.f*scale),36);
+}
+void MasterOutputControl::paint(juce::Graphics& g) {
+    const float scale=float(getWidth())/112.f;
+    const int labelWidth=juce::roundToInt(66.f*scale);
+    text(g,"MASTER",{0,0,labelWidth,12},10.5f,Palette::secondary(),juce::Justification::centred);
+    text(g,FinalOutputGain::text(FinalOutputGain::position(float(knob_.getValue()))),{0,49,labelWidth,14},11.f,Palette::text(),juce::Justification::centred);
+    for(unsigned c=0;c<2;++c) {
+        const float x=(77.f+17.f*float(c))*scale,width=7.f*scale,top=14.f,height=44.f;
+        text(g,c==0?"L":"R",{int(x-3),0,int(width+6),12},10.f,Palette::muted(),juce::Justification::centred);
+        const auto level=[](float v){return v>0.f ? std::clamp((20.f*std::log10(v)+60.f)/60.f,0.f,1.f) : 0.f;};
+        const float lit=level(meters_.level[c]);
+        for(int segment=0;segment<15;++segment) {
+            const float threshold=float(segment+1)/15.f;
+            const auto colour=segment<10 ? juce::Colour(0xff649b72) : segment<13 ? juce::Colour(0xffb7a25d) : juce::Colour(0xffb8564e);
+            g.setColour(colour.withAlpha(lit>=threshold ? .95f : .12f));
+            g.fillRect(x,top+height-(segment+1)*height/15.f,width,height/15.f-1.f);
+        }
+        if(meters_.hold[c]>0.f) {
+            g.setColour(meters_.hold[c]>=1.f ? juce::Colour(0xffb8564e) : Palette::secondary());
+            g.fillRect(x,top+height*(1.f-level(meters_.hold[c])),width,1.f);
+        }
+    }
+}
 OrigamiHeader::OrigamiHeader() {
     // V34.5: one authoritative, precomposed MCT Origami header asset.
     // BinaryData keeps AU/VST3/Standalone independent of runtime disk paths.
@@ -13,6 +59,7 @@ OrigamiHeader::OrigamiHeader() {
                                          BinaryData::oragami_header_pngSize);
     wordmark_={};
     addAndMakeVisible(panic_);
+    addAndMakeVisible(master_);
     panic_.onClick=[this] { if(onPanicRequested) onPanicRequested(); panic_.confirm(); };
     for(auto* button:std::array<juce::Button*,6>{&previous_,&next_,&preset_,&undo_,&redo_,&settings_}) addAndMakeVisible(button);
     // mct-origami-content-browser: the preset controls are live.
@@ -87,7 +134,8 @@ bool OrigamiHeader::modeEnabled(int mode) const noexcept {
 void OrigamiHeader::paint(juce::Graphics& g) {
     // Supplied artwork is 800x182. Display the complete composition without
     // cropping or stretching inside the existing 72px header.
-    const juce::Rectangle<int> brandBounds{10,4,286,64};
+    const float compact=std::clamp(float(getWidth())/1440.f,2.f/3.f,1.f);
+    const juce::Rectangle<int> brandBounds{juce::roundToInt(10*compact),4,juce::roundToInt(286*compact),64};
     if(logo_.isValid()) {
         g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
         g.drawImageWithin(logo_,brandBounds.getX(),brandBounds.getY(),
@@ -100,25 +148,27 @@ void OrigamiHeader::paint(juce::Graphics& g) {
     g.drawHorizontalLine(getHeight()-1,0.f,float(getWidth()));
 }
 void OrigamiHeader::resized() {
-    // The editor scales a 1440px design canvas; the same proportional groups
-    // also keep a directly resized header valid at its supported minimum width.
-    const float scale=juce::jmin(1.f,float(getWidth())/960.f);
-    const int brand=juce::roundToInt(324.f*scale),cell=juce::roundToInt(34.f*scale);
-    auto area=getLocalBounds().withTrimmedLeft(brand).reduced(0,10);
-    settings_.setBounds(area.removeFromRight(cell).reduced(2,6));
-    area.removeFromRight(6);
-    redo_.setBounds(area.removeFromRight(cell).reduced(1,6));
-    undo_.setBounds(area.removeFromRight(cell).reduced(1,6));
-    area.removeFromRight(10);
-    auto navigation=area.removeFromRight(juce::roundToInt(300.f*scale));
-    for(auto& mode:modes_)mode.setBounds(navigation.removeFromLeft(juce::roundToInt(60.f*scale)).reduced(1,6));
-    area.removeFromRight(14);
-    // Cap the selector instead of absorbing all recovered space. The remainder
-    // is intentional breathing room between preset and page navigation.
-    auto presetGroup=area.removeFromLeft(juce::jmin(area.getWidth(),360));
-    previous_.setBounds(presetGroup.removeFromLeft(27).reduced(0,6));
-    next_.setBounds(presetGroup.removeFromRight(27).reduced(0,6));
-    preset_.setBounds(presetGroup.reduced(3,6));
-    panic_.setBounds(10,4,286,64);
+    // Left-to-right functional flow. The unused remainder flexes before the
+    // permanent output group; design-canvas scaling preserves these ratios.
+    const float compact=std::clamp(float(getWidth())/1440.f,2.f/3.f,1.f);
+    const auto size=[compact](float width){return juce::roundToInt(width*compact);};
+    auto area=getLocalBounds().withTrimmedLeft(size(324));
+    settings_.setBounds(area.removeFromRight(size(34)).reduced(2,16));
+    area.removeFromRight(size(8));
+    master_.setBounds(area.removeFromRight(size(112)).reduced(0,4));
+    auto presetGroup=area.removeFromLeft(size(414)).reduced(0,16);
+    previous_.setBounds(presetGroup.removeFromLeft(size(27)));
+    next_.setBounds(presetGroup.removeFromRight(size(27)));
+    preset_.setBounds(presetGroup.reduced(3,0));
+    preset_.getProperties().set("mct.topFont",16.f*compact);
+    area.removeFromLeft(size(12));
+    for(auto& mode:modes_) {
+        mode.setBounds(area.removeFromLeft(size(70)).reduced(1,16));
+        mode.getProperties().set("mct.topFont",15.f*compact);
+    }
+    area.removeFromLeft(size(12));
+    undo_.setBounds(area.removeFromLeft(size(34)).reduced(1,16));
+    redo_.setBounds(area.removeFromLeft(size(34)).reduced(1,16));
+    panic_.setBounds(size(10),4,size(286),64);
 }
 }

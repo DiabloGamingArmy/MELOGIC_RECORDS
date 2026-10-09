@@ -2036,6 +2036,7 @@ private:
         // other table source (OrigamiAudioProcessor::compileWavetable).
         mct::origami::dsp::Wavetable compiledWavetable() const;
 
+        std::uint64_t authoringRevision() const {return authoringRevision_;}
         bool canUndoAuthoring() const {return historyIndex_>0;}
         bool canRedoAuthoring() const {return historyIndex_<history_.size();}
         void undoAuthoring(){undo();}
@@ -2421,7 +2422,7 @@ private:
             }
             refreshHistoryButtons();
         }
-        void refreshHistoryButtons() { header_.setHistoryAvailable(historyIndex_>0,historyIndex_<history_.size()); }
+        void refreshHistoryButtons() { ++authoringRevision_;header_.setHistoryAvailable(historyIndex_>0,historyIndex_<history_.size()); }
         mct::origami::ui::WavetableDocument document_;
         GridSettings gridSettings_;
         EditorHeader header_;
@@ -2447,6 +2448,7 @@ private:
         std::vector<HistoryEntry> history_;
         std::optional<mct::origami::ui::WavetableFrame> clipboard_;
         std::unique_ptr<juce::FileChooser> frameFileChooser_;
+        std::uint64_t authoringRevision_=0;
         std::size_t historyIndex_=0;
         std::uint64_t generationSeed_=0;
     };
@@ -2494,6 +2496,8 @@ private:
     bool wavetableEditorSelected_=false;
     unsigned wavetableEditorOscillatorId_=0;
     WavetableEditorSurface wavetableEditor_;
+    bool preferFinalOutputHistory(bool redo) const;
+    std::uint64_t outputHistoryDraftRevision_=0;
     bool historyMouseGesture_=false;
     OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;

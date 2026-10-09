@@ -20,6 +20,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "DocumentHistory.h"
+#include "FinalOutput.h"
 #include <functional>
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
@@ -83,6 +84,15 @@ public:
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
+
+    // No ParameterId/ModAddress: host automation only, never internal modulation.
+    float getUiFinalOutput();
+    bool setUiFinalOutput(float normalized);
+    void beginFinalOutputGesture();
+    void endFinalOutputGesture();
+    bool nextHistoryIsFinalOutput(bool redo) const;
+    juce::AudioParameterFloat* finalOutputParameter() const noexcept {return finalOutputParameter_;}
+    mct::origami::FinalOutputMeters finalOutputMeters() const noexcept {return finalOutputStage_.meters();}
 
     // One user document history; host automation/restores and live MIDI are excluded.
     void beginUiTransaction(const juce::String& name="Edit");
@@ -387,6 +397,7 @@ private:
     juce::MemoryBlock initState_;
     struct HistorySnapshot {
         std::array<std::uint64_t,mct::origami::maxMacros> automationRevision{};
+        std::uint64_t outputAutomationRevision=0;
         juce::MemoryBlock state; // canonical state with content payload factored out
         UiPresetIdentity preset;
         std::map<mct::origami::OscillatorModuleId,UiWavetableSource> sources;
@@ -403,6 +414,10 @@ private:
     bool restoreHistory(const HistorySnapshot&);
     void writeStateInformation(juce::MemoryBlock&,bool includeWavetables);
 
+    juce::AudioParameterFloat* finalOutputParameter_=nullptr;
+    mct::origami::FinalOutputStage finalOutputStage_;
+    float uiFinalOutput_=mct::origami::FinalOutputGain::unity; // stateLock_
+    std::uint64_t outputAutomationRevision_=0; // stateLock_
     bool restoreState(const void*,int);
     std::vector<std::uint8_t> encodeContentTrailer(bool includeWavetables=true) const;
     static std::vector<std::uint8_t> encodeHistoryContent(const UiPresetIdentity&,const std::map<mct::origami::OscillatorModuleId,UiWavetableSource>&);

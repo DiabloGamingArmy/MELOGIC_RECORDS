@@ -4,7 +4,19 @@
 #include "OrigamiIcon.h"
 #include "NativeChoiceMenu.h"
 #include "UserPreferences.h"
+#include "../FinalOutput.h"
 namespace mct::origami::ui {
+class MasterOutputControl final : public juce::Component {
+public:
+    MasterOutputControl();
+    juce::Slider& knob() noexcept {return knob_;}
+    void sync(float normalized,FinalOutputMeters meters);
+    void paint(juce::Graphics&) override;
+    void resized() override;
+private:
+    juce::Slider knob_;
+    FinalOutputMeters meters_{};
+};
 class OrigamiHeader final : public juce::Component {
 public:
     OrigamiHeader();
@@ -33,6 +45,8 @@ public:
     std::function<void()> onPresetBrowserRequested,onSaveRequested,onInitRequested;
     std::function<void(int)> onPresetStep;
     void refreshHistoryState();
+    juce::Slider& masterKnob() noexcept {return master_.knob();}
+    void syncMaster(float normalized,FinalOutputMeters meters) {master_.sync(normalized,meters);}
     void setPresetName(const juce::String&);
     juce::String presetName() const { return preset_.getButtonText(); }
     std::vector<NativeChoiceItem> utilityMenuItems() const;
@@ -90,6 +104,7 @@ private:
     } settings_;
     IconButton previous_{"PRESET PREVIOUS",IconId::PresetPrevious},next_{"PRESET NEXT",IconId::PresetNext};
     IconButton undo_{"Undo",IconId::Undo},redo_{"Redo",IconId::Redo};
+    MasterOutputControl master_;
     juce::TextButton preset_{"Init"};
     std::array<juce::TextButton,5> modes_;
     juce::Image logo_;

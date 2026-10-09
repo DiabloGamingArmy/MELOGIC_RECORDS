@@ -4743,11 +4743,11 @@ void synthDynamicMacrosAudit() {
     // mct-origami-nested-modulation-manual-qa: the DAW sees one stable,
     // immutable parameter per macro slot (macro.1 .. macro.16).
     {
-        bool ids=p.getParameters().size()==int(maxMacros);
-        for(int i=0;ids && i<p.getParameters().size();++i)
+        bool ids=p.getParameters().size()==int(maxMacros)+1;
+        for(int i=0;ids && i<int(maxMacros);++i)
             if(auto* withId=dynamic_cast<juce::AudioProcessorParameterWithID*>(p.getParameters()[i])) ids=withId->getParameterID()=="macro."+juce::String(i+1);
             else ids=false;
-        check(ids,"16 host macro parameters with immutable IDs macro.1 .. macro.16");
+        check(ids && p.finalOutputParameter()->getParameterID()=="output.master","stable 16 macro IDs plus independent final output host parameter");
     }
     const auto a5=panel->addMacro();
     check(a5==5 && macroActive(mod(),5) && panel->cardCount()==5,"add MACRO 5");
@@ -6670,6 +6670,70 @@ void spectralTunePluginAudit() {
     std::cout<<"PASS Spectral Tune plugin/UI audit\n";
 }
 
+void finalOutputAudit() {
+    using G=FinalOutputGain;
+    check(G::linear(0)==0.f && std::abs(G::db(.5f)+12.f)<1e-6f && G::db(1)==6.f,"Master endpoint and midpoint mapping");
+    check(G::linear(G::unity)==1.f && std::abs(G::linear(1)-std::pow(10.f,.3f))<1e-6f,"unity is bit-exact, maximum is +6 dB");
+    float previous=0;
+    for(int i=0;i<=1000;++i){const float p=float(i)/1000.f;check(std::isfinite(G::linear(p)) && G::linear(p)>=previous,"gain mapping is finite and monotonic");previous=G::linear(p);check(std::abs(G::position(G::db(p))-p)<1e-6f,"mapping round trip");}
+    check(G::text(0).contains("dB") && !G::text(.5f).contains("%") && G::text(.5f)=="-12.0 dB" && G::text(1)=="+6.0 dB","readout uses signed dB and silence");
+    FinalOutputStage stage;std::array<float,128> l{},r{};
+    stage.prepare(48000,.5f);l.fill(.8f);r.fill(.2f);stage.process(l.data(),r.data(),128,.5f);
+    check(std::abs(l[20]-.8f*G::linear(.5f))<1e-7f && std::abs(r[20]-.2f*G::linear(.5f))<1e-7f,"one common final gain for L/R");
+    auto meter=stage.meters();check(std::abs(meter.level[0]-l[20])<1e-7f && std::abs(meter.level[1]-r[20])<1e-7f,"independent meter tap is post gain");
+    stage.prepare(48000,G::unity);l.fill(1);r.fill(.5f);stage.process(l.data(),r.data(),128,0);
+    check(l[0]<1 && l[0]>.99f && l[127]>0 && l[127]<l[0],"mute ramp begins smoothly, rather than cutting");
+    for(int block=0;block<8;++block){l.fill(1);r.fill(.5f);stage.process(l.data(),r.data(),128,0);}
+    check(l[127]==0 && r[127]==0,"mute reaches true zero after 20 ms");
+    stage.prepare(48000,0);l.fill(1);r.fill(1);stage.process(l.data(),r.data(),128,0);
+    check(stage.meters().level[0]==0 && stage.meters().level[1]==0,"silence meter reflects final gain");
+    stage.prepare(48000,G::unity);l.fill(1);r.fill(0);stage.process(l.data(),r.data(),128,G::unity);
+    l.fill(0);stage.process(l.data(),r.data(),128,G::unity);meter=stage.meters();
+    check(meter.level[0]<1 && meter.level[0]>.98f && meter.level[1]==0 && meter.hold[0]==1,"responsive peak, controlled release and independent hold");
+    for(int i=0;i<210;++i)stage.process(l.data(),r.data(),128,G::unity);
+    check(stage.meters().hold[0]<1 && stage.meters().level[0]<.3f,"hold expires after half a second and then releases");
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,128);p.clearUiHistory();
+    check(p.finalOutputParameter()->getParameterID()=="output.master" && std::abs(static_cast<juce::AudioProcessorParameter*>(p.finalOutputParameter())->getValueForText("-12 dB")-.5f)<1e-6f,"host automation is normalized but labelled in dB");
+    const auto initial=p.getUiFinalOutput();p.beginFinalOutputGesture();
+    for(int i=1;i<=100;++i)check(p.setUiFinalOutput(float(i)/200.f),"master continuous edit");p.endFinalOutputGesture();
+    check(p.uiHistorySize()==1 && p.undoUi() && p.getUiFinalOutput()==initial && p.redoUi() && p.getUiFinalOutput()==.5f,"Master drag is one history entry with undo/redo");
+    juce::MemoryBlock saved;p.getStateInformation(saved);auto restored=std::make_unique<OrigamiAudioProcessor>();
+    restored->setStateInformation(saved.getData(),int(saved.getSize()));check(restored->getUiFinalOutput()==.5f,"Master trim state save/restore");
+    const auto legacy=encodeInstrumentState(p.getUiInstrumentState());restored->setStateInformation(legacy.data(),int(legacy.size()));check(restored->getUiFinalOutput()==G::unity,"legacy patches restore compatible unity output");
+    p.setUiFinalOutput(.7f);static_cast<juce::AudioProcessorParameter*>(p.finalOutputParameter())->setValue(.2f);
+    check(p.undoUi() && p.getUiFinalOutput()==.2f,"Undo preserves later host output automation");
+    auto editor=std::unique_ptr<OrigamiAudioProcessorEditor>(static_cast<OrigamiAudioProcessorEditor*>(p.createEditor()));
+    ui::OrigamiHeader* header=nullptr;walk(*editor,[&](auto& c){if(auto* h=dynamic_cast<ui::OrigamiHeader*>(&c))header=h;});check(header,"Master header");
+    auto& knob=header->masterKnob();check(!knob.getProperties().contains("mct.mod.destination") && !knob.getProperties().contains("mct.mod.itemId") && !knob.getProperties().contains("mct.mod.oscillator"),"Master knob advertises no internal modulation destination");
+    check(std::abs(knob.getNormalisableRange().convertFrom0to1(.5)+12)<1e-5,"knob midpoint is 12 o'clock at -12 dB");
+    const auto beforeWheel=knob.getValue();juce::MouseWheelDetails wheel{};wheel.deltaY=.2f;knob.mouseWheelMove(event(knob),wheel);check(knob.getValue()==beforeWheel,"workspace wheel navigation cannot change final gain");
+    p.clearUiHistory();if(knob.onDragStart)knob.onDragStart();for(int i=0;i<20;++i)knob.setValue(-24.+i,juce::sendNotificationSync);if(knob.onDragEnd)knob.onDragEnd();
+    check(p.uiHistorySize()==1 && p.canUndoUi(),"actual header slider wiring coalesces gestures");
+    editor->openWavetableEditorForOscillator(1);
+    p.clearUiHistory();const auto beforeOverlay=p.getUiFinalOutput();knob.setValue(-12,juce::sendNotificationSync);
+    check(header->canUndo && header->canUndo(),"permanent Master Undo remains available in wavetable authoring");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(p.getUiFinalOutput()==beforeOverlay,"Master Undo uses document history while draft editor is open");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(p.getUiFinalOutput()==.5f,"Master Redo works while draft editor is open");
+    auto& authoring=editor->wavetableEditorForTesting();const auto originalSample=authoring.documentForTesting().frames[0].samples[17];
+    authoring.drawSampleForTesting(0,17,.37f);
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(authoring.documentForTesting().frames[0].samples[17]==originalSample && p.getUiFinalOutput()==.5f,"new wavetable draft edit has Undo priority over older Master edit");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(p.getUiFinalOutput()==beforeOverlay,"exhausting draft history reveals previous Master edit");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(p.getUiFinalOutput()==.5f && authoring.documentForTesting().frames[0].samples[17]==originalSample,"Master Redo precedes newer draft Redo");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(authoring.documentForTesting().frames[0].samples[17]==.37f,"draft Redo remains available after Master replay");
+
+    for(const auto& entry:ui::modulationDestinationCatalog(p.getUiInstrumentState(),{}))check(!entry.label.containsIgnoreCase("Master Output") && !entry.group.containsIgnoreCase("Master Output"),"shared Matrix and Nodes catalog excludes final output");
+
+    header->setPresetName("A very long preset name that must ellipsize before the next preset icon or primary navigation");
+    for(int width:{960,1440,1920}){header->setSize(width,72);auto* output=knob.getParentComponent();check(header->getLocalBounds().contains(output->getBounds()),"Master group remains inside header");for(auto* child:header->getChildren())if(child!=output && child->getName()!="Emergency DSP reset")check(!output->getBounds().intersects(child->getBounds()),"Master never overlaps presets, pages, history or menu");}
+    // Processor integration: the new trim is after the final output, and does
+    // not reroute or retune a patch. Identical processors isolate the gain.
+    auto unity=std::make_unique<OrigamiAudioProcessor>(),trim=std::make_unique<OrigamiAudioProcessor>();
+    unity->prepareToPlay(48000,128);trim->prepareToPlay(48000,128);trim->setUiFinalOutput(.5f);
+    juce::AudioBuffer<float> a(2,128),b(2,128);juce::MidiBuffer ma,mb;
+    for(int block=0;block<30;++block){a.clear();b.clear();ma.clear();mb.clear();if(block==0){ma.addEvent(juce::MidiMessage::noteOn(1,60,juce::uint8(100)),0);mb=ma;}unity->processBlock(a,ma);trim->processBlock(b,mb);if(block>12)for(int ch=0;ch<2;++ch)for(int i=0;i<128;++i)check(std::abs(b.getSample(ch,i)-a.getSample(ch,i)*G::linear(.5f))<1e-7f,"final trim leaves existing output/routing unchanged apart from gain");}
+    trim->setUiFinalOutput(0);for(int i=0;i<10;++i){b.clear();trim->processBlock(b,mb);}check(b.getMagnitude(0,b.getNumSamples())==0,"processor final mute produces true silence");
+}
+
 void documentHistoryAudit() {
     auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;
     p.prepareToPlay(48000,128);
@@ -7205,5 +7269,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

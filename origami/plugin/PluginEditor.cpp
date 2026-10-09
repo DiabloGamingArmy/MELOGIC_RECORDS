@@ -133,9 +133,13 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     addChildComponent(globalOverlay_);
     globalFx_->onClose=[this]{globalOverlay_.dismiss();};
     header_.onGlobalFxRequested=[this]{openGlobalFx();};
+    header_.masterKnob().onValueChange=[this]{outputHistoryDraftRevision_=wavetableEditor_.authoringRevision();processor_.setUiFinalOutput(mct::origami::FinalOutputGain::position(float(header_.masterKnob().getValue())));};
+    header_.masterKnob().onDragStart=[this]{processor_.beginFinalOutputGesture();};
+    header_.masterKnob().onDragEnd=[this]{processor_.endFinalOutputGesture();};
+    header_.syncMaster(processor_.getUiFinalOutput(),processor_.finalOutputMeters());
     header_.onPanicRequested=[this]{processor_.requestPanic();};
-    header_.canUndo=[this]{return wavetableEditorSelected_ ? wavetableEditor_.canUndoAuthoring() : processor_.canUndoUi();};
-    header_.canRedo=[this]{return wavetableEditorSelected_ ? wavetableEditor_.canRedoAuthoring() : processor_.canRedoUi();};
+    header_.canUndo=[this]{return wavetableEditorSelected_ && !preferFinalOutputHistory(false) ? wavetableEditor_.canUndoAuthoring() : processor_.canUndoUi();};
+    header_.canRedo=[this]{return wavetableEditorSelected_ && !preferFinalOutputHistory(true) ? wavetableEditor_.canRedoAuthoring() : processor_.canRedoUi();};
     header_.onUndo=[this]{performDocumentHistory(false);};
     header_.onRedo=[this]{performDocumentHistory(true);};
     // mct-origami-content-browser
@@ -539,6 +543,7 @@ void OrigamiAudioProcessorEditor::timerCallback() {
     modulation_.syncFromModel();macros_.syncFromModel();matrix_.syncFromModel();filter_.syncFromModel();
     performance_.syncArpFromModel();
     header_.refreshHistoryState();
+    header_.syncMaster(processor_.getUiFinalOutput(),processor_.finalOutputMeters());
     header_.setPresetName(processor_.getUiCurrentPreset().name); // a host restore may change it
     if(arpSelected_) arpeggiator_.syncFromModel();
     if(globalSelected_) global_.syncFromModel();
@@ -602,7 +607,8 @@ void OrigamiAudioProcessorEditor::registerKnobDefaults(juce::Component& root) {
     if(auto* slider=dynamic_cast<juce::Slider*>(&root);slider && !wavetableEditor_.isParentOf(slider) && !slider->getProperties().contains("mct.history.gesture")) {
         slider->getProperties().set("mct.history.gesture",true);
         const auto begin=slider->onDragStart,end=slider->onDragEnd;
-        slider->onDragStart=[this,begin]{processor_.beginUiTransaction("Adjust parameter");if(begin)begin();};
+        const bool finalOutput=slider==&header_.masterKnob();
+        slider->onDragStart=[this,begin,finalOutput]{processor_.beginUiTransaction(finalOutput ? "Adjust Master Output" : "Adjust parameter");if(begin)begin();};
         slider->onDragEnd=[this,end]{if(end)end();processor_.endUiTransaction();header_.refreshHistoryState();};
     }
     if(auto* button=dynamic_cast<juce::Button*>(&root);button && button->onClick && !header_.isParentOf(button) && !wavetableEditor_.isParentOf(button) && !button->getProperties().contains("mct.history.action")) {
@@ -974,6 +980,7 @@ juce::String OrigamiAudioProcessorEditor::oscillatorLabel(unsigned oscillatorId)
 }
 void OrigamiAudioProcessorEditor::contentLoaded() {
     header_.setPresetName(processor_.getUiCurrentPreset().name);
+    header_.syncMaster(processor_.getUiFinalOutput(),processor_.finalOutputMeters());
     oscillators_.syncFromModel();
     if(!sameModulationView(lastModulationView_,processor_.getUiInstrumentState().modulation))
         refreshModulationViews();
@@ -1139,7 +1146,8 @@ void OrigamiAudioProcessorEditor::mouseUp(const juce::MouseEvent&) {
     if(historyMouseGesture_){historyMouseGesture_=false;processor_.endUiTransaction();header_.refreshHistoryState();}
 }
 void OrigamiAudioProcessorEditor::performDocumentHistory(bool redo) {
-    if(wavetableEditorSelected_) {if(redo)wavetableEditor_.redoAuthoring();else wavetableEditor_.undoAuthoring();header_.refreshHistoryState();return;}
+    if(wavetableEditorSelected_ && !preferFinalOutputHistory(redo)) {if(redo)wavetableEditor_.redoAuthoring();else wavetableEditor_.undoAuthoring();header_.refreshHistoryState();return;}
+    if(wavetableEditorSelected_)outputHistoryDraftRevision_=wavetableEditor_.authoringRevision();
     const auto selectedBus=fxPage_.selectedBus();
     const auto selectedNode=fxPage_.selectedNode();
     const auto selectedControl=fxPage_.selectedControlNodes();
@@ -1175,4 +1183,11 @@ bool OrigamiAudioProcessorEditor::replayDocumentAction(bool redo) {
     const bool available=redo ? processor_.canRedoUi() : processor_.canUndoUi();
     if(available)performDocumentHistory(redo);
     return available;
+}
+
+bool OrigamiAudioProcessorEditor::preferFinalOutputHistory(bool redo) const {
+    // Draft authoring remains local. A newer Master edit wins, while a new
+    // draft edit returns focus to authoring; exhausting it reveals Master again.
+    const bool draftAvailable=redo ? wavetableEditor_.canRedoAuthoring() : wavetableEditor_.canUndoAuthoring();
+    return (outputHistoryDraftRevision_==wavetableEditor_.authoringRevision() || !draftAvailable) && processor_.nextHistoryIsFinalOutput(redo);
 }

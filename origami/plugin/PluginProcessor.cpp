@@ -48,6 +48,9 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
         macroParameters_[id-1]=parameter;
         addParameter(parameter);
     }
+    finalOutputParameter_=new juce::AudioParameterFloat(juce::ParameterID{"output.master",1},"Master Output",juce::NormalisableRange<float>{0.f,1.f},mct::origami::FinalOutputGain::unity,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction([](float p,int){return mct::origami::FinalOutputGain::text(p);}).withValueFromStringFunction([](const juce::String& t){return mct::origami::FinalOutputGain::fromText(t);}));
+    addParameter(finalOutputParameter_);
     // Pre-audio-thread: establish the canonical host/UI model exactly once.
     uiInstrumentState_=engine_.instrumentState();
     setMacroParametersFromModel(uiInstrumentState_.modulation);
@@ -167,6 +170,7 @@ void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     envUiSamplesUntilPublish_=0;
     highResolutionTicksPerSecond_=static_cast<double>(juce::Time::getHighResolutionTicksPerSecond());
     if(!(highResolutionTicksPerSecond_>0.0)) highResolutionTicksPerSecond_=1.0;
+    finalOutputStage_.prepare(sampleRate_,finalOutputParameter_->get());
     renderBudget_.reset();
     prepared_ = engine_.prepare(sampleRate_, static_cast<std::size_t>(juce::jmax(1, samplesPerBlock)), 2u);
     prepared_=prepared_ && engine_.prepareSynthFilterStorage(getUiInstrumentState().modulation.synthFilters);
@@ -543,6 +547,7 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         performanceUiHeldLow_.store(0,std::memory_order_release);
         performanceUiHeldHigh_.store(0,std::memory_order_release);
         buffer.clear();
+        finalOutputStage_.resetMeters();
         runtimeOutputPeak_.store(0.0f,std::memory_order_relaxed);
         panicCount_.fetch_add(1,std::memory_order_release);
         return;
@@ -741,6 +746,9 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         }
     }
 
+    // Exactly once, after every bus/FX and the preset transition fade.
+    if(buffer.getNumChannels()>=2)finalOutputStage_.process(buffer.getWritePointer(0),buffer.getWritePointer(1),total,finalOutputParameter_->get());
+
     bool callbackHasSignal=false;
     float callbackPeak=0.0f,callbackMaxDelta=0.0f;
     std::uint64_t callbackNonFinite=0;
@@ -843,6 +851,9 @@ void OrigamiAudioProcessor::writeStateInformation(juce::MemoryBlock& dest,bool i
     bytes.insert(bytes.end(),fx.begin(),fx.end());
     appendWord(static_cast<std::uint32_t>(fx.size()));
     appendWord(fxWorkspaceMagic);
+    // Optional OUT1 trailer. Older presets restore at unity (bit-exact).
+    const float output=getUiFinalOutput();std::uint32_t outputBits=0;std::memcpy(&outputBits,&output,4);
+    appendWord(outputBits);appendWord(0x4f555431u);
     const auto content=encodeContentTrailer(includeWavetables);
     bytes.insert(bytes.end(),content.begin(),content.end());
     appendWord(static_cast<std::uint32_t>(content.size()));
@@ -914,6 +925,17 @@ bool OrigamiAudioProcessor::restoreState(const void* data, int size) {
             if(!ok || pos!=end) return false;
             haveContent=true;
             instrumentSize=start;
+        }
+    }
+
+    float restoredOutput=mct::origami::FinalOutputGain::unity;
+    if(instrumentSize>=8) {
+        const auto* b=static_cast<const std::uint8_t*>(data);
+        const auto word=[b](int offset){std::uint32_t v=0;for(int i=0;i<4;++i)v=(v<<8)|b[offset+i];return v;};
+        if(word(instrumentSize-4)==0x4f555431u) {
+            const auto bits=word(instrumentSize-8);std::memcpy(&restoredOutput,&bits,4);
+            if(!std::isfinite(restoredOutput) || restoredOutput<0.f || restoredOutput>1.f)return false;
+            instrumentSize-=8;
         }
     }
 
@@ -1018,6 +1040,8 @@ bool OrigamiAudioProcessor::restoreState(const void* data, int size) {
     if(controlLayout) controlLayout_=std::move(*controlLayout); else controlLayout_.clear();
     controlLayout_.pruneSynthFilterDestinations(state.modulation);
     syncFxRenderer();
+    {const juce::ScopedLock lock(stateLock_);uiFinalOutput_=restoredOutput;}
+    finalOutputParameter_->setValueNotifyingHost(restoredOutput);
     visualizationMask_.store(restoredVisualization,std::memory_order_release);
     // Completion only: listeners read the latest fully restored state, never a queued snapshot.
     sendChangeMessage();
@@ -1433,7 +1457,7 @@ std::size_t OrigamiAudioProcessor::HistorySnapshot::cost() const {
 }
 OrigamiAudioProcessor::HistorySnapshot OrigamiAudioProcessor::captureHistory() {
     HistorySnapshot snapshot;writeStateInformation(snapshot.state,false);
-    const juce::ScopedLock lock(stateLock_);snapshot.preset=currentPreset_;snapshot.automationRevision=macroAutomationRevision_;
+    const juce::ScopedLock lock(stateLock_);snapshot.preset=currentPreset_;snapshot.automationRevision=macroAutomationRevision_;snapshot.outputAutomationRevision=outputAutomationRevision_;
     for(const auto& [id,source]:wavetableSources_) {bool live=false;for(const auto& m:uiInstrumentState_.oscillators)live|=m.id==id && id!=0;if(live && source.data)snapshot.sources.emplace(id,source);}
     return snapshot;
 }
@@ -1451,7 +1475,10 @@ bool OrigamiAudioProcessor::restoreHistory(const HistorySnapshot& snapshot) {
     std::array<float,mct::origami::maxMacros> automated{};
     std::array<bool,mct::origami::maxMacros> preserve{};
     {const juce::ScopedLock lock(stateLock_);for(std::size_t i=0;i<preserve.size();++i){preserve[i]=macroAutomationRevision_[i]!=snapshot.automationRevision[i];automated[i]=uiInstrumentState_.modulation.macros[i];}}
+    const float output=getUiFinalOutput();bool preserveOutput=false;
+    {const juce::ScopedLock lock(stateLock_);preserveOutput=outputAutomationRevision_!=snapshot.outputAutomationRevision;}
     if(!restoreState(state.getData(),static_cast<int>(state.getSize())))return false;
+    if(preserveOutput)setUiFinalOutput(output);
     if(std::any_of(preserve.begin(),preserve.end(),[](bool b){return b;})) {
         auto mod=getUiInstrumentState().modulation;
         for(std::size_t i=0;i<preserve.size();++i)if(preserve[i])mod.macros[i]=automated[i];
@@ -1704,4 +1731,25 @@ bool OrigamiAudioProcessor::publishUiModulation(const mct::origami::ModulationSt
     if(!restorePending_.load(std::memory_order_acquire))return engine_.setModulationState(modulation);
     auto candidate=uiInstrumentState_;candidate.modulation=modulation;
     return mct::origami::validInstrumentState(candidate) && engine_.prepareSynthFilterStorage(modulation.synthFilters);
+}
+
+float OrigamiAudioProcessor::getUiFinalOutput() {
+    const juce::ScopedLock lock(stateLock_);
+    const float value=finalOutputParameter_->get();
+    if(value!=uiFinalOutput_){uiFinalOutput_=value;++outputAutomationRevision_;}
+    return value;
+}
+bool OrigamiAudioProcessor::setUiFinalOutput(float normalized) {
+    UiEdit transaction(*this,"Change Master Output");
+    if(!std::isfinite(normalized) || normalized<0.f || normalized>1.f)return false;
+    {const juce::ScopedLock lock(stateLock_);uiFinalOutput_=normalized;}
+    finalOutputParameter_->setValueNotifyingHost(normalized);return true;
+}
+void OrigamiAudioProcessor::beginFinalOutputGesture() {beginUiTransaction("Adjust Master Output");finalOutputParameter_->beginChangeGesture();}
+void OrigamiAudioProcessor::endFinalOutputGesture() {finalOutputParameter_->endChangeGesture();endUiTransaction();}
+
+bool OrigamiAudioProcessor::nextHistoryIsFinalOutput(bool redo) const {
+    if(!onHistoryThread() || !history_)return false;
+    const auto name=history_->nextName(redo);
+    return name=="Change Master Output" || name=="Adjust Master Output";
 }
