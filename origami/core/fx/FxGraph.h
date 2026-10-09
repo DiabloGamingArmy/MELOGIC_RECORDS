@@ -415,6 +415,7 @@ public:
     std::uint64_t revision() const noexcept { return revision_; }
     // Invoked after every committed change (edit, gesture step, undo, redo, replace).
     std::function<void()> onChanged;
+    std::function<void()> onEditBegin,onEditEnd;
 
     // Applies fn to a working copy; commits and records undo only on success
     // and only if the graph actually changed.
@@ -430,9 +431,11 @@ public:
     template<typename Fn> bool gestureEdit(Fn&& fn) {
         FxGraph working=graph_;
         if(!fn(working) || working==graph_) return false;
+        if(onEditBegin)onEditBegin();
         graph_=std::move(working);
         ++revision_;
         notify();
+        if(onEditEnd)onEditEnd();
         return true;
     }
     void endGesture();

@@ -27,9 +27,11 @@ class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropContainer,
                                          public juce::DragAndDropTarget,
                                          public juce::FileDragAndDropTarget,
+                                         public mct::origami::ui::DocumentActionHost,
                                          private juce::Timer,
                                          private juce::AsyncUpdater,
-                                         private juce::ChangeListener {
+                                         private juce::ChangeListener,
+                                         private juce::KeyListener {
 public:
     explicit OrigamiAudioProcessorEditor(OrigamiAudioProcessor&);
     ~OrigamiAudioProcessorEditor() override;
@@ -39,6 +41,13 @@ public:
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
+    using juce::AudioProcessorEditor::keyPressed;
+    bool keyPressed(const juce::KeyPress&,juce::Component*) override;
+    void mouseUp(const juce::MouseEvent&) override;
+    void performDocumentHistory(bool redo);
+    void beginDocumentAction() override;
+    void endDocumentAction() override;
+    bool replayDocumentAction(bool redo) override;
 
     bool isInterestedInDragSource(const SourceDetails&) override;
     void itemDragEnter(const SourceDetails&) override;
@@ -1380,14 +1389,7 @@ private:
                 const auto text=labels_.count(selectedId_)!=0?labels_.at(selectedId_):juce::String{};
                 g.drawText(text,getLocalBounds().reduced(8,0).withTrimmedRight(18),
                            juce::Justification::centredLeft,false);
-                juce::Path arrow;
-                const float cx=static_cast<float>(getWidth()-10),cy=static_cast<float>(getHeight())*0.5f;
-                arrow.startNewSubPath(cx-3.0f,cy-1.5f);
-                arrow.lineTo(cx,cy+1.5f);
-                arrow.lineTo(cx+3.0f,cy-1.5f);
-                g.setColour(juce::Colours::white.withAlpha(0.72f*alpha));
-                g.strokePath(arrow,juce::PathStrokeType(1.2f,juce::PathStrokeType::curved,
-                                                        juce::PathStrokeType::rounded));
+                mct::origami::ui::drawPulldownChevron(g,{static_cast<float>(getWidth()-10),static_cast<float>(getHeight())*.5f},juce::Colours::white.withAlpha(.72f*alpha));
             }
         private:
             std::vector<mct::origami::ui::NativeChoiceItem> nativeItems_;
@@ -2034,6 +2036,10 @@ private:
         // other table source (OrigamiAudioProcessor::compileWavetable).
         mct::origami::dsp::Wavetable compiledWavetable() const;
 
+        bool canUndoAuthoring() const {return historyIndex_>0;}
+        bool canRedoAuthoring() const {return historyIndex_<history_.size();}
+        void undoAuthoring(){undo();}
+        void redoAuthoring(){redo();}
         bool keyPressed(const juce::KeyPress& key) override {
             const auto mods=key.getModifiers();
             // CAPTURE KEYBOARD INPUT OFF: only Escape (cancel / close this
@@ -2488,6 +2494,7 @@ private:
     bool wavetableEditorSelected_=false;
     unsigned wavetableEditorOscillatorId_=0;
     WavetableEditorSurface wavetableEditor_;
+    bool historyMouseGesture_=false;
     OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;
     mct::origami::ui::OrigamiHeader header_;

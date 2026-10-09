@@ -22,6 +22,8 @@ FxWorkspace::FxWorkspace() { reset(); }
 
 FxGraphDocument& FxWorkspace::add(FxBusId bus,FxGraph graph) {
     auto doc=std::make_unique<FxGraphDocument>(std::move(graph));
+    doc->onEditBegin=[this]{if(onEditBegin)onEditBegin();};
+    doc->onEditEnd=[this]{if(onEditEnd)onEditEnd();};
     doc->onChanged=[this]{ if(onChanged) onChanged(); };
     documents_.emplace_back(bus,std::move(doc));
     return *documents_.back().second;
@@ -70,8 +72,10 @@ std::vector<FxBusId> FxWorkspace::buses() const {
 void FxWorkspace::setGlobals(const FxGlobalSettings& settings) {
     FxGraph probe; // reuse FxGraph's validated clamping
     probe.setGlobals(settings);
+    if(onEditBegin)onEditBegin();
     globals_=probe.globals();
     if(onChanged) onChanged();
+    if(onEditEnd)onEditEnd();
 }
 
 std::vector<std::uint8_t> FxWorkspace::encode() const {

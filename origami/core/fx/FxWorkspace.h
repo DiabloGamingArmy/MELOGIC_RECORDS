@@ -36,6 +36,7 @@ public:
 
     // Fired after any document edit or globals change.
     std::function<void()> onChanged;
+    std::function<void()> onEditBegin,onEditEnd;
 
     std::vector<std::uint8_t> encode() const;
     // Strict, all-or-nothing: on failure the workspace is unchanged.

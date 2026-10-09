@@ -14,11 +14,17 @@ OrigamiHeader::OrigamiHeader() {
     wordmark_={};
     addAndMakeVisible(panic_);
     panic_.onClick=[this] { if(onPanicRequested) onPanicRequested(); panic_.confirm(); };
-    for(auto* button:{&previous_,&next_,&preset_,static_cast<juce::TextButton*>(&settings_)}) addAndMakeVisible(button);
+    for(auto* button:std::array<juce::Button*,6>{&previous_,&next_,&preset_,&undo_,&redo_,&settings_}) addAndMakeVisible(button);
     // mct-origami-content-browser: the preset controls are live.
     preset_.setName("PRESET NAME"); previous_.setName("PRESET PREVIOUS"); next_.setName("PRESET NEXT");
     preset_.setTooltip("Browse presets");
     previous_.setTooltip("Previous preset"); next_.setTooltip("Next preset");
+    previous_.setGlyphFraction(.25f);next_.setGlyphFraction(.25f);
+    undo_.setGlyphFraction(.44f);redo_.setGlyphFraction(.44f);
+    undo_.setTooltip("Undo (Cmd+Z)");redo_.setTooltip("Redo (Cmd+Shift+Z)");
+    undo_.onClick=[this]{chooseUtility(undoItem);refreshHistoryState();};
+    redo_.onClick=[this]{chooseUtility(redoItem);refreshHistoryState();};
+    undo_.setEnabled(false);redo_.setEnabled(false);
     preset_.onClick=[this]{ if(onPresetBrowserRequested) onPresetBrowserRequested(); };
     previous_.onClick=[this]{ if(onPresetStep) onPresetStep(-1); };
     next_.onClick=[this]{ if(onPresetStep) onPresetStep(1); };
@@ -39,8 +45,8 @@ OrigamiHeader::OrigamiHeader() {
 std::vector<NativeChoiceItem> OrigamiHeader::utilityMenuItems() const {
     NativeChoiceItem capture{captureKeyboardItem,"CAPTURE KEYBOARD INPUT",true,{},preferences_->captureKeyboardInput()};
     capture.tooltip="Off: keys go to the host (e.g. Logic Musical Typing). On: Origami shortcuts (NODES A, Tab, F, Delete, Cmd+Z...).";
-    return {{undoItem,"Undo",canUndo && canUndo(),{},false,"Undo the active Nodes graph/control edit",{}},
-        {redoItem,"Redo",canRedo && canRedo(),{},false,"Redo the active Nodes graph/control edit",{}},
+    return {{undoItem,"Undo",canUndo && canUndo(),{},false,"Undo the last document edit",{}},
+        {redoItem,"Redo",canRedo && canRedo(),{},false,"Redo the last document edit",{}},
         {0,{},false,{}},{browseItem,"Browse Presets",bool(onPresetBrowserRequested),{}},{saveItem,"Save Preset",bool(onSaveRequested),{}},
         {initPresetItem,"INIT PRESET",true,{},false,"Return to the factory INIT sound",{}},
         {0,{},false,{}},{globalFxItem,"Global FX...",true,{}},capture};
@@ -54,6 +60,7 @@ void OrigamiHeader::chooseUtility(int item) {
     if(item==initPresetItem && onInitRequested) onInitRequested();
     if(item==captureKeyboardItem) preferences_->setCaptureKeyboardInput(!preferences_->captureKeyboardInput());
 }
+void OrigamiHeader::refreshHistoryState() {undo_.setEnabled(canUndo && canUndo());redo_.setEnabled(canRedo && canRedo());}
 void OrigamiHeader::setPresetName(const juce::String& name) {
     const auto label=name.isNotEmpty() ? name : juce::String("UNTITLED");
     if(preset_.getButtonText()!=label) preset_.setButtonText(label);
@@ -93,11 +100,25 @@ void OrigamiHeader::paint(juce::Graphics& g) {
     g.drawHorizontalLine(getHeight()-1,0.f,float(getWidth()));
 }
 void OrigamiHeader::resized() {
-    auto area=getLocalBounds().withTrimmedLeft(324).reduced(0,10);
-    auto utilities=area.removeFromRight(40);
-    settings_.setBounds(utilities.removeFromRight(34).reduced(2,6));
+    // The editor scales a 1440px design canvas; the same proportional groups
+    // also keep a directly resized header valid at its supported minimum width.
+    const float scale=juce::jmin(1.f,float(getWidth())/960.f);
+    const int brand=juce::roundToInt(324.f*scale),cell=juce::roundToInt(34.f*scale);
+    auto area=getLocalBounds().withTrimmedLeft(brand).reduced(0,10);
+    settings_.setBounds(area.removeFromRight(cell).reduced(2,6));
+    area.removeFromRight(6);
+    redo_.setBounds(area.removeFromRight(cell).reduced(1,6));
+    undo_.setBounds(area.removeFromRight(cell).reduced(1,6));
+    area.removeFromRight(10);
+    auto navigation=area.removeFromRight(juce::roundToInt(300.f*scale));
+    for(auto& mode:modes_)mode.setBounds(navigation.removeFromLeft(juce::roundToInt(60.f*scale)).reduced(1,6));
+    area.removeFromRight(14);
+    // Cap the selector instead of absorbing all recovered space. The remainder
+    // is intentional breathing room between preset and page navigation.
+    auto presetGroup=area.removeFromLeft(juce::jmin(area.getWidth(),360));
+    previous_.setBounds(presetGroup.removeFromLeft(27).reduced(0,6));
+    next_.setBounds(presetGroup.removeFromRight(27).reduced(0,6));
+    preset_.setBounds(presetGroup.reduced(3,6));
     panic_.setBounds(10,4,286,64);
-    area.removeFromRight(10);auto modes=area.removeFromRight(300);for(auto& mode:modes_)mode.setBounds(modes.removeFromLeft(60).reduced(1,6));
-    area.removeFromRight(14);previous_.setBounds(area.removeFromLeft(27).reduced(0,6));next_.setBounds(area.removeFromRight(27).reduced(0,6));preset_.setBounds(area.reduced(3,6));
 }
 }

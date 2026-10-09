@@ -1,6 +1,7 @@
 // mct-origami-v25.1.0-arp-advanced-page
 #pragma once
 #include "OrigamiStyle.h"
+#include "OrigamiIcon.h"
 #include "NativeChoiceMenu.h"
 #include "UserPreferences.h"
 namespace mct::origami::ui {
@@ -31,6 +32,7 @@ public:
     // < > step through the browser's current results; SAVE saves with metadata.
     std::function<void()> onPresetBrowserRequested,onSaveRequested,onInitRequested;
     std::function<void(int)> onPresetStep;
+    void refreshHistoryState();
     void setPresetName(const juce::String&);
     juce::String presetName() const { return preset_.getButtonText(); }
     std::vector<NativeChoiceItem> utilityMenuItems() const;
@@ -86,7 +88,9 @@ private:
             for(int i=0;i<3;++i)g.drawHorizontalLine(juce::roundToInt(b.getY()+i*5),b.getX(),b.getRight());
         }
     } settings_;
-    juce::TextButton previous_{"<"},next_{">"},preset_{"Init"};
+    IconButton previous_{"PRESET PREVIOUS",IconId::PresetPrevious},next_{"PRESET NEXT",IconId::PresetNext};
+    IconButton undo_{"Undo",IconId::Undo},redo_{"Redo",IconId::Redo};
+    juce::TextButton preset_{"Init"};
     std::array<juce::TextButton,5> modes_;
     juce::Image logo_;
     juce::Image wordmark_;

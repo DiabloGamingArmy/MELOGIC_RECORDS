@@ -4987,7 +4987,7 @@ void lfoEditorControlsAudit() {
     const auto lfo2=[&]{ return mod().lfo2; };
 
     // ---- assets: compiled in, parsed once, tinted in code ------------------
-    for(int i=0;i<static_cast<int>(ui::IconId::Count);++i) {
+    for(int i=0;i<static_cast<int>(ui::IconId::PresetPrevious);++i) {
         const auto id=static_cast<ui::IconId>(i);
         int size=0; const char* data=BinaryData::getNamedResource(ui::iconResourceName(id),size);
         const auto& icon=ui::icon(id);
@@ -6670,6 +6670,99 @@ void spectralTunePluginAudit() {
     std::cout<<"PASS Spectral Tune plugin/UI audit\n";
 }
 
+void documentHistoryAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;
+    p.prepareToPlay(48000,128);
+    auto state=[&]{juce::MemoryBlock s;p.getStateInformation(s);return s;};
+    const auto a=state();p.clearUiHistory();
+    check(!p.canUndoUi() && !p.canRedoUi(),"empty document history");
+    p.setUiHistoryContext(3,mainBusId);
+    check(p.uiHistorySize()==0,"navigation does not record history");
+    p.setUiParameter(ParameterId::Sustain,.73f);const auto b=state();
+    check(p.uiHistorySize()==1 && p.undoUi() && state()==a,"parameter undo restores canonical A");
+    check(p.uiHistoryContext().first==3,"undo carries editing context");
+    check(p.redoUi() && state()==b,"parameter redo restores canonical B");
+    p.setUiParameter(ParameterId::Attack,.12f);const auto c=state();
+    check(p.undoUi() && state()==b && p.undoUi() && state()==a,"two edits undo in order");
+    check(p.redoUi() && state()==b && p.redoUi() && state()==c,"two edits redo in order");
+    check(p.undoUi(),"branch undo");p.setUiParameter(ParameterId::Attack,.24f);
+    check(!p.canRedoUi(),"new edit drops abandoned redo branch");
+    const auto beforeFailedLoad=state();const auto entriesBeforeFailedLoad=p.uiHistorySize();
+    auto invalidPreset=beforeFailedLoad;static_cast<unsigned char*>(invalidPreset.getData())[0]=0;
+    std::memset(static_cast<unsigned char*>(invalidPreset.getData())+invalidPreset.getSize()-4,0,4);
+    check(!p.loadUiPresetState(invalidPreset,"invalid","Invalid") && state()==beforeFailedLoad && p.uiHistorySize()==entriesBeforeFailedLoad,"failed load preserves document and history atomically");
+    p.clearUiHistory();const auto beforeGesture=state();
+    p.beginUiTransaction("Adjust Sustain");
+    for(int i=1;i<=100;++i)p.setUiParameter(ParameterId::Sustain,float(i)/101.f);
+    p.endUiTransaction();const auto afterGesture=state();
+    check(p.uiHistorySize()==1 && p.undoUi() && state()==beforeGesture && p.redoUi() && state()==afterGesture,"continuous values coalesce into one entry");
+    const auto n=p.uiHistorySize();p.setUiParameter(ParameterId::Sustain,p.getUiParameter(ParameterId::Sustain));
+    check(p.uiHistorySize()==n,"no-op creates no history");
+    p.clearUiHistory();const auto beforeStructure=state();const auto osc=p.addUiOscillator();
+    check(osc && p.undoUi() && state()==beforeStructure && p.redoUi(),"oscillator creation restores complete structure");
+    const auto withOsc=state();check(p.removeUiOscillator(osc) && p.undoUi() && state()==withOsc,"oscillator deletion undo");
+    auto module=p.getUiOscillatorState(osc);module.pan=.23f;
+    check(p.setUiOscillatorState(osc,module),"edit restored oscillator before audio adoption");
+    check(p.removeUiOscillator(osc) && p.undoUi() && p.getUiOscillatorState(osc).id==osc,"structural edits after queued restore remain undoable");
+    p.clearUiHistory();const auto beforeLoad=state();
+    check(p.loadUiPresetState(a,"history-fixture","History fixture"),"load canonical preset");const auto loaded=state();
+    check(p.uiHistorySize()==1,"preset load is atomic");
+    for(int i=0;i<12;++i)check(p.undoUi() && state()==beforeLoad && p.redoUi() && state()==loaded,"repeated complete preset replay is stable");
+    check(p.loadUiInitPreset() && p.undoUi() && state()==loaded && p.redoUi(),"INIT is undoable");
+    p.markUiSaved();check(p.uiAtSavedState(),"saved checkpoint matches current state");
+    p.setUiParameter(ParameterId::Sustain,.41f);check(!p.uiAtSavedState() && p.undoUi() && p.uiAtSavedState(),"undo returns to saved checkpoint");
+    p.clearUiHistory();
+    for(int i=0;i<90;++i)p.setUiParameter(ParameterId::Sustain,float(i%2)*.5f+.1f);
+    check(p.uiHistorySize()<=64 && p.uiHistoryBytes()<=128u*1024u*1024u,"history count and conservative memory bounds");
+    const auto host=state();p.setStateInformation(host.getData(),int(host.getSize()));
+    check(!p.canUndoUi() && !p.canRedoUi(),"host project restore establishes a history boundary");
+    p.setUiParameter(ParameterId::Sustain,.66f);const auto withAutomation=p.uiHistorySize();
+    static_cast<juce::AudioProcessorParameter*>(p.macroParameter(0))->setValue(.81f);p.getUiRuntimeVisualizationSnapshot();
+    check(p.uiHistorySize()==withAutomation && p.undoUi() && std::abs(p.getUiInstrumentState().modulation.macros[0]-.81f)<1e-5f,"undo preserves later host automation without recording it");
+    p.clearUiHistory();const auto beforeContent=state();
+    const auto oscId=p.getUiInstrumentState().oscillators.front().id;
+    content::WavetableData table;table.name="History PCM";table.samples.resize(2048);
+    for(std::size_t i=0;i<table.samples.size();++i)table.samples[i]=std::sin(float(i)*.01f);
+    check(p.setUiOscillatorWavetable(oscId,table,"history-table"),"shared custom wavetable transaction");const auto withContent=state();
+    check(p.undoUi() && state()==beforeContent && p.redoUi() && state()==withContent,"wavetable PCM and identity survive replay");
+    p.clearUiHistory();
+    const auto count=p.uiHistorySize();bool offThreadUndo=true;
+    std::thread worker([&]{offThreadUndo=p.undoUi();p.beginUiTransaction("Foreign thread");p.endUiTransaction();});worker.join();
+    check(!offThreadUndo && p.uiHistorySize()==count,"foreign/audio threads cannot access history replay or allocate snapshots");
+    auto editor=std::unique_ptr<OrigamiAudioProcessorEditor>(static_cast<OrigamiAudioProcessorEditor*>(p.createEditor()));
+    ui::OrigamiHeader* header=nullptr;ui::FxPage* page=nullptr;
+    walk(*editor,[&](auto& x){if(auto* h=dynamic_cast<ui::OrigamiHeader*>(&x))header=h;if(auto* f=dynamic_cast<ui::FxPage*>(&x))page=f;});
+    check(header && page,"history UI components");
+    const auto beforeKey=p.uiHistorySize();
+    check(!editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys::commandModifier,0),editor.get()) && p.uiHistorySize()==beforeKey,"unfocused plugin leaves host Undo shortcut untouched");
+    p.clearUiHistory();header->selectMode(2);const auto graph=page->graph();
+    page->addEffectAt(fx::FxEffectType::Drive,{120,160});const auto editedGraph=page->graph();
+    check(p.uiHistorySize()==1,"Nodes creation is one centralized transaction");
+    header->selectMode(0);header->chooseUtility(ui::OrigamiHeader::undoItem);
+    check(page->graph()==graph,"top bar restores Nodes edit from SYNTH");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(page->graph()==editedGraph,"top bar replays Nodes edit");
+    p.clearUiHistory();
+    auto& doc=p.getUiFxDocument();doc.beginGesture();
+    const auto effect=editedGraph.nodes().back().id;
+    for(int i=1;i<20;++i)page->setParameter(effect,1,float(i)/20.f);
+    doc.endGesture();
+    check(p.uiHistorySize()==1,"FX parameter gesture coalesces across graph commits");
+    check(p.undoUi() && p.getUiFxDocument().graph()==editedGraph && p.redoUi(),"FX gesture replay");
+    editor->openContentBrowser(content::ContentType::Preset);editor->closeContentBrowser();
+    p.clearUiHistory();const auto beforeControl=state();
+    check(page->addControlOperator(ControlOpType::Multiply).has_value(),"CONTROL structural history fixture");const auto withControl=state();
+    check(p.uiHistorySize()==1 && p.undoUi() && state()==beforeControl && p.redoUi() && state()==withControl,"CONTROL layout and modulation replay together");
+    editor->openContentBrowser(content::ContentType::Preset);editor->closeContentBrowser();
+    for(auto id:{ui::IconId::PresetPrevious,ui::IconId::PresetNext,ui::IconId::Undo,ui::IconId::Redo})check(ui::icon(id).isValid(),"native toolbar vector is valid");
+    for(int width:{960,1440,1920}) {
+        header->setSize(width,72);std::vector<juce::Button*> controls;
+        for(auto* child:header->getChildren())if(auto* button=dynamic_cast<juce::Button*>(child))if(button->getName()!="Emergency DSP reset")controls.push_back(button);
+        for(auto* button:controls){check(header->getLocalBounds().contains(button->getBounds()),"top bar control remains inside bounds");for(auto* other:controls)if(other!=button)check(!button->getBounds().intersects(other->getBounds()),"top bar controls do not overlap");}
+    }
+    p.clearUiHistory();header->refreshHistoryState();
+    for(auto* child:header->getChildren())if(auto* button=dynamic_cast<ui::IconButton*>(child))if(button->getName()=="Undo" || button->getName()=="Redo")check(button->isVisible() && !button->isEnabled() && !button->getBounds().isEmpty(),"unavailable icons keep visible fixed positions");
+}
+
 void presetNodesSynchronizationAudit() {
     auto owner=std::make_unique<OrigamiAudioProcessor>();
     auto& p=*owner;
@@ -6730,8 +6823,9 @@ void presetNodesSynchronizationAudit() {
     browse(presetB); verify(graphB);
     check(page->selectedNode()==fx::invalidFxNodeId,"preset replacement clears selection");
     check(page->inspectorViewport().getViewPositionX()==0 && page->modulationRowCount()==0,"empty inspector clears old routes and horizontal scroll");
-    check(!page->canUndo() && !page->canRedo() && !page->canUndoControl(),"full replacement clears graph and CONTROL history");
-    page->undo(); verify(graphB);
+    check(page->canUndo() && !page->canRedo() && !page->canUndoControl(),"replacement clears local history while retaining document load undo");
+    header->chooseUtility(ui::OrigamiHeader::undoItem); verify(graphA);
+    header->chooseUtility(ui::OrigamiHeader::redoItem); verify(graphB);
     page->selectNode(b); check(page->modulationRowCount()==1,"B inspector binds B route");
     browse(presetC); verify(graphC);
     check(page->selectedNode()==fx::invalidFxNodeId,"same IDs clear old inspector binding");
@@ -7098,8 +7192,8 @@ void workspaceInspectorAudit() {
     check(item(ui::OrigamiHeader::redoItem).enabled, "menu Redo enabled after Undo");
     header->chooseUtility(ui::OrigamiHeader::redoItem);
     header->selectMode(0);
-    check(!item(ui::OrigamiHeader::undoItem).enabled && !item(ui::OrigamiHeader::redoItem).enabled,
-          "Nodes history menu disabled outside Nodes");
+    check(item(ui::OrigamiHeader::undoItem).enabled == p.canUndoUi() && item(ui::OrigamiHeader::redoItem).enabled == p.canRedoUi(),
+          "document history remains available outside Nodes");
 }
 
 int main(){juce::ScopedJuceInitialiser_GUI gui;
@@ -7111,5 +7205,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

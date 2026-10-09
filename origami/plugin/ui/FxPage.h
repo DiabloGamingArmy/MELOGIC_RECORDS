@@ -486,6 +486,9 @@ struct FxPageHost {
     std::function<std::pair<float,float>(BusId)> inputPeaks;
     std::function<fx::FxRenderer::NodeTelemetrySnapshot(BusId,fx::FxNodeId)> nodeTelemetry;
     std::function<void(BusId,bool)> nodeTelemetryEnabled;
+    std::function<void(bool,const char*)> documentTransaction;
+    std::function<bool()> canUndoDocument,canRedoDocument;
+    std::function<void()> undoDocument,redoDocument;
 };
 
 class FxPage final : public juce::Component, private juce::Timer {
@@ -583,8 +586,8 @@ public:
     juce::String inspectorHeadline() const;
     juce::Viewport& inspectorViewport() noexcept;
     void refreshInspectorTelemetry();
-    bool canUndo() const noexcept {const auto* d=workspace_.find(bus_); return d && (d->canUndo() || (lastWorkspaceGeneration_==workspace_.generation() && !controlUndo_.empty()));}
-    bool canRedo() const noexcept {const auto* d=workspace_.find(bus_); return d && (d->canRedo() || (lastWorkspaceGeneration_==workspace_.generation() && !controlRedo_.empty()));}
+    bool canUndo() const noexcept {if(host_.canUndoDocument)return host_.canUndoDocument();const auto* d=workspace_.find(bus_); return d && (d->canUndo() || (lastWorkspaceGeneration_==workspace_.generation() && !controlUndo_.empty()));}
+    bool canRedo() const noexcept {if(host_.canRedoDocument)return host_.canRedoDocument();const auto* d=workspace_.find(bus_); return d && (d->canRedo() || (lastWorkspaceGeneration_==workspace_.generation() && !controlRedo_.empty()));}
     std::size_t modulationRowCount() const;
     std::pair<float,float> meterLevels() const noexcept { return {meterLeft_,meterRight_}; }
     // The IN node meters (displayed L / R) and one telemetry tick (tests).
@@ -713,6 +716,12 @@ public:
     juce::Slider* controlSequenceControl(std::size_t index) noexcept; // N06 SEQUENCER inspector
 
 private:
+    class HistoryEdit {
+    public:
+        explicit HistoryEdit(FxPage& p,const char* name):page_(p){if(page_.host_.documentTransaction)page_.host_.documentTransaction(true,name);}
+        ~HistoryEdit(){if(page_.host_.documentTransaction)page_.host_.documentTransaction(false,"");}
+    private: FxPage& page_;
+    };
     class ParametersPanel;
     class ModuleParametersPanel;
     class FxMacrosPanel;

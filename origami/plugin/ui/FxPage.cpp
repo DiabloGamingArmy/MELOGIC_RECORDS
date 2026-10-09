@@ -4249,6 +4249,7 @@ void FxPage::selectBus(BusId bus) {
 }
 
 BusId FxPage::addBus() {
+    HistoryEdit documentEdit(*this,"addBus");
     if(!host_.addBus) return 0;
     const auto id=host_.addBus();
     if(id!=0) { refreshSidebar(); selectBus(id); }
@@ -4256,6 +4257,7 @@ BusId FxPage::addBus() {
 }
 
 bool FxPage::deleteBus(BusId bus) {
+    HistoryEdit documentEdit(*this,"deleteBus");
     if(bus==mainBusId || !host_.removeBus) return false;
     if(bus_==bus) selectBus(mainBusId); // stop viewing the graph before it goes
     const bool ok=host_.removeBus(bus);
@@ -4275,6 +4277,7 @@ void FxPage::requestDeleteBus(BusId bus) {
 }
 
 FxNodeId FxPage::addSynthFilterCopy(FxPoint centre,SynthFilterId source) {
+    HistoryEdit documentEdit(*this,"addSynthFilterCopy");
     // A post-mix FILTER module matching FILTER 1 (low-pass, cutoff, resonance).
     // The synth filter itself stays the single per-voice processor.
     InstrumentState state;
@@ -4391,6 +4394,7 @@ void FxPage::selectNode(FxNodeId id) {
 }
 
 bool FxPage::deleteNode(FxNodeId id) {
+    HistoryEdit documentEdit(*this,"deleteNode");
     const bool removed=document_->edit([id](FxGraph& g){return g.removeNodeBridging(id)==FxEditResult::Ok;});
     if(removed && selected_==id) selected_=invalidFxNodeId;
     refresh(true);
@@ -4398,6 +4402,7 @@ bool FxPage::deleteNode(FxNodeId id) {
 }
 
 FxNodeId FxPage::addModule(const FxModuleSpec& spec) {
+    HistoryEdit documentEdit(*this,"addModule");
     if(spec.kind==FxModuleKind::BusSource) {
         if(spec.bus!=bus_) return invalidFxNodeId; // each graph's input is its own bus
         FxNodeId created=invalidFxNodeId;
@@ -4440,6 +4445,7 @@ FxNodeId FxPage::addModule(const FxModuleSpec& spec) {
 }
 
 FxNodeId FxPage::addModuleAt(const FxModuleSpec& spec,FxPoint centre) {
+    HistoryEdit documentEdit(*this,"addModuleAt");
     FxNodeId created=invalidFxNodeId;
     document_->edit([&](FxGraph& g){
         FxNode probe;
@@ -4457,6 +4463,7 @@ FxNodeId FxPage::addModuleAt(const FxModuleSpec& spec,FxPoint centre) {
 }
 
 FxNodeId FxPage::insertModuleOnConnection(FxConnectionId connection,const FxModuleSpec& spec,FxPoint centre) {
+    HistoryEdit documentEdit(*this,"insertModuleOnConnection");
     // One atomic edit: A -> B becomes A -> X -> B, or nothing changes.
     FxNodeId created=invalidFxNodeId;
     FxNode probe;
@@ -4474,6 +4481,7 @@ FxNodeId FxPage::insertModuleOnConnection(FxConnectionId connection,const FxModu
 }
 
 FxNodeId FxPage::insertBeforeOutput(const FxModuleSpec& spec) {
+    HistoryEdit documentEdit(*this,"insertBeforeOutput");
     const auto output=graph().outputNode();
     const auto* out=graph().findNode(output);
     if(out==nullptr || spec.kind==FxModuleKind::BusSource) return addModule(spec);
@@ -4485,12 +4493,14 @@ FxNodeId FxPage::insertBeforeOutput(const FxModuleSpec& spec) {
 }
 
 bool FxPage::removeConnection(FxConnectionId id) {
+    HistoryEdit documentEdit(*this,"removeConnection");
     const bool ok=document_->edit([id](FxGraph& g){return g.disconnect(id);});
     refresh(true);
     return ok;
 }
 
 bool FxPage::resetConnectionRouting(FxConnectionId id) {
+    HistoryEdit documentEdit(*this,"resetConnectionRouting");
     const bool ok=document_->edit([id](FxGraph& g){
         const auto* c=g.findConnection(id);
         if(c==nullptr || c->layout.empty()) return false;
@@ -4502,6 +4512,7 @@ bool FxPage::resetConnectionRouting(FxConnectionId id) {
 }
 
 bool FxPage::addLayoutPoint(FxConnectionId connection,FxPoint at) {
+    HistoryEdit documentEdit(*this,"addLayoutPoint");
     const auto index=canvas_.layoutInsertIndex(connection,{at.x,at.y});
     const bool ok=document_->edit([&](FxGraph& g){return g.addLayoutPoint(connection,index,at)==FxEditResult::Ok;});
     refresh(true);
@@ -4509,6 +4520,7 @@ bool FxPage::addLayoutPoint(FxConnectionId connection,FxPoint at) {
 }
 
 bool FxPage::moveLayoutPoint(FxConnectionId connection,std::size_t index,FxPoint at,bool live) {
+    HistoryEdit documentEdit(*this,"moveLayoutPoint");
     if(live) {
         if(!gestureActive_) beginParameterGesture();
         const bool ok=document_->gestureEdit([&](FxGraph& g){return g.moveLayoutPoint(connection,index,at)==FxEditResult::Ok;});
@@ -4520,12 +4532,14 @@ bool FxPage::moveLayoutPoint(FxConnectionId connection,std::size_t index,FxPoint
 }
 
 bool FxPage::removeLayoutPoint(FxConnectionId connection,std::size_t index) {
+    HistoryEdit documentEdit(*this,"removeLayoutPoint");
     const bool ok=document_->edit([&](FxGraph& g){return g.removeLayoutPoint(connection,index)==FxEditResult::Ok;});
     refresh(true);
     return ok;
 }
 
 void FxPage::setRoutingMode(FxRoutingMode mode) {
+    HistoryEdit documentEdit(*this,"setRoutingMode");
     if(mode==FxRoutingMode::Send) { refreshToolbar(); return; } // pending, never faked
     document_->edit([mode](FxGraph& g){g.setRoutingMode(mode);return true;});
     refresh(true);
@@ -4542,6 +4556,7 @@ void FxPage::requestClear() {
 }
 
 void FxPage::confirmClear() {
+    HistoryEdit documentEdit(*this,"confirmClear");
     overlay_.dismiss();
     // One canonical transaction (one undo step). Connections and their routing
     // points go with the modules; the processor prunes FX modulation routes.
@@ -4553,6 +4568,7 @@ void FxPage::confirmClear() {
 // One UNDO/REDO for the page: graph edits (the bus document) and CONTROL
 // edits (NODES authoring) are undone in the order they were made.
 void FxPage::undo() {
+    if(host_.undoDocument){host_.undoDocument();syncFromModel();return;}
     syncFromModel();
     const auto graphTop=graphSequences_.empty() ? 0u : graphSequences_.back();
     if(!controlUndo_.empty() && (controlUndo_.back().sequence>graphTop || !document_->canUndo())) { undoControl(); return; }
@@ -4564,6 +4580,7 @@ void FxPage::undo() {
     undoingGraph_=false;
 }
 void FxPage::redo() {
+    if(host_.redoDocument){host_.redoDocument();syncFromModel();return;}
     syncFromModel();
     const auto graphNext=graphRedoSequences_.empty() ? ~std::uint64_t{0} : graphRedoSequences_.back();
     if(!controlRedo_.empty() && (controlRedo_.back().sequence<graphNext || !document_->canRedo())) { redoControl(); return; }
@@ -4576,11 +4593,13 @@ void FxPage::redo() {
 }
 
 void FxPage::commitMove(FxNodeId id,juce::Point<int> topLeft) {
+    HistoryEdit documentEdit(*this,"commitMove");
     document_->edit([&](FxGraph& g){return g.moveNode(id,{float(topLeft.x),float(topLeft.y)})==FxEditResult::Ok;});
     refresh(true);
 }
 
 bool FxPage::connectPorts(FxPortRef from,FxPortRef to) {
+    HistoryEdit documentEdit(*this,"connectPorts");
     const bool ok=document_->edit([&](FxGraph& g) {
         g.disconnectPort(to.node,true,to.port);
         g.disconnectPort(from.node,false,from.port);
@@ -4591,11 +4610,13 @@ bool FxPage::connectPorts(FxPortRef from,FxPortRef to) {
 }
 
 void FxPage::disconnectPort(FxNodeId id,bool input,std::uint8_t port) {
+    HistoryEdit documentEdit(*this,"disconnectPort");
     document_->edit([&](FxGraph& g){return g.disconnectPort(id,input,port)>0;});
     refresh(true);
 }
 
 void FxPage::setNodeEnabled(FxNodeId id,bool enabled) {
+    HistoryEdit documentEdit(*this,"setNodeEnabled");
     document_->edit([&](FxGraph& g){return g.setEnabled(id,enabled)==FxEditResult::Ok;});
     refresh(true);
 }
@@ -4606,6 +4627,7 @@ void FxPage::beginParameterGesture() {
 }
 
 void FxPage::setParameter(FxNodeId id,FxParameterId parameter,float value) {
+    HistoryEdit documentEdit(*this,"setParameter");
     const auto apply=[&](FxGraph& g){return g.setParameter(id,parameter,value)==FxEditResult::Ok;};
     if(gestureActive_) document_->gestureEdit(apply); else document_->edit(apply);
     refresh(false);
@@ -4897,6 +4919,7 @@ void FxPage::refreshControl() {
 }
 
 bool FxPage::addControlSource(ModSource source,std::optional<FxPoint> at) {
+    HistoryEdit documentEdit(*this,"addControlSource");
     if(!bindings_.snapshot || !nodes::controlSourceExposed(source)
        || !nodes::controlSourceActive(source,bindings_.snapshot().modulation)) return false;
     auto& layout=controlLayout();
@@ -4909,6 +4932,7 @@ bool FxPage::addControlSource(ModSource source,std::optional<FxPoint> at) {
 }
 
 bool FxPage::addParameterNode(const ModAddress& address,std::optional<FxPoint> at) {
+    HistoryEdit documentEdit(*this,"addParameterNode");
     if(address.parameter==ModDestination::None) return false;
     auto& layout=controlLayout();
     const auto key=nodes::parameterKey(address);
@@ -4920,6 +4944,7 @@ bool FxPage::addParameterNode(const ModAddress& address,std::optional<FxPoint> a
 }
 
 nodes::ControlLinkCheck FxPage::connectControl(ModSource source,const ModAddress& address) {
+    HistoryEdit documentEdit(*this,"connectControl");
     nodes::ControlLinkCheck check;
     if(!bindings_.snapshot || !bindings_.addRoute || !bindings_.route || !bindings_.removeRoute) return check;
     check=nodes::checkControlLink(bindings_.snapshot(),source,address);
@@ -4945,6 +4970,7 @@ nodes::ControlLinkCheck FxPage::connectControl(ModSource source,const ModAddress
 }
 
 bool FxPage::deleteControlLink(std::uint32_t route) {
+    HistoryEdit documentEdit(*this,"deleteControlLink");
     if(route==0 || !bindings_.removeRoute) return false;
     pushControlUndo();
     const bool removed=bindings_.removeRoute(route);
@@ -4954,6 +4980,7 @@ bool FxPage::deleteControlLink(std::uint32_t route) {
 }
 
 bool FxPage::updateControlLink(const ModRoute& route) {
+    HistoryEdit documentEdit(*this,"updateControlLink");
     if(!bindings_.route || route.id==0) return false;
     if(!operatorGesture_) pushControlUndo();
     if(!bindings_.route(route)) { if(!operatorGesture_ && !controlUndo_.empty()) controlUndo_.pop_back(); return false; }
@@ -4962,6 +4989,7 @@ bool FxPage::updateControlLink(const ModRoute& route) {
 }
 
 bool FxPage::removeControlNode(const nodes::ControlNodeKey& key) {
+    HistoryEdit documentEdit(*this,"removeControlNode");
     if(key.kind==nodes::ControlNodeKind::Operator) return deleteControlOperator(key.op);
     if(bindings_.snapshot)
         for(const auto& r:bindings_.snapshot().modulation.routes)
@@ -4974,6 +5002,7 @@ bool FxPage::removeControlNode(const nodes::ControlNodeKey& key) {
 }
 
 void FxPage::moveControlNode(const nodes::ControlNodeKey& key,FxPoint at,bool commit) {
+    HistoryEdit documentEdit(*this,"moveControlNode");
     if(commit) pushControlUndo(); // a completed move is one undo step
     controlLayout().setPosition(key,at.x,at.y);
     if(commit) refreshControl();
@@ -5063,6 +5092,7 @@ void FxPage::placeOperatorBetween(std::uint32_t id,const nodes::ControlNodeKey& 
 }
 
 std::optional<std::uint32_t> FxPage::addControlOperator(ControlOpType type,std::optional<FxPoint> at) {
+    HistoryEdit documentEdit(*this,"addControlOperator");
     if(!bindings_.snapshot) return std::nullopt;
     ModulationState next; std::uint32_t id=0;
     if(!nodes::addControlOperator(bindings_.snapshot().modulation,type,next,id)) return std::nullopt;
@@ -5101,6 +5131,7 @@ juce::String connectionReason(const nodes::ControlLinkCheck& check,const Modulat
 }
 
 nodes::ControlLinkCheck FxPage::connectControlEdge(const nodes::ControlEndpoint& from,const nodes::ControlEndpoint& to) {
+    HistoryEdit documentEdit(*this,"connectControlEdge");
     nodes::ControlLinkCheck check;
     if(!bindings_.snapshot) return check;
     if(to.kind==nodes::ControlEndpoint::Kind::Parameter) {
@@ -5128,6 +5159,7 @@ nodes::ControlLinkCheck FxPage::connectControlEdge(const nodes::ControlEndpoint&
 }
 
 bool FxPage::disconnectControlInput(std::uint32_t op,std::uint8_t input) {
+    HistoryEdit documentEdit(*this,"disconnectControlInput");
     if(!bindings_.snapshot) return false;
     ModulationState next;
     if(!nodes::disconnectControlInput(bindings_.snapshot().modulation,op,input,next)) return false;
@@ -5136,6 +5168,7 @@ bool FxPage::disconnectControlInput(std::uint32_t op,std::uint8_t input) {
 }
 
 std::optional<std::uint32_t> FxPage::insertControlOperatorOnRoute(std::uint32_t route,ControlOpType type) {
+    HistoryEdit documentEdit(*this,"insertControlOperatorOnRoute");
     if(!bindings_.snapshot) return std::nullopt;
     const auto state=bindings_.snapshot();
     ModulationState next; std::uint32_t id=0;
@@ -5152,6 +5185,7 @@ std::optional<std::uint32_t> FxPage::insertControlOperatorOnRoute(std::uint32_t 
 }
 
 std::optional<std::uint32_t> FxPage::insertControlOperatorOnInput(std::uint32_t op,std::uint8_t input,ControlOpType type) {
+    HistoryEdit documentEdit(*this,"insertControlOperatorOnInput");
     if(!bindings_.snapshot) return std::nullopt;
     const auto state=bindings_.snapshot();
     ModulationState next; std::uint32_t id=0;
@@ -5168,6 +5202,7 @@ std::optional<std::uint32_t> FxPage::insertControlOperatorOnInput(std::uint32_t 
 }
 
 bool FxPage::deleteControlOperator(std::uint32_t op) {
+    HistoryEdit documentEdit(*this,"deleteControlOperator");
     if(!bindings_.snapshot) return false;
     ModulationState next;
     if(!nodes::deleteControlOperator(bindings_.snapshot().modulation,op,next)) return false;
@@ -5180,6 +5215,7 @@ bool FxPage::deleteControlOperator(std::uint32_t op) {
 }
 
 std::optional<std::uint32_t> FxPage::duplicateControlOperator(std::uint32_t op) {
+    HistoryEdit documentEdit(*this,"duplicateControlOperator");
     if(!bindings_.snapshot) return std::nullopt;
     const auto m=bindings_.snapshot().modulation;
     const auto* original=findControlOperator(m,op);
@@ -5293,6 +5329,7 @@ void FxPage::showControlCreateMenu(juce::Component& anchor,const nodes::ControlE
 }
 
 std::optional<std::uint32_t> FxPage::createConnectedControlOperator(ControlOpType type,const nodes::ControlEndpoint& dangling,std::optional<FxPoint> at) {
+    HistoryEdit documentEdit(*this,"createConnectedControlOperator");
     if(!bindings_.snapshot || !bindings_.modulation) return std::nullopt;
     auto state=bindings_.snapshot();
     const auto* info=controlOpInfo(type);
@@ -5320,6 +5357,7 @@ std::optional<std::uint32_t> FxPage::createConnectedControlOperator(ControlOpTyp
 }
 
 bool FxPage::togglePatternStep(std::uint32_t op,int step) {
+    HistoryEdit documentEdit(*this,"togglePatternStep");
     if(!bindings_.snapshot || step<0 || step>=32) return false;
     const auto& m=controlModulation_;
     const auto* node=findControlOperator(m,op);
@@ -5335,6 +5373,7 @@ SequencerSettings FxPage::sequencerSettings() const {
 }
 
 bool FxPage::setSequencerSettings(const SequencerSettings& settings) {
+    HistoryEdit documentEdit(*this,"setSequencerSettings");
     if(!bindings_.snapshot || !bindings_.modulation) return false;
     auto m=bindings_.snapshot().modulation;
     const auto& a=m.sequencer;
@@ -5350,14 +5389,16 @@ bool FxPage::setSequencerSettings(const SequencerSettings& settings) {
 }
 
 void FxPage::beginOperatorGesture() {
+    if(!operatorGesture_ && host_.documentTransaction)host_.documentTransaction(true,"Adjust CONTROL");
     if(operatorGesture_) return;
     pushControlUndo(); // the whole drag is one undo step
     operatorGesture_=true;
 }
 
-void FxPage::endOperatorGesture() { operatorGesture_=false; }
+void FxPage::endOperatorGesture() { if(operatorGesture_ && host_.documentTransaction)host_.documentTransaction(false,"");operatorGesture_=false; }
 
 bool FxPage::setOperatorParameter(std::uint32_t op,std::size_t index,float value) {
+    HistoryEdit documentEdit(*this,"setOperatorParameter");
     if(!bindings_.snapshot || !bindings_.modulation || index>=controlOpParameterCount) return false;
     auto m=bindings_.snapshot().modulation;
     const auto slot=controlOperatorSlot(m,op);
@@ -5475,6 +5516,7 @@ void FxPage::sampleControlMonitor() {
 }
 
 void FxPage::applyTemplate(int id) {
+    HistoryEdit documentEdit(*this,"applyTemplate");
     switch(id) {
     case 1: document_->edit([](FxGraph& g){g=makeDefaultFxGraph();return true;}); break;
     case 2: document_->edit([](FxGraph& g){g=makeSerialChainTemplate();return true;}); break;
@@ -5542,6 +5584,7 @@ juce::Rectangle<float> nodeRect(FxCanvas& canvas,const nodes::ControlNodeKey& ke
 }
 
 bool FxPage::deleteSelectedControlNodes() {
+    HistoryEdit documentEdit(*this,"deleteSelectedControlNodes");
     if(!bindings_.snapshot || !bindings_.modulation) return false;
     auto keys=controlMulti_;
     if(keys.empty() && controlSelection_.kind==ControlSelection::Kind::Node) keys.push_back(controlSelection_.key);
@@ -5576,6 +5619,7 @@ bool FxPage::deleteSelectedControlNodes() {
 }
 
 void FxPage::moveControlNodes(const std::vector<nodes::ControlNodeKey>& keys,juce::Point<float> delta) {
+    HistoryEdit documentEdit(*this,"moveControlNodes");
     if(keys.empty()) return;
     pushControlUndo(); // the whole group move is one undo step (layout only)
     for(const auto& key:keys) {
@@ -5588,6 +5632,7 @@ void FxPage::moveControlNodes(const std::vector<nodes::ControlNodeKey>& keys,juc
 }
 
 bool FxPage::alignControlNodes(Align mode) {
+    HistoryEdit documentEdit(*this,"alignControlNodes");
     auto keys=controlMulti_;
     const bool distribute=mode==Align::DistributeHorizontally || mode==Align::DistributeVertically;
     if(keys.size()<(distribute ? 3u : 2u)) return false;
@@ -5624,6 +5669,7 @@ bool FxPage::alignControlNodes(Align mode) {
 }
 
 std::size_t FxPage::autoLayoutControl() {
+    HistoryEdit documentEdit(*this,"autoLayoutControl");
     pushControlUndo(); // layout only: one undo step, no DSP change
     const auto count=nodes::autoLayoutControlGraph(controlModulation_,controlLayout());
     refreshControl();
@@ -5644,6 +5690,7 @@ std::vector<NodePalette::Entry> FxPage::paletteEntries(std::optional<nodes::Cont
 }
 
 void FxPage::addFromCatalog(int choice,std::optional<FxPoint> at) {
+    HistoryEdit documentEdit(*this,"addFromCatalog");
     if(choice>=FxModuleMenu::controlOperatorBase) { addControlOperator(static_cast<ControlOpType>(choice-FxModuleMenu::controlOperatorBase),at); return; }
     if(choice>=FxModuleMenu::controlSourceBase) { addControlSource(static_cast<ModSource>(choice-FxModuleMenu::controlSourceBase),at); return; }
     if(choice==FxModuleMenu::parameterPickerId) { showParameterPicker(*this,std::nullopt,at); return; }
@@ -5694,6 +5741,7 @@ std::size_t FxPage::copySelectedControlNodes() {
 }
 
 std::vector<std::uint32_t> FxPage::pasteControlNodes(std::optional<FxPoint> at) {
+    HistoryEdit documentEdit(*this,"pasteControlNodes");
     std::vector<std::uint32_t> created;
     if(clipboard_.operators.empty() || !bindings_.snapshot || !bindings_.modulation) return created;
     auto next=bindings_.snapshot().modulation;

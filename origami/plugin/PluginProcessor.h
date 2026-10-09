@@ -19,6 +19,7 @@
 // mct-origami-playable-keyboard-audio-v23.1
 #pragma once
 #include <JuceHeader.h>
+#include "DocumentHistory.h"
 #include <functional>
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
@@ -82,6 +83,29 @@ public:
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
+
+    // One user document history; host automation/restores and live MIDI are excluded.
+    void beginUiTransaction(const juce::String& name="Edit");
+    void beginUiTransaction(const char* name);
+    void endUiTransaction();
+    bool canUndoUi() const;
+    bool canRedoUi() const;
+    bool undoUi();
+    bool redoUi();
+    void clearUiHistory();
+    void markUiSaved();
+    bool uiAtSavedState() const;
+    std::size_t uiHistorySize() const;
+    std::size_t uiHistoryBytes() const;
+    void setUiHistoryContext(int page,unsigned bus=1);
+    std::pair<int,unsigned> uiHistoryContext() const;
+    class UiEdit final {
+    public:
+        UiEdit(OrigamiAudioProcessor& p,const char* name):p_(p){p_.beginUiTransaction(name);}
+        ~UiEdit(){p_.endUiTransaction();}
+        UiEdit(const UiEdit&)=delete;
+    private: OrigamiAudioProcessor& p_;
+    };
 
     // mct-origami-functional-osc-controls-v15
     bool setUiParameter(mct::origami::ParameterId,float) noexcept;
@@ -289,8 +313,13 @@ private:
     mct::origami::InstrumentState uiInstrumentState_{};
     std::atomic<std::uint64_t> uiOscillatorRevision_{1};
     std::atomic<std::uint64_t> uiModelRevision_{1};
-    void bumpUiModelRevision() noexcept { uiModelRevision_.fetch_add(1,std::memory_order_release); }
+    void bumpUiModelRevision() noexcept {
+        uiModelRevision_.fetch_add(1,std::memory_order_release);
+        // Edits after a queued restore must win at the next audio boundary.
+        if(restorePending_.load(std::memory_order_acquire) && (!history_ || !history_->active()))restoreMailbox_.publish(uiInstrumentState_);
+    }
     mct::origami::LatestStateMailbox<mct::origami::InstrumentState> restoreMailbox_;
+    std::atomic<bool> restorePending_{false};
 
     // Patch 14/19: non-blocking UI -> audio state transfer.
     mct::origami::PerformanceState uiPerformanceState_{};
@@ -356,8 +385,27 @@ private:
     std::map<mct::origami::OscillatorModuleId,UiWavetableSource> wavetableSources_; // under stateLock_
     UiPresetIdentity currentPreset_{mct::origami::content::ContentLibrary::initPresetId,"INIT"}; // under stateLock_
     juce::MemoryBlock initState_;
+    struct HistorySnapshot {
+        std::array<std::uint64_t,mct::origami::maxMacros> automationRevision{};
+        juce::MemoryBlock state; // canonical state with content payload factored out
+        UiPresetIdentity preset;
+        std::map<mct::origami::OscillatorModuleId,UiWavetableSource> sources;
+        bool same(const HistorySnapshot&) const;
+        std::size_t cost() const;
+    };
+    using History=mct::origami::DocumentHistory<HistorySnapshot>;
+    std::unique_ptr<History> history_;
+    mutable std::atomic<bool> historyHostReset_{false};
+    std::array<std::uint64_t,mct::origami::maxMacros> macroAutomationRevision_{}; // stateLock_
+    void reconcileHistoryHostReset() const;
+    HistorySnapshot captureHistory();
+    bool publishUiModulation(const mct::origami::ModulationState&) noexcept;
+    bool restoreHistory(const HistorySnapshot&);
+    void writeStateInformation(juce::MemoryBlock&,bool includeWavetables);
+
     bool restoreState(const void*,int);
-    std::vector<std::uint8_t> encodeContentTrailer() const;
+    std::vector<std::uint8_t> encodeContentTrailer(bool includeWavetables=true) const;
+    static std::vector<std::uint8_t> encodeHistoryContent(const UiPresetIdentity&,const std::map<mct::origami::OscillatorModuleId,UiWavetableSource>&);
     // Audio thread: a restore that arrives while the output is sounding is
     // applied one block later, after a short fade-out of that block.
     mct::origami::InstrumentState deferredRestore_{};

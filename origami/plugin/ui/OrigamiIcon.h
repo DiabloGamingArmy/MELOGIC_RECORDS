@@ -17,6 +17,7 @@ class OrigamiIcon {
 public:
     struct Layer { juce::Path path; float level=1.0f; };
 
+    static OrigamiIcon fromPath(juce::Path);
     static OrigamiIcon fromSvg(const void* data,std::size_t size);
 
     bool isValid() const noexcept { return !layers_.empty() && !bounds_.isEmpty(); }
@@ -34,10 +35,14 @@ private:
     juce::Rectangle<float> bounds_{};
 };
 
+juce::Path pulldownChevron(); // shared Wavetable rail geometry, centred on zero
+void drawPulldownChevron(juce::Graphics&,juce::Point<float> centre,juce::Colour);
+
 // Every icon Origami compiles in. Order is the LFO toolbar order.
 enum class IconId {
     LfoRetrigger,LfoEnvelope,LfoFree,LfoPingPong,LfoCustomPath,
     GridAlignment,SnapGrid,DirectionForward,DirectionBackward,
+    PresetPrevious,PresetNext,Undo,Redo,
     Count
 };
 

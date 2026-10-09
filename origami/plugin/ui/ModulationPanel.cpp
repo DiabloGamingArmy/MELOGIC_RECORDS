@@ -3010,6 +3010,8 @@ bool MacroPanel::applyName(std::size_t id,const std::array<char,ModulationState:
     return bindings_.macroName(unsigned(id-1),juce::String(name.data()));
 }
 bool MacroPanel::undo() {
+    for(auto* c=getParentComponent();c;c=c->getParentComponent())
+        if(auto* host=dynamic_cast<DocumentActionHost*>(c))return host->replayDocumentAction(false);
     if(undo_.empty()) return false;
     auto step=undo_.back(); undo_.pop_back();
     if(step.renamed) {
@@ -3025,6 +3027,8 @@ bool MacroPanel::undo() {
 }
 
 bool MacroPanel::redo() {
+    for(auto* c=getParentComponent();c;c=c->getParentComponent())
+        if(auto* host=dynamic_cast<DocumentActionHost*>(c))return host->replayDocumentAction(true);
     if(redo_.empty()) return false;
     auto step=redo_.back(); redo_.pop_back();
     if(step.renamed) {

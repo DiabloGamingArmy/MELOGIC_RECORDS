@@ -925,15 +925,19 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
 FxGraphDocument::FxGraphDocument(FxGraph initial):graph_(std::move(initial)) {}
 
 void FxGraphDocument::commit(FxGraph next) {
+    if(onEditBegin)onEditBegin();
     undo_.push_back(std::move(graph_));
     if(undo_.size()>historyLimit) undo_.erase(undo_.begin());
     redo_.clear();
     graph_=std::move(next);
     ++revision_;
     notify();
+    if(onEditEnd)onEditEnd();
 }
 
 void FxGraphDocument::beginGesture() {
+    if(gestureStart_)return;
+    if(onEditBegin)onEditBegin();
     gestureStart_=graph_;
 }
 
@@ -941,10 +945,12 @@ void FxGraphDocument::endGesture() {
     if(!gestureStart_) return;
     auto start=std::move(*gestureStart_);
     gestureStart_.reset();
-    if(start==graph_) return;
-    undo_.push_back(std::move(start));
-    if(undo_.size()>historyLimit) undo_.erase(undo_.begin());
-    redo_.clear();
+    if(start!=graph_) {
+        undo_.push_back(std::move(start));
+        if(undo_.size()>historyLimit) undo_.erase(undo_.begin());
+        redo_.clear();
+    }
+    if(onEditEnd)onEditEnd();
 }
 
 bool FxGraphDocument::undo() {

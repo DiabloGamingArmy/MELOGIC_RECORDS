@@ -48,6 +48,16 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String&,const std:
         ? juce::PopupMenu::Options().withTargetScreenArea({mouse.x,mouse.y,1,1})
         : juce::PopupMenu::Options().withTargetComponent(&anchor);
     menu.showMenuAsync(options,
-        [safe,callback=std::move(callback)](int id) mutable {if(safe!=nullptr&&id>0&&callback)callback(id);});
+        [safe,callback=std::move(callback)](int id) mutable {
+            if(safe==nullptr || id<=0 || !callback) return;
+            juce::Component::SafePointer<juce::Component> owner;
+            for(auto* c=safe.getComponent();c;c=c->getParentComponent()) {
+                if(bool(c->getProperties()["mct.history.excludeMenu"]))break;
+                if(dynamic_cast<DocumentActionHost*>(c)) {owner=c;break;}
+            }
+            if(owner) dynamic_cast<DocumentActionHost*>(owner.getComponent())->beginDocumentAction();
+            callback(id);
+            if(owner) dynamic_cast<DocumentActionHost*>(owner.getComponent())->endDocumentAction();
+        });
 }
 }
