@@ -644,13 +644,11 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     cachedHostBpm_.store(hostBpm,std::memory_order_release);
     engine_.setHostTransport(transport);
 
-    // Patch 03/19: reuse capacity-prepared MIDI workspaces. Do not grow/mutate
-    // the host wrapper's MIDI buffer with Origami-generated events.
+    // Bounded UI and generated MIDI workspaces; host MIDI stays in place.
     auto& inputMidi=inputMidiScratch_;
     auto& scheduled=scheduledMidiScratch_;
     inputMidi.clear();
     scheduled.clear();
-    inputMidi.addEvents(midi,0,-1,0);
 
     if(const int pitch=pendingUiPitch_.exchange(-1,std::memory_order_acq_rel);pitch>=0)
         inputMidi.addEvent(juce::MidiMessage::pitchWheel(1,pitch),0);
@@ -661,42 +659,9 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // CriticalSection can ever enter processBlock().
     drainUiKeyboardMidi(inputMidi);
 
-    // V36: publish raw performance input independently of ARP state. The UI
-    // consumes only lock-free atomics; the audio thread never waits on it.
-    auto heldLow=performanceUiHeldLow_.load(std::memory_order_relaxed);
-    auto heldHigh=performanceUiHeldHigh_.load(std::memory_order_relaxed);
-    for(const auto metadata:inputMidi) {
-        const auto& message=metadata.getMessage();
-        if(!message.isNoteOnOrOff()) continue;
-        const int note=juce::jlimit(0,127,message.getNoteNumber());
-        const bool on=message.isNoteOn();
-        const std::uint64_t bit=std::uint64_t{1}<<(note&63);
-        if(note<64) { if(on) heldLow|=bit; else heldLow&=~bit; }
-        else { if(on) heldHigh|=bit; else heldHigh&=~bit; }
-        if(on) performanceUiVelocity_[static_cast<std::size_t>(note)].store(
-            static_cast<std::uint8_t>(juce::jlimit(1,127,juce::roundToInt(message.getFloatVelocity()*127.0f))),
-            std::memory_order_relaxed);
-    }
-    performanceUiHeldLow_.store(heldLow,std::memory_order_release);
-    performanceUiHeldHigh_.store(heldHigh,std::memory_order_release);
-
     if(arpState_.enabled) {
         if(!arpWasEnabled_){resetArpeggiatorRuntime(true);arpWasEnabled_=true;}
-        const double bpm=currentArpBpm();
-        int schedulerCursor=0;
-        for(const auto metadata:inputMidi) {
-            const int eventSample=juce::jlimit(schedulerCursor,total,metadata.samplePosition);
-            advanceArpeggiator(scheduled,schedulerCursor,eventSample,bpm);
-            const auto& message=metadata.getMessage();
-            if(message.isNoteOnOrOff()) captureArpNote(message,scheduled,eventSample);
-            else scheduled.addEvent(message,eventSample);
-            schedulerCursor=eventSample;
-        }
-        advanceArpeggiator(scheduled,schedulerCursor,total,bpm);
-    } else {
-        if(arpWasEnabled_){resetArpeggiatorRuntime(true);arpWasEnabled_=false;}
-        scheduled.addEvents(inputMidi,0,-1,0);
-    }
+    } else if(arpWasEnabled_){resetArpeggiatorRuntime(true);arpWasEnabled_=false;}
 
     // mct-origami-audio-reengineer-p06.3-local-source
     // One stable engine snapshot per DAW callback; exact MIDI offsets still split rendering.
@@ -720,21 +685,64 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // User buses render into prepared buffers; an oversized host block (beyond
     // the prepared capacity) renders MAIN only rather than ever allocating.
     auxThisBlock_=auxCapacity_>=total && !auxStorage_.empty();
-    const auto renderScheduled=[&](const juce::MidiBuffer& events) noexcept {
-        int cursor=0;
-        for(const auto metadata:events) {
-            const int eventSample=juce::jlimit(cursor,total,metadata.samplePosition);
-            renderRange(buffer,cursor,eventSample-cursor);
-            dispatchMidi(metadata.getMessage());
-            cursor=eventSample;
-        }
-        renderRange(buffer,cursor,total-cursor);
+    // B01: stream host MIDI without copying host-sized data into scratch.
+    // UI input is bounded by its fixed SPSC queue. Generated ARP messages are
+    // drained after each input event / 2048-sample scheduling span, so neither
+    // scratch buffer grows with the host's event count or block duration.
+    int cursor=0,schedulerCursor=0;
+    const auto dispatchAt=[&](const juce::MidiMessage& message,int position) noexcept {
+        const int at=juce::jlimit(cursor,total,position);
+        renderRange(buffer,cursor,at-cursor);dispatchMidi(message);cursor=at;
     };
-    // Patch 10/19 FIX5: render the post-merge stream, not raw host MIDI.
-    // inputMidi contains host MIDI + UI pitch/mod + lock-free UI keyboard notes.
-    // scheduled contains the transformed ARP output.
-    if(arpState_.enabled) renderScheduled(scheduled);
-    else renderScheduled(inputMidi);
+    const auto flushScheduled=[&]() noexcept {
+        for(const auto metadata:scheduled)dispatchAt(metadata.getMessage(),metadata.samplePosition);
+        scheduled.clear();
+    };
+    const double bpm=currentArpBpm();
+    const auto advanceTo=[&](int end) noexcept {
+        while(schedulerCursor<end) {
+            const int next=schedulerCursor+juce::jmin(2048,end-schedulerCursor);
+            advanceArpeggiator(scheduled,schedulerCursor,next,bpm);
+            flushScheduled();schedulerCursor=next;
+        }
+    };
+    auto heldLow=performanceUiHeldLow_.load(std::memory_order_relaxed);
+    auto heldHigh=performanceUiHeldHigh_.load(std::memory_order_relaxed);
+    const auto input=[&](const juce::MidiMessageMetadata& metadata) noexcept {
+        // Origami consumes short channel messages only. Constructing a JUCE
+        // MidiMessage from unsupported long SysEx/meta data allocates storage.
+        if(metadata.numBytes<=0 || metadata.numBytes>3)return;
+        const auto message=metadata.getMessage();
+        const int at=juce::jlimit(schedulerCursor,total,metadata.samplePosition);
+        if(message.isNoteOnOrOff()) {
+            const int note=juce::jlimit(0,127,message.getNoteNumber());
+            const bool on=message.isNoteOn();const auto bit=std::uint64_t{1}<<(note&63);
+            if(note<64){if(on)heldLow|=bit;else heldLow&=~bit;}
+            else {if(on)heldHigh|=bit;else heldHigh&=~bit;}
+            if(on)performanceUiVelocity_[std::size_t(note)].store(static_cast<std::uint8_t>(juce::jlimit(1,127,juce::roundToInt(message.getFloatVelocity()*127))),std::memory_order_relaxed);
+        } else if(message.isAllNotesOff() || message.isAllSoundOff()) {heldLow=heldHigh=0;}
+        if(arpState_.enabled) {
+            advanceTo(at);
+            if(message.isAllNotesOff() || message.isAllSoundOff()) {
+                // Stops must clear latch ownership too; otherwise the next
+                // ARP step resurrects the released notes.
+                resetArpeggiatorRuntime(false);scheduled.addEvent(message,at);
+            } else if(message.isNoteOnOrOff())captureArpNote(message,scheduled,at);
+            else scheduled.addEvent(message,at);
+            flushScheduled();
+        } else dispatchAt(message,at);
+    };
+    // Established ordering: host at zero, UI at zero, then later host input.
+    // The host buffer is read only; no allocation or dropping of short events.
+    auto host=midi.cbegin(),ui=inputMidi.cbegin();
+    while(host!=midi.cend() || ui!=inputMidi.cend()) {
+        if(ui==inputMidi.cend() || (host!=midi.cend() && (*host).samplePosition<=(*ui).samplePosition))input(*host++);
+        else input(*ui++);
+    }
+    if(arpState_.enabled)advanceTo(total);
+    renderRange(buffer,cursor,total-cursor);
+    performanceUiHeldLow_.store(heldLow,std::memory_order_release);
+    performanceUiHeldHigh_.store(heldHigh,std::memory_order_release);
     engine_.endHostBlock();
 
     // Every bus -> its prepared FX graph -> master sum -> GLOBAL FX.

@@ -12,7 +12,11 @@ if(APPLE)
   enable_language(OBJCXX)
 endif()
 option(ORIGAMI_BUILD_TESTS "Build standalone tests and note renderer" ON)
-option(ORIGAMI_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
+option(ORIGAMI_SANITIZE "Enable diagnostic sanitizers" OFF)
+set(ORIGAMI_SANITIZERS "address,undefined" CACHE STRING "Diagnostic sanitizers: address,undefined, address, or undefined")
+if(ORIGAMI_SANITIZE AND NOT ORIGAMI_SANITIZERS MATCHES "^(address,undefined|address|undefined)$")
+  message(FATAL_ERROR "Unsupported ORIGAMI_SANITIZERS selection")
+endif()
 
 # mct-origami-audio-reengineer-p18-simd-profiling
 # Patch 18 is measurement infrastructure, not an unconditional SIMD rewrite.
@@ -57,8 +61,8 @@ foreach(target origami_core origami_patch)
   endif()
   if(ORIGAMI_SANITIZE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_definitions(${target} PUBLIC ORIGAMI_SANITIZED=1)
-    target_compile_options(${target} PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
-    target_link_options(${target} PUBLIC -fsanitize=address,undefined)
+    target_compile_options(${target} PUBLIC -fsanitize=${ORIGAMI_SANITIZERS} -fno-omit-frame-pointer)
+    target_link_options(${target} PUBLIC -fsanitize=${ORIGAMI_SANITIZERS})
   endif()
 endforeach()
 
@@ -288,6 +292,13 @@ if(ORIGAMI_BUILD_VST3)
     target_compile_definitions(origami_perf_bench PRIVATE ${origami_plugin_definitions})
     target_include_directories(origami_perf_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/OrigamiPlugin_artefacts/JuceLibraryCode")
     target_link_libraries(origami_perf_bench PRIVATE OrigamiPlugin origami_patch OrigamiAssets juce::juce_audio_utils juce::juce_gui_extra)
+    # B01: production processor + direct-kernel adversarial regression gate.
+    add_executable(origami_dsp_torture tests/DspTortureTests.cpp)
+    target_compile_definitions(origami_dsp_torture PRIVATE ${origami_plugin_definitions})
+    target_include_directories(origami_dsp_torture PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/OrigamiPlugin_artefacts/JuceLibraryCode")
+    target_link_libraries(origami_dsp_torture PRIVATE OrigamiPlugin origami_patch OrigamiAssets juce::juce_audio_utils juce::juce_gui_extra)
+    add_test(NAME origami_dsp_torture COMMAND origami_dsp_torture)
+    set_tests_properties(origami_dsp_torture PROPERTIES TIMEOUT 900)
     add_custom_target(origami_plugin_rt_gate
       COMMAND $<TARGET_FILE:origami_plugin_tests>
       DEPENDS origami_plugin_tests
