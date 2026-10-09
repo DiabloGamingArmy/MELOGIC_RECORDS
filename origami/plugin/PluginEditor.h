@@ -28,7 +28,8 @@ class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropTarget,
                                          public juce::FileDragAndDropTarget,
                                          private juce::Timer,
-                                         private juce::AsyncUpdater {
+                                         private juce::AsyncUpdater,
+                                         private juce::ChangeListener {
 public:
     explicit OrigamiAudioProcessorEditor(OrigamiAudioProcessor&);
     ~OrigamiAudioProcessorEditor() override;
@@ -37,6 +38,7 @@ public:
     void paint(juce::Graphics&) override;
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;
+    void changeListenerCallback(juce::ChangeBroadcaster*) override;
 
     bool isInterestedInDragSource(const SourceDetails&) override;
     void itemDragEnter(const SourceDetails&) override;

@@ -1,3 +1,6 @@
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#endif
 #include "core/fx/SpectralTune.h"
 // mct-origami-deep-audit-p03-fix2-canonical-state-repair
 // mct-origami-deep-audit-p03-canonical-state
@@ -6667,6 +6670,149 @@ void spectralTunePluginAudit() {
     std::cout<<"PASS Spectral Tune plugin/UI audit\n";
 }
 
+void presetNodesSynchronizationAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();
+    auto& p=*owner;
+    p.prepareToPlay(48000,128);
+    auto editor=std::unique_ptr<OrigamiAudioProcessorEditor>(static_cast<OrigamiAudioProcessorEditor*>(p.createEditor()));
+    editor->setVisible(true);
+    ui::FxPage* page=nullptr; ui::OrigamiHeader* header=nullptr;
+    walk(*editor,[&](auto& c){if(auto* x=dynamic_cast<ui::FxPage*>(&c))page=x;if(auto* x=dynamic_cast<ui::OrigamiHeader*>(&c))header=x;});
+    check(page && header,"preset Nodes components");
+    header->selectMode(2);
+    auto save=[&](const char* name){ui::PresetSaveDialog::Fields f{name,"QA","","",""};check(editor->savePreset(f,false).wasOk(),"save synchronization fixture");return p.getUiCurrentPreset().id;};
+    auto a=page->addEffectAt(fx::FxEffectType::Drive,{110,150});
+    page->addEffectAt(fx::FxEffectType::Delay,{430,270});
+    const auto routeA=p.addUiRoute();
+    check(p.setUiRoute({routeA,true,ModSource::Lfo1,fxParameterAddress(mainBusId,a,1),.3f,true}),"A modulation fixture");
+    page->syncFromModel();
+    const auto graphA=page->graph(); const auto presetA=save("Sync A");
+    page->confirmClear();
+    auto b=page->addEffectAt(fx::FxEffectType::SpectralTune,{330,100});
+    page->addEffectAt(fx::FxEffectType::Limiter,{700,350});
+    const auto routeB=p.addUiRoute();
+    check(p.setUiRoute({routeB,true,ModSource::Env1,fxParameterAddress(mainBusId,b,fx::spectral::Snap),.6f,false}),"B different route fixture");
+    page->syncFromModel();
+    const auto graphB=page->graph(); const auto presetB=save("Sync B");
+    page->setParameter(b,fx::spectral::Snap,.19f);
+    page->setNodeEnabled(b,false);
+    page->commitMove(b,{750,180});
+    check(p.setUiRoute({routeB,true,ModSource::Random,fxParameterAddress(mainBusId,b,fx::spectral::Snap),.8f,true}),"same topology different modulation");
+    page->setRoutingMode(fx::FxRoutingMode::Parallel);
+    page->syncFromModel();
+    const auto graphC=page->graph(); const auto presetC=save("Sync C");
+    const auto busD=page->addBus(); check(busD!=mainBusId && busD!=0,"different bus fixture");
+    page->addEffectAt(fx::FxEffectType::Gain,{150,360});
+    const auto graphD=page->graph(); const auto presetD=save("Sync D");
+    auto verify=[&](const fx::FxGraph& expected){
+        check(page->graph()==expected,"authoritative graph matches preset");
+        check(page->canvas().connectionPathCount()==expected.connections().size(),"displayed connections match preset");
+        check(page->canvas().nodeComponentCount()==expected.nodes().size(),"displayed node count matches without graph interaction");
+        for(const auto& n:expected.nodes()) {
+            auto* c=page->canvas().nodeComponent(n.id);
+            check(c && c->getX()==juce::roundToInt(n.position.x) && c->getY()==juce::roundToInt(n.position.y),"displayed positions match without graph interaction");
+            if(n.kind==fx::FxNodeKind::Effect) walk(*c,[&](auto& child){
+                if(auto* button=dynamic_cast<juce::Button*>(&child)) if(button->getName()=="Power FX "+juce::String(n.id)) check(button->getToggleState()==n.enabled,"displayed power matches current preset");
+                if(auto* slider=dynamic_cast<juce::Slider*>(&child)) if(slider->getName().startsWith("FX "+juce::String(n.id)+" P")) {
+                    const auto pid=fx::FxParameterId(slider->getName().fromLastOccurrenceOf("P",false,false).getIntValue());
+                    check(std::abs(slider->getValue()-n.parameter(pid).value_or(0))<.002,"displayed quick parameter matches current preset");
+                }
+            });
+        }
+    };
+    auto browse=[&](const juce::String& id){editor->openContentBrowser(content::ContentType::Preset);check(editor->contentBrowser().selectId(id) && editor->contentBrowser().loadSelected(),"actual Browse load and close");check(!editor->contentBrowserOpen(),"Browse closes after load");};
+    browse(presetA); verify(graphA);
+    page->selectNode(a);
+    check(page->modulationRowCount()==1,"A inspector binds A modulation");
+    page->inspectorViewport().setViewPosition(1000,0);
+    check(page->addControlOperator(ControlOpType::Multiply).has_value(),"patch-local CONTROL undo fixture");
+    page->selectNode(a);
+    browse(presetB); verify(graphB);
+    check(page->selectedNode()==fx::invalidFxNodeId,"preset replacement clears selection");
+    check(page->inspectorViewport().getViewPositionX()==0 && page->modulationRowCount()==0,"empty inspector clears old routes and horizontal scroll");
+    check(!page->canUndo() && !page->canRedo() && !page->canUndoControl(),"full replacement clears graph and CONTROL history");
+    page->undo(); verify(graphB);
+    page->selectNode(b); check(page->modulationRowCount()==1,"B inspector binds B route");
+    browse(presetC); verify(graphC);
+    check(page->selectedNode()==fx::invalidFxNodeId,"same IDs clear old inspector binding");
+
+    browse(presetA); verify(graphA);
+    browse(content::ContentLibrary::initPresetId);
+    verify(p.getUiFxDocument().graph());
+    check(page->canvas().nodeComponentCount()==2,"complex to empty leaves only terminals");
+    browse(presetD); page->selectBus(busD); verify(graphD);
+    browse(presetA); check(page->selectedBus()==mainBusId,"removed active bus falls back to MAIN"); verify(graphA);
+    check(!header->modeEnabled(1),"MIXER is disabled in this build; no real transition exists");
+    for(int mode:{0,3,4}) {
+        header->selectMode(mode); browse(presetB); header->selectMode(2); verify(graphB);
+        browse(presetA); verify(graphA);
+    }
+    // Selecting then cancelling Browse does not preview or restore preset state.
+    editor->openContentBrowser(content::ContentType::Preset);
+    check(editor->contentBrowser().selectId(presetB),"Browse row selection");
+    editor->closeContentBrowser(); verify(graphA);
+    editor->stepPreset(1); verify(p.getUiFxDocument().graph());
+    browse(presetB); page->selectNode(b);
+    // Queue deletes from B, then load C with the same node and route IDs.
+    juce::TextButton* deleteButton=nullptr;
+    walk(*page->canvas().nodeComponent(b),[&](auto& c){if(auto* x=dynamic_cast<juce::TextButton*>(&c))if(x->getName()=="Delete FX "+juce::String(b))deleteButton=x;});
+    check(deleteButton && deleteButton->onClick,"queued delete fixture");
+#if JUCE_MAC
+    juce::TextButton* removeRoute=nullptr;
+    walk(page->moduleParametersPanel(),[&](auto& c){if(auto* x=dynamic_cast<juce::TextButton*>(&c))if(x->getName()=="FX modulation remove "+juce::String(routeB))removeRoute=x;});
+    check(removeRoute && removeRoute->onClick,"queued route delete fixture");
+    removeRoute->onClick();
+    deleteButton->onClick();
+#endif
+    browse(presetB); browse(presetC); browse(presetA); browse(presetC); verify(graphC);
+    #if JUCE_MAC
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode,.03,false);
+    #else
+    p.dispatchPendingMessages();
+    #endif
+    verify(graphC); check(page->graph().findNode(b),"stale deferred delete cannot mutate latest generation");
+
+    bool latestRoute=false;for(const auto& r:p.getUiInstrumentState().modulation.routes) latestRoute|=r.id==routeB && r.source==ModSource::Random;
+    check(latestRoute,"stale deferred route delete cannot mutate latest patch");
+    editor->openContentBrowser(content::ContentType::Preset);
+    for(const auto& id:{presetA,presetB,presetC,presetD}) check(editor->loadPresetRecord(*editor->contentLibrary().find(id)),"rapid loads while Browse stays open");
+    editor->closeContentBrowser(); verify(graphC); // D's MAIN graph is C; its second bus also survived.
+    check(p.getUiCurrentPreset().id==presetD,"rapid A B C D ends on D");
+    check(p.getUiFxWorkspace().contains(busD),"D bus list published");
+    // Host restoration completion, with no page/browser interaction.
+    juce::MemoryBlock stateA; check(editor->contentLibrary().loadPresetState(*editor->contentLibrary().find(presetA),stateA),"host restore bytes");
+    p.setStateInformation(stateA.getData(),int(stateA.getSize()));
+    #if JUCE_MAC
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode,.03,false);
+    #else
+    p.dispatchPendingMessages();
+    #endif
+    verify(graphA);
+    const auto identity=p.getUiCurrentPreset();
+    const auto instrument=encodeInstrumentState(p.getUiInstrumentState());
+    const auto workspace=p.getUiFxWorkspace().encode();
+    const auto generation=p.getUiFxWorkspace().generation();
+    const auto diagnostics=page->uiDiagnostics().controlRebuilds;
+    auto* component=page->canvas().nodeComponent(a);
+    for(int i=0;i<10;++i) {header->selectMode(0);header->selectMode(2);editor->openContentBrowser(content::ContentType::Preset);editor->closeContentBrowser();}
+    check(instrument==encodeInstrumentState(p.getUiInstrumentState()) && workspace==p.getUiFxWorkspace().encode() && generation==p.getUiFxWorkspace().generation(),"view synchronization never edits authoritative state");
+    check(component==page->canvas().nodeComponent(a) && diagnostics==page->uiDiagnostics().controlRebuilds,"unchanged boundaries reuse components and skip CONTROL rebuilds");
+    check(p.getUiCurrentPreset().id==identity.id && p.getUiCurrentPreset().name==identity.name,"synchronization preserves loaded preset identity");
+    auto comparison=std::make_unique<OrigamiAudioProcessor>();
+    comparison->prepareToPlay(48000,128);
+    juce::MemoryBlock sound; p.getStateInformation(sound);
+    comparison->setStateInformation(sound.getData(),int(sound.getSize()));
+    p.setStateInformation(sound.getData(),int(sound.getSize()));
+    editor->openContentBrowser(content::ContentType::Preset); editor->closeContentBrowser();
+    for(int block=0;block<32;++block) {
+        juce::AudioBuffer<float> left(2,128),right(2,128); left.clear();right.clear();
+        juce::MidiBuffer ml,mr;
+        if(block==0){ml.addEvent(juce::MidiMessage::noteOn(1,60,juce::uint8(100)),0);mr=ml;}
+        p.processBlock(left,ml);comparison->processBlock(right,mr);
+        for(int channel=0;channel<2;++channel) check(std::memcmp(left.getReadPointer(channel),right.getReadPointer(channel),128*sizeof(float))==0,"synchronized editor leaves identical-state audio bit equivalent");
+    }
+}
+
 void workspaceInspectorAudit() {
     auto owner = std::make_unique<OrigamiAudioProcessor>();
     auto &p = *owner;
@@ -6965,5 +7111,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

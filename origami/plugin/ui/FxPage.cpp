@@ -17,6 +17,21 @@ namespace mct::origami::ui {
 namespace {
 using namespace mct::origami::fx;
 
+// Menus run asynchronously (or a native nested message loop). Their captured
+// node/route IDs are meaningful only within the document lifetime that opened them.
+void showPatchChoiceMenu(juce::Component& anchor,const juce::String& title,
+                         const std::vector<NativeChoiceItem>& items,int current,
+                         std::function<void(int)> callback,NativeMenuLayout layout=NativeMenuLayout::Grouped) {
+    auto* owner=dynamic_cast<FxPage*>(&anchor);
+    if(!owner) owner=anchor.findParentComponentOfClass<FxPage>();
+    juce::Component::SafePointer<FxPage> page(owner);
+    juce::Component::SafePointer<juce::Component> component(&anchor);
+    const auto generation=owner ? owner->workspace().generation() : 0;
+    showNativeChoiceMenu(anchor,title,items,current,[page,component,generation,callback](int choice){
+        if(component && (!page || page->workspace().generation()==generation)) callback(choice);
+    },layout);
+}
+
 constexpr int inspectorHeight=250;
 
 // The same painter used by SYNTH's macro/LFO controls. The normalized FX
@@ -558,7 +573,8 @@ FxNodeComponent::FxNodeComponent(FxPage& page,FxNodeId id):page_(page),id_(id) {
     remove_.onClick=[this] {
         juce::Component::SafePointer<FxPage> safePage(&page_);
         const auto nodeId=id_;
-        juce::MessageManager::callAsync([safePage,nodeId]{if(safePage!=nullptr) safePage->deleteNode(nodeId);});
+        const auto generation=page_.workspace().generation();
+        juce::MessageManager::callAsync([safePage,nodeId,generation]{if(safePage && safePage->workspace().generation()==generation) safePage->deleteNode(nodeId);});
     };
     accessory_.setName("MASTER OUT add module");
     accessory_.onClick=[this] {
@@ -576,7 +592,7 @@ void FxNodeComponent::chooseSpectral(FxParameterId pid,juce::TextButton& anchor)
     std::vector<NativeChoiceItem> items;
     for(int i=0;i<p->choices;++i) items.push_back({i+1,p->choiceLabels[i],true,p->label});
     juce::Component::SafePointer<FxNodeComponent> safe(this);
-    showNativeChoiceMenu(anchor,p->label,items,0,[safe,pid,p](int value){if(safe && value>0) safe->page_.setParameter(safe->id_,pid,fxChoiceNormalized(*p,value-1));});
+    showPatchChoiceMenu(anchor,p->label,items,0,[safe,pid,p](int value){if(safe && value>0) safe->page_.setParameter(safe->id_,pid,fxChoiceNormalized(*p,value-1));});
 }
 
 
@@ -907,7 +923,7 @@ void FxNodeComponent::mouseUp(const juce::MouseEvent& e) {
 void FxNodeComponent::showMenu() {
     juce::Component::SafePointer<FxPage> page(&page_);
     const auto id=id_;
-    showNativeChoiceMenu(menu_,"EFFECT",{
+    showPatchChoiceMenu(menu_,"EFFECT",{
         {1,node_.enabled ? "Bypass" : "Enable",true,"EFFECT"},
         {2,"Disconnect All",true,"EFFECT"},
         {3,"Delete",true,"EFFECT"}},0,[page,id](int choice) {
@@ -1380,7 +1396,7 @@ void ControlNodeComponent::showMenu() {
     } else {
         items.push_back({2,"Remove from Canvas",view_.removable,"CONTROL",false,view_.removable ? juce::String() : juce::String("Delete its connections first")});
     }
-    showNativeChoiceMenu(*this,view_.title,items,0,[page,key,self,controlPort](int choice) {
+    showPatchChoiceMenu(*this,view_.title,items,0,[page,key,self,controlPort](int choice) {
         if(page==nullptr) return;
         if(choice==1 && self!=nullptr)
             page->showParameterPicker(*self,key.kind==nodes::ControlNodeKind::Operator ? operatorSource(key.op,std::uint8_t(std::max(0,controlPort))) : key.source,std::nullopt);
@@ -1890,7 +1906,7 @@ void FxCanvas::showControlLinkMenu(const ControlHit& hit) {
     constexpr int removeId=1000;
     items.push_back({removeId,hit.route!=0 ? "Delete Modulation" : "Disconnect",true,"CONNECTION"});
     juce::Component::SafePointer<FxPage> page(&page_);
-    showNativeChoiceMenu(*this,"CONTROL",items,0,[page,hit](int choice) {
+    showPatchChoiceMenu(*this,"CONTROL",items,0,[page,hit](int choice) {
         if(page==nullptr) return;
         if(choice==removeId) {
             if(hit.route!=0) page->deleteControlLink(hit.route); else page->disconnectControlInput(hit.op,hit.input);
@@ -1914,7 +1930,7 @@ void FxCanvas::showConnectionMenu(FxConnectionId id,juce::Point<float> at) {
     juce::Component::SafePointer<FxPage> page(&page_);
     const auto graphAt=toGraph(at);
     const auto pointIndex=layoutInsertIndex(id,at);
-    showNativeChoiceMenu(*this,"CONNECTION",items,0,[page,id,graphAt,pointIndex](int choice) {
+    showPatchChoiceMenu(*this,"CONNECTION",items,0,[page,id,graphAt,pointIndex](int choice) {
         if(page==nullptr) return;
         if(choice==addPoint) { page->document().edit([&](FxGraph& g){return g.addLayoutPoint(id,pointIndex,graphAt)==FxEditResult::Ok;}); page->syncFromModel(); return; }
         if(choice==resetRouting) { page->resetConnectionRouting(id); return; }
@@ -1936,7 +1952,7 @@ void FxCanvas::mouseDown(const juce::MouseEvent& e) {
         if(e.mods.isPopupMenu()) {
             juce::Component::SafePointer<FxPage> page(&page_);
             const auto target=*point;
-            showNativeChoiceMenu(*this,"ROUTING POINT",{
+            showPatchChoiceMenu(*this,"ROUTING POINT",{
                 {1,"Remove Routing Point",true,"ROUTING"},
                 {2,"Reset Routing",true,"ROUTING"}},0,[page,target](int choice) {
                 if(page==nullptr) return;
@@ -2537,7 +2553,7 @@ public:
             const char* names[]{"LOW CUT","LOW SHELF","BELL","NOTCH","HIGH SHELF","HIGH CUT"};
             for(int i=0;i<6;++i) items.push_back({i+1,names[i],true,"BAND TYPE"});
             juce::Component::SafePointer<FxEqEditor> safe(this);
-            showNativeChoiceMenu(type_,"BAND TYPE",items,0,[safe](int c){if(safe!=nullptr && c>0) safe->set(2,float(c-1)/5.0f);});
+            showPatchChoiceMenu(type_,"BAND TYPE",items,0,[safe](int c){if(safe!=nullptr && c>0) safe->set(2,float(c-1)/5.0f);});
         };
         add_.setName("FX EQ add band");
         add_.onClick=[this] {
@@ -3093,7 +3109,7 @@ class FxPage::ParametersPanel final : public juce::Component {
             items.push_back({i + 1, p->choiceLabels ? p->choiceLabels[i] : juce::String(i), true, {}});
         const auto nodeId = node_->id;
         juce::Component::SafePointer<ParametersPanel> safe(this);
-        showNativeChoiceMenu(anchor, p->label, items,
+        showPatchChoiceMenu(anchor, p->label, items,
                              fxChoiceIndex(*p, node_->parameter(id).value_or(p->defaultValue)) + 1,
                              [safe, p, nodeId, id](int c) {
                                  if (safe && c > 0)
@@ -3184,7 +3200,9 @@ class FxPage::ParametersPanel final : public juce::Component {
             m.remove->onClick = [this, id] {
                 auto remove = bindings_.removeRoute;
                 juce::Component::SafePointer<FxPage> page(&page_);
-                juce::MessageManager::callAsync([remove, page, id] {
+                const auto generation=page_.workspace().generation();
+                juce::MessageManager::callAsync([remove, page, id, generation] {
+                    if(!page || page->workspace().generation()!=generation) return;
                     if (remove)
                         remove(id);
                     if (page)
@@ -3228,7 +3246,7 @@ class FxPage::ParametersPanel final : public juce::Component {
         for (const auto &s : availableSources(state.modulation))
             items.push_back({int(s.source), sourceName(state.modulation, s.source), true, s.group});
         juce::Component::SafePointer<ParametersPanel> safe(this);
-        showNativeChoiceMenu(anchor, "SOURCE", items, 0, [safe, id](int c) {
+        showPatchChoiceMenu(anchor, "SOURCE", items, 0, [safe, id](int c) {
             if (!safe || c <= 0)
                 return;
             const auto source = static_cast<ModSource>(c);
@@ -3860,10 +3878,11 @@ private:
 FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings host)
     : workspace_(workspace),document_(&workspace.document(mainBusId)),bindings_(std::move(bindings)),
       peaks_(host.peaks),host_(host),viewState_(host.view),canvas_(*this),view_(canvas_) {
+    lastWorkspaceGeneration_=workspace_.generation();
     setWantsKeyboardFocus(true);
     routing_.setName("NODES routing workflow");
     routing_.setTooltip("Changes new-effect insertion workflow; existing connections are kept");
-    routing_.onClick=[this]{std::vector<NativeChoiceItem> items;int i=1;for(const char* name:{"SERIAL","PARALLEL","SPLIT","SEND","CUSTOM"}){NativeChoiceItem item{i,name,i!=4,{},int(graph().routingMode())==i};if(i==4)item.tooltip="Send / return routing is pending";items.push_back(item);++i;}juce::Component::SafePointer<FxPage> safe(this);showNativeChoiceMenu(routing_,"INSERTION WORKFLOW",items,0,[safe](int c){if(safe && c>0)safe->setRoutingMode(static_cast<FxRoutingMode>(c));});};
+    routing_.onClick=[this]{std::vector<NativeChoiceItem> items;int i=1;for(const char* name:{"SERIAL","PARALLEL","SPLIT","SEND","CUSTOM"}){NativeChoiceItem item{i,name,i!=4,{},int(graph().routingMode())==i};if(i==4)item.tooltip="Send / return routing is pending";items.push_back(item);++i;}juce::Component::SafePointer<FxPage> safe(this);showPatchChoiceMenu(routing_,"INSERTION WORKFLOW",items,0,[safe](int c){if(safe && c>0)safe->setRoutingMode(static_cast<FxRoutingMode>(c));});};
     addAndMakeVisible(routing_);
     clear_.onClick=[this]{requestClear();};
     clear_.setColour(juce::TextButton::textColourOffId,signalShade(.95f,.9f));
@@ -3928,7 +3947,7 @@ juce::Component& FxPage::macrosPanel() noexcept { return *macrosPanel_; }
 void FxPage::visibilityChanged() {
     const bool visible=isVisible();
     if(host_.nodeTelemetryEnabled) host_.nodeTelemetryEnabled(bus_,visible);
-    if(visible) { startTimerHz(30); if(modelDirty_ && document_!=nullptr) syncFromModel(); }
+    if(visible) { startTimerHz(30); syncFromModel(); }
     else stopTimer();
 }
 
@@ -4198,7 +4217,7 @@ void FxPage::refreshSidebar(bool includeControl) {
         if(busId!=mainBusId)
             row.onSecondaryClick=[safe,busId] {
                 if(safe==nullptr) return;
-                showNativeChoiceMenu(safe->sidebar_,"BUS",{{1,"Delete Bus",true,"BUS"}},0,[safe,busId](int choice) {
+                showPatchChoiceMenu(safe->sidebar_,"BUS",{{1,"Delete Bus",true,"BUS"}},0,[safe,busId](int choice) {
                     if(safe!=nullptr && choice==1) safe->requestDeleteBus(busId);
                 });
             };
@@ -4213,6 +4232,7 @@ void FxPage::refreshSidebar(bool includeControl) {
 }
 
 void FxPage::selectBus(BusId bus) {
+    refresh();
     if(bus==bus_ && document_==workspace_.find(bus)) return;
     if(host_.nodeTelemetryEnabled) host_.nodeTelemetryEnabled(bus_,false);
     busViews_[bus_]={view_.zoom(),view_.pan()};
@@ -4305,12 +4325,32 @@ void FxPage::updateMeters() {
 }
 
 void FxPage::refresh(bool force) {
-    if(workspace_.find(bus_)!=document_) {
-        // The bus was removed elsewhere (e.g. state restore): fall back to MAIN.
-        bus_=mainBusId;
-        document_=&workspace_.document(mainBusId);
+    const auto generation=workspace_.generation();
+    if(generation!=lastWorkspaceGeneration_ || workspace_.find(bus_)!=document_) {
+        // Document addresses and their local revisions can repeat after restore.
+        // Rebind before dereferencing the cached pointer; all presentation/history
+        // below belongs to the replaced document lifetime, even with identical IDs.
+        if(host_.nodeTelemetryEnabled) host_.nodeTelemetryEnabled(bus_,false);
+        if(!workspace_.contains(bus_)) bus_=mainBusId;
+        document_=&workspace_.document(bus_);
+        lastWorkspaceGeneration_=generation;
         canvas_.clearNodes();
         selected_=invalidFxNodeId;
+        controlSelection_={}; controlMulti_.clear(); clipboard_={};
+        controlUndo_.clear(); controlRedo_.clear();
+        graphSequences_.clear(); graphRedoSequences_.clear(); editSequence_=0;
+        operatorGesture_=false; gestureActive_=false;
+        inputMeters_.clear(); meterLeft_=meterRight_=0;
+        visualRuntime_={}; visualFxFrame_={}; visualPlan_=std::make_unique<CompiledModulation>();
+        lastEventCounts_={}; eventActivity_={};
+        pendingConfirm_=nullptr; overlay_.dismiss(); palette_.dismiss();
+        busViews_.clear(); view_.setView(1.0f,{0.0f,0.0f});
+        parametersPanel_->show(document_->graph(),invalidFxNodeId,{});
+        modulePanel_->setControlMode(false);
+        inspectorViewport().setViewPosition(0,0);
+        lastRevision_=lastModelRevision_=lastSidebarGraphRevision_=0;
+        modelDirty_=true;
+        if(host_.nodeTelemetryEnabled && isShowing()) host_.nodeTelemetryEnabled(bus_,true);
         force=true;
     }
     if(!force && lastRevision_==document_->revision()) return;
@@ -4513,6 +4553,7 @@ void FxPage::confirmClear() {
 // One UNDO/REDO for the page: graph edits (the bus document) and CONTROL
 // edits (NODES authoring) are undone in the order they were made.
 void FxPage::undo() {
+    syncFromModel();
     const auto graphTop=graphSequences_.empty() ? 0u : graphSequences_.back();
     if(!controlUndo_.empty() && (controlUndo_.back().sequence>graphTop || !document_->canUndo())) { undoControl(); return; }
     if(!document_->canUndo()) return;
@@ -4523,6 +4564,7 @@ void FxPage::undo() {
     undoingGraph_=false;
 }
 void FxPage::redo() {
+    syncFromModel();
     const auto graphNext=graphRedoSequences_.empty() ? ~std::uint64_t{0} : graphRedoSequences_.back();
     if(!controlRedo_.empty() && (controlRedo_.back().sequence<graphNext || !document_->canRedo())) { redoControl(); return; }
     if(!document_->canRedo()) return;
@@ -4655,7 +4697,7 @@ void FxPage::showModuleMenu(juce::Component& anchor,bool allowSources,std::funct
                             std::optional<FxPoint> at) {
     juce::Component::SafePointer<FxPage> safe(this);
     juce::Component::SafePointer<juce::Component> anchorRef(&anchor);
-    showNativeChoiceMenu(anchor,"ADD MODULE",moduleMenuItems(allowSources),0,[safe,chosen,at,anchorRef](int choice) {
+    showPatchChoiceMenu(anchor,"ADD MODULE",moduleMenuItems(allowSources),0,[safe,chosen,at,anchorRef](int choice) {
         if(safe==nullptr) return;
         if(choice>=FxModuleMenu::controlOperatorBase) { safe->addControlOperator(static_cast<ControlOpType>(choice-FxModuleMenu::controlOperatorBase),at); return; }
         if(choice>=FxModuleMenu::controlSourceBase) { safe->addControlSource(static_cast<ModSource>(choice-FxModuleMenu::controlSourceBase),at); return; }
@@ -5232,7 +5274,7 @@ void FxPage::showControlCreateMenu(juce::Component& anchor,const nodes::ControlE
     if(items.empty()) return;
     juce::Component::SafePointer<FxPage> safe(this);
     juce::Component::SafePointer<juce::Component> anchorRef(&anchor);
-    showNativeChoiceMenu(anchor,dangling.isOutput() ? "CONNECT TO" : "FEED FROM",items,0,[safe,dangling,at,anchorRef](int choice) {
+    showPatchChoiceMenu(anchor,dangling.isOutput() ? "CONNECT TO" : "FEED FROM",items,0,[safe,dangling,at,anchorRef](int choice) {
         if(safe==nullptr) return;
         if(choice==FxModuleMenu::parameterPickerId) {
             safe->showParameterPicker(anchorRef!=nullptr ? *anchorRef : *safe,dangling.outputSource(),at);
@@ -5391,7 +5433,7 @@ std::optional<ModAddress> FxPage::parameterPickerAddress(int itemId) const {
 
 void FxPage::showParameterPicker(juce::Component& anchor,std::optional<ModSource> source,std::optional<FxPoint> at) {
     juce::Component::SafePointer<FxPage> safe(this);
-    showNativeChoiceMenu(anchor,"PARAMETER",parameterPickerItems(source),0,[safe,source,at](int choice) {
+    showPatchChoiceMenu(anchor,"PARAMETER",parameterPickerItems(source),0,[safe,source,at](int choice) {
         if(safe==nullptr) return;
         const auto address=safe->parameterPickerAddress(choice);
         if(!address) return;
@@ -5448,7 +5490,7 @@ void FxPage::applyTemplate(int id) {
 
 void FxPage::showTemplatesMenu(juce::Component& anchor) {
     juce::Component::SafePointer<FxPage> safe(this);
-    showNativeChoiceMenu(anchor,"TEMPLATES",{
+    showPatchChoiceMenu(anchor,"TEMPLATES",{
         {1,"Empty (BUS 1 > MASTER OUT)",true,"GRAPH PRESETS"},
         {2,"Serial Chain (Drive > Delay > Reverb)",true,"GRAPH PRESETS"},
         {3,"Parallel Processing (dry + Reverb)",true,"GRAPH PRESETS"},

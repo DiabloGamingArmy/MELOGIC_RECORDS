@@ -998,6 +998,8 @@ bool OrigamiAudioProcessor::restoreState(const void* data, int size) {
     if(controlLayout) controlLayout_=std::move(*controlLayout); else controlLayout_.clear();
     controlLayout_.pruneSynthFilterDestinations(state.modulation);
     syncFxRenderer();
+    // Completion only: listeners read the latest fully restored state, never a queued snapshot.
+    sendChangeMessage();
     return true;
 }
 

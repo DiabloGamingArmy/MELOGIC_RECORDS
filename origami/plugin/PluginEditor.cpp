@@ -223,8 +223,10 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     // every current and future rotary Slider in the editor gets the same UX.
     addMouseListener(this,true);
     registerKnobDefaults(*this);
+    processor_.addChangeListener(this);
 }
 OrigamiAudioProcessorEditor::~OrigamiAudioProcessorEditor() {
+    processor_.removeChangeListener(this);
     removeMouseListener(this);
     stopTimer();
     setLookAndFeel(nullptr);
@@ -934,6 +936,7 @@ void OrigamiAudioProcessorEditor::openContentBrowser(mct::origami::content::Cont
 void OrigamiAudioProcessorEditor::closeContentBrowser() {
     if(!browserOpen_) return;
     browserOpen_=false;
+    contentLoaded();
     resized();
 }
 juce::String OrigamiAudioProcessorEditor::oscillatorLabel(unsigned oscillatorId) const {
@@ -944,7 +947,18 @@ juce::String OrigamiAudioProcessorEditor::oscillatorLabel(unsigned oscillatorId)
 void OrigamiAudioProcessorEditor::contentLoaded() {
     header_.setPresetName(processor_.getUiCurrentPreset().name);
     oscillators_.syncFromModel();
-    refreshModulationViews();
+    if(!sameModulationView(lastModulationView_,processor_.getUiInstrumentState().modulation))
+        refreshModulationViews();
+    fxPage_.syncFromModel();
+    macros_.syncFromModel();
+    filter_.syncFromModel();
+    performance_.syncArpFromModel();
+    if(arpSelected_) arpeggiator_.syncFromModel();
+    if(globalSelected_) global_.syncFromModel();
+    if(globalOverlay_.isShowing()) globalFx_->sync();
+}
+void OrigamiAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcaster*) {
+    contentLoaded();
 }
 bool OrigamiAudioProcessorEditor::loadPresetRecord(const mct::origami::content::ContentRecord& r) {
     bool ok=false;

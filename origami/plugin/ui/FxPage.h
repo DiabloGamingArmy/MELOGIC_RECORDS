@@ -521,8 +521,8 @@ public:
     std::uint32_t canvasPaintCount() const noexcept;
 
     // Interaction API (node components, canvas, toolbar, sidebar, inspector, tests).
-    fx::FxGraphDocument& document() noexcept { return *document_; }
-    const fx::FxGraph& graph() const noexcept { return document_->graph(); }
+    fx::FxGraphDocument& document() noexcept { refresh(); return *document_; }
+    const fx::FxGraph& graph() const noexcept { const auto* d=workspace_.find(bus_); return (d ? d : workspace_.find(mainBusId))->graph(); }
     fx::FxWorkspace& workspace() noexcept { return workspace_; }
     // Bus selection: the graph workspace shows the selected bus's graph.
     // Every bus keeps processing regardless of which one is shown.
@@ -583,8 +583,8 @@ public:
     juce::String inspectorHeadline() const;
     juce::Viewport& inspectorViewport() noexcept;
     void refreshInspectorTelemetry();
-    bool canUndo() const noexcept {return document_->canUndo() || !controlUndo_.empty();}
-    bool canRedo() const noexcept {return document_->canRedo() || !controlRedo_.empty();}
+    bool canUndo() const noexcept {const auto* d=workspace_.find(bus_); return d && (d->canUndo() || (lastWorkspaceGeneration_==workspace_.generation() && !controlUndo_.empty()));}
+    bool canRedo() const noexcept {const auto* d=workspace_.find(bus_); return d && (d->canRedo() || (lastWorkspaceGeneration_==workspace_.generation() && !controlRedo_.empty()));}
     std::size_t modulationRowCount() const;
     std::pair<float,float> meterLevels() const noexcept { return {meterLeft_,meterRight_}; }
     // The IN node meters (displayed L / R) and one telemetry tick (tests).
@@ -776,7 +776,7 @@ private:
     std::function<void()> pendingConfirm_;
     juce::String confirmTitle_,confirmBody_,confirmAction_;
     fx::FxNodeId selected_=fx::invalidFxNodeId;
-    std::uint64_t lastRevision_=0;
+    std::uint64_t lastRevision_=0,lastWorkspaceGeneration_=0;
     float meterLeft_=0.0f,meterRight_=0.0f;
 
     juce::TextButton routing_;

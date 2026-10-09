@@ -2,6 +2,7 @@
 #pragma once
 #include "core/fx/FxGraph.h"
 #include <functional>
+#include <atomic>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -17,6 +18,9 @@ public:
     FxWorkspace();
     FxWorkspace(const FxWorkspace&)=delete;
     FxWorkspace& operator=(const FxWorkspace&)=delete;
+
+    // Runtime document lifetime, independent of address reuse and local edit revisions.
+    std::uint64_t generation() const noexcept { return generation_.load(std::memory_order_acquire); }
 
     // Returns the bus's graph document, creating the neutral graph if new.
     FxGraphDocument& document(FxBusId);
@@ -45,6 +49,7 @@ private:
     FxGraphDocument& add(FxBusId,FxGraph);
     std::vector<std::pair<FxBusId,std::unique_ptr<FxGraphDocument>>> documents_;
     FxGlobalSettings globals_{};
+    std::atomic<std::uint64_t> generation_{0};
 };
 
 }

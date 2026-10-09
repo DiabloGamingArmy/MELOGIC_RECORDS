@@ -57,7 +57,7 @@ private:
     std::function<juce::String(unsigned)> nameOf_;
 };
 
-class OrigamiAudioProcessor final : public juce::AudioProcessor {
+class OrigamiAudioProcessor final : public juce::AudioProcessor, public juce::ChangeBroadcaster {
 public:
     OrigamiAudioProcessor();
     ~OrigamiAudioProcessor() override = default;
