@@ -1496,11 +1496,11 @@ service cloud.firestore {
 
   allow list: if canReadProductResource(productId);
 
-  allow create: if productId != 'origami' && productCreateIsAllowed(productId);
+  allow create: if productId != 'origami' && !('licensing' in request.resource.data) && productCreateIsAllowed(productId);
 
-  allow update: if productId != 'origami' && productUpdateIsAllowed();
+  allow update: if productId != 'origami' && !('licensing' in resource.data) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['licensing']) && productUpdateIsAllowed();
 
-  allow delete: if productId != 'origami' && signedIn()
+  allow delete: if productId != 'origami' && !('licensing' in resource.data) && signedIn()
     && resource.data.artistId == request.auth.uid
     && resource.data.status != 'published';
 

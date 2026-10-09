@@ -1,3 +1,4 @@
+const { assertMarketplaceProduct } = require('../licensing/entitlements')
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 
@@ -460,12 +461,14 @@ exports.createOrUpdateProductShell = onCall(
       ? db.collection('products').doc(requestedProductId)
       : db.collection('products').doc()
     const productId = productRef.id
+    assertMarketplaceProduct(productId)
 
     let response = null
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(productRef)
       const created = !snap.exists
       const existing = snap.exists ? (snap.data() || {}) : null
+      assertMarketplaceProduct(productId, existing || {})
 
       if (existing && existing.artistId !== uid) {
         throw new HttpsError('permission-denied', 'This product does not belong to the signed-in account.')

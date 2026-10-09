@@ -4794,3 +4794,18 @@
 .admin-engineering-triage-result{border-top:1px solid var(--admin-border);padding-top:.75rem}
 .admin-engineering-triage-result>strong{color:var(--admin-text);font-size:.82rem;text-transform:uppercase;letter-spacing:.05em}
 .admin-engineering-triage-result p{margin:.35rem 0 0;color:var(--admin-muted);line-height:1.5}
+
+/* Licensing uses the existing admin surface, controls and theme tokens. */
+.admin-licensing-dialog { color: var(--admin-text); background: var(--admin-card); border: 1px solid var(--admin-border); border-radius: 12px; padding: 24px; box-sizing: border-box; width: min(560px, 92vw); max-height: 90vh; overflow: auto; }
+.admin-licensing-dialog::backdrop { background: #0009; }
+.admin-licensing-dialog form, .admin-licensing-dialog label { display: grid; gap: 10px; }
+.admin-licensing-dialog form { gap: 12px; }
+.admin-licensing-dialog h2 { margin: 0 0 16px; }
+.admin-licensing-dialog [role="alert"]:empty { display: none; }
+.admin-licensing-dialog input, .admin-licensing-dialog select, .admin-licensing-dialog textarea { padding: 10px; color: inherit; background: transparent; border: 1px solid var(--admin-border-strong); border-radius: 6px; width: 100%; box-sizing: border-box; }
+.admin-licensing-dialog textarea { min-height: 160px; }
+.admin-licensing-table { overflow-x: auto; }
+.admin-licensing-table td, .admin-licensing-table th { padding: 12px; text-align: left; vertical-align: top; }
+
+.admin-licensing-filter { display: flex; align-items: center; gap: 12px; }
+.admin-licensing-filter select { color: var(--admin-text); background: var(--admin-input); border: 1px solid var(--admin-border); padding: 8px; border-radius: 6px; }

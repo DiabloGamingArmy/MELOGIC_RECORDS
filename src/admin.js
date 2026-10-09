@@ -1,3 +1,7 @@
+import { mountLicensingPanel } from './admin/licensingPanel'
+import { licensingRequest } from './data/licensingService'
+let licensingPanel = null
+let licensingAccessDialog = null
 import './styles/base.css'
 import './styles/admin.css'
 import {
@@ -334,6 +338,7 @@ window.__melogicAdminRequireStepUp=performAdminStepUp
 
 
 const SECTIONS = [
+  { key: 'licenseKeys', route: '/admin/license-keys', label: 'License Keys', icon: 'package', permission: 'settingsManage' },
   { key: 'dashboard', route: ROUTES.admin, label: 'Overview', icon: 'barChart', permission: 'admin' },
   { key: 'reviews', route: ROUTES.adminReviews, label: 'Audits', icon: 'checkCircle', permission: 'productReview' },
   { key: 'distribution', route: ROUTES.adminDistribution, label: 'Music Review', icon: 'music', permission: 'productReview' },
@@ -3164,6 +3169,7 @@ function renderAccountActionMenu({ uid, user, publicProfile, isSelf, canNote, ca
     <div class="admin-account-actions-menu ${open ? 'is-open' : ''}" data-account-actions-menu>
       <button type="button" class="admin-icon-button" data-toggle-account-actions="${escapeHtml(uid)}" aria-haspopup="menu" aria-expanded="${open}" title="Account actions">${iconSvg('moreVertical')}</button>
       <div class="admin-account-actions-dropdown" role="menu" ${open ? '' : 'hidden'}>
+        <button type="button" class="${itemClass}" data-admin-manage-products="${escapeHtml(uid)}" ${can('settingsManage') ? '' : 'disabled'}>Manage Products</button>
         <button type="button" class="${itemClass}" data-admin-give-product="${escapeHtml(uid)}" ${canGrantProduct ? '' : 'disabled'}>Give Product</button>
         <button type="button" class="${itemClass}" data-admin-message-user="${escapeHtml(uid)}" ${isSelf ? 'disabled' : ''}>Message</button>
         <button type="button" class="${itemClass}" data-admin-email-user="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled'}>Email User</button>
@@ -6356,7 +6362,15 @@ function communityAdminView() {
 }
 
 function render() {
+  licensingPanel?.dispose(); licensingPanel = null
+  licensingAccessDialog?.remove(); licensingAccessDialog = null
   state.section = currentSectionKey()
+  if (state.section === 'licenseKeys') {
+    renderLayout(can('settingsManage') ? '<div data-licensing-root></div>' : permissionState('settingsManage'))
+    const root = app.querySelector('[data-licensing-root]')
+    if (root) licensingPanel = mountLicensingPanel(root, { request: licensingRequest, allowed: can('settingsManage') })
+    return
+  }
   if (state.section === 'dashboard') return renderLayout(dashboardView())
   if (state.section === 'reviews') return renderLayout(reviewsView())
   if (state.section === 'products') return renderLayout(productsView())
@@ -9102,6 +9116,21 @@ function leaveAdminContactCallRoom() {
 }
 
 function bindEvents() {
+  app.querySelectorAll('[data-admin-manage-products]').forEach(button => button.addEventListener('click', () => {
+    if (!can('settingsManage')) return
+    licensingPanel?.dispose()
+    licensingAccessDialog?.remove()
+    const dialog = document.createElement('dialog')
+    licensingAccessDialog = dialog
+    dialog.className = 'admin-licensing-dialog'
+    dialog.innerHTML = '<button type="button" class="admin-secondary-button">Close</button><div data-access-root></div>'
+    document.body.append(dialog)
+    licensingPanel = mountLicensingPanel(dialog.querySelector('[data-access-root]'), { request: licensingRequest, allowed: true, targetUid: button.dataset.adminManageProducts })
+    const close = () => { licensingPanel?.dispose(); licensingPanel = null; dialog.remove(); licensingAccessDialog = null; button.focus() }
+    dialog.querySelector('button').onclick = close
+    dialog.addEventListener('cancel', e => { e.preventDefault(); close() })
+    dialog.showModal()
+  }))
   app.querySelectorAll('[data-engineering-triage]').forEach((button) => {
     button.addEventListener('click', async () => {
       const jobId = String(button.dataset.engineeringTriage || '').trim()

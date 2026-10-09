@@ -1,0 +1,29 @@
+A01 validation evidence (emulator/local fixtures only)
+Baseline: 3546d0c9958f5609609a52d05d3eec834d7dfefb
+Branch: mct-origami-nodes-visual-feedback-p03
+Initial working tree: clean
+
+Frontend/admin jsdom suite: 4 tests passed, zero skips.
+Focused frontend + security + production-handler denial + marketplace scope suite:
+10 tests passed, zero skips.
+Firestore rules emulator: 10 tests passed, zero skips.
+Final backend emulator (A01, L01.1, desktop auth, product storage scope):
+21 tests passed, zero skips.
+Full Functions suite: 125 total; 121 passed; 1 unchanged pre-existing failure;
+3 emulator-only skips, separately exercised under emulator above.
+Known failure: musicDistribution.test.js:75 expected /Spotify or Apple Music/
+against existing message with the text Spotify, or Apple Music.
+
+Origami CTest: origami_plugin_ui passed 41.62s; origami_account passed 2.08s.
+2/2 passed, total 43.70s. Origami/shared account sources unchanged.
+Web config check + Vite production build passed. Existing large-chunk advisory.
+Local browser fixture visual review: 1280x720 masked key list + generation dialog.
+Screenshots contain synthetic preview data only.
+Security scan: 24 changed text files; zero private-key/service-account/JWT findings.
+Manual review: server-only authoritative writes; no raw generated-key persistence,
+logging/audit or historical reveal; no test admin authorization provider shipped.
+Git diff whitespace check passed.
+
+Production deployment: not executed.
+Production accounts/keys/entitlements: no mutations.
+Account-Service P0 shutdown crash: independently open, not closed by this evidence.

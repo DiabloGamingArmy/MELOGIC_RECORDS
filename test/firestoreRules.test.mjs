@@ -275,3 +275,21 @@ test('L01 reserves Origami product identity against marketplace client edits', a
   await assertFails(updateDoc(doc(db, 'products/origami'), { title: 'Spoofed' }))
   await assertFails(deleteDoc(doc(db, 'products/origami')))
 })
+
+test('A01 generic licensing products and metadata cannot be created/edited by clients', async () => {
+  const db = testEnv.authenticatedContext('a01-creator').firestore()
+  const payload = { id: 'a01-product', artistId: 'a01-creator', title: 'Fixture', status: 'draft', visibility: 'private' }
+  await assertFails(setDoc(doc(db, 'products/a01-product'), { ...payload, licensing: { enabled: true, editions: ['beta'] } }))
+  await seed('products/a01-product', payload)
+  await assertFails(updateDoc(doc(db, 'products/a01-product'), { licensing: { enabled: true } }))
+  await seed('products/a01-product', { ...payload, licensing: { enabled: true, editions: ['beta'] } })
+  await assertFails(updateDoc(doc(db, 'products/a01-product'), { status: 'published' }))
+  await assertFails(deleteDoc(doc(db, 'products/a01-product')))
+  for (const claims of [{}, { admin: true, settingsManage: true }]) {
+    const client = testEnv.authenticatedContext('a01-creator', claims).firestore()
+    await assertFails(setDoc(doc(client, 'users/a01-creator/entitlements/origami'), { status: 'active', edition: 'beta' }))
+    await assertFails(getDoc(doc(client, 'licenseKeys/test-hash')))
+    await assertFails(setDoc(doc(client, 'licenseKeys/test-hash'), { status: 'active' }))
+    await assertFails(setDoc(doc(client, 'adminLogs/spoof'), { action: 'entitlement_granted' }))
+  }
+})
