@@ -6641,7 +6641,7 @@ void spectralTunePluginAudit() {
     walk(*editor,[&](auto& c){if(auto* x=dynamic_cast<ui::FxPage*>(&c))page=x;if(auto* b=dynamic_cast<juce::TextButton*>(&c))if(b->getButtonText()=="NODES" && !nodes)nodes=b;});check(page && nodes,"Spectral Nodes page");nodes->onClick();
     bool listed=false;for(const auto& item:page->moduleMenuItems(false))if(item.id==int(fx::FxEffectType::SpectralTune))listed=item.path.contains("SPECTRAL");check(listed,"Spectral category canonical menu");
     fx::FxNodeId id=0;page->document().edit([&](fx::FxGraph& g){id=g.insertEffectBeforeOutput(fx::FxEffectType::SpectralTune);return id!=0;});page->syncFromModel();page->selectNode(id);
-    check(p.getLatencySamples()==2048,"host reports Spectral latency");
+    check(p.getLatencySamples()==2046,"host reports Spectral latency");
     ui::FxNodeComponent* node=nullptr;walk(*page,[&](auto& c){if(auto* x=dynamic_cast<ui::FxNodeComponent*>(&c))if(x->id()==id)node=x;});check(node && node->getWidth()==300 && node->getHeight()==260,"Spectral card has compact keyboard footprint");
     int keys=0,knobs=0;std::vector<juce::Rectangle<int>> bounds;
     for(auto* child:node->getChildren()) {
@@ -6661,7 +6661,7 @@ void spectralTunePluginAudit() {
     node->setTelemetry(telemetry);check(*std::max_element(telemetry.spectrum.input.begin(),telemetry.spectrum.input.end())>0 && *std::max_element(telemetry.spectrum.output.begin(),telemetry.spectrum.output.end())>0,"Spectral captures contain actual nonzero input and mapped spectra");
     if(const char* folder=std::getenv("ORIGAMI_SPECTRAL_REPORT"))for(float scale:{.75f,1.f,1.5f,2.f}){const auto image=node->createComponentSnapshot(node->getLocalBounds(),true,scale);juce::FileOutputStream out(juce::File(juce::String(folder)+"/spectral-card-"+juce::String(scale,2)+".png"));out.setPosition(0);out.truncate();juce::PNGImageFormat{}.writeImageToStream(image,out);}
     for(auto size:{juce::Point<int>{1100,760},juce::Point<int>{1440,900}}){editor->setSize(size.x,size.y);editor->resized();check(node->getLocalBounds().contains(named("Spectral Tune scale")->getBounds()),"responsive scale selector remains in card");if(const char* folder=std::getenv("ORIGAMI_SPECTRAL_REPORT")){auto image=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.f);juce::FileOutputStream out(juce::File(juce::String(folder)+"/spectral-editor-"+juce::String(size.x)+".png"));out.setPosition(0);out.truncate();juce::PNGImageFormat{}.writeImageToStream(image,out);}}
-    juce::MemoryBlock state;p.getStateInformation(state);auto restored=std::make_unique<OrigamiAudioProcessor>();restored->prepareToPlay(48000,128);restored->setStateInformation(state.getData(),int(state.getSize()));check(restored->getUiFxDocument().graph()==page->graph() && restored->getLatencySamples()==2048,"Spectral processor save/load exact graph and host latency");
+    juce::MemoryBlock state;p.getStateInformation(state);auto restored=std::make_unique<OrigamiAudioProcessor>();restored->prepareToPlay(48000,128);restored->setStateInformation(state.getData(),int(state.getSize()));check(restored->getUiFxDocument().graph()==page->graph() && restored->getLatencySamples()==2046,"Spectral processor save/load exact graph and host latency");
     int routes=0;for(const auto& route:restored->getUiInstrumentState().modulation.routes)routes+=route.id && isFxDestination(route.destination.parameter);check(routes==3,"Spectral modulation routes survive state restore");
     check(page->deleteNode(id),"Spectral canonical delete");for(const auto& route:p.getUiInstrumentState().modulation.routes)check(!route.id || !isFxDestination(route.destination.parameter),"Spectral deletion cleans modulation routes");check(p.getLatencySamples()==0,"deleting final spectral node clears host latency");
     std::cout<<"PASS Spectral Tune plugin/UI audit\n";
@@ -6739,7 +6739,8 @@ void workspaceInspectorAudit() {
     };
     for (auto type : {fx::FxEffectType::SpectralTune, fx::FxEffectType::Drive, fx::FxEffectType::Filter,
                       fx::FxEffectType::Equalizer, fx::FxEffectType::Compressor, fx::FxEffectType::Flanger,
-                      fx::FxEffectType::Phaser, fx::FxEffectType::Spatial, fx::FxEffectType::Gain}) {
+                      fx::FxEffectType::Phaser, fx::FxEffectType::Spatial, fx::FxEffectType::Gain,
+                      fx::FxEffectType::Limiter,fx::FxEffectType::Delay,fx::FxEffectType::Reverb}) {
         page->document().replace(fx::makeDefaultFxGraph());
         fx::FxNodeId id = 0;
         page->document().edit([&](fx::FxGraph &g) {
@@ -6764,8 +6765,8 @@ void workspaceInspectorAudit() {
                 visual = &c;
         });
         if (type != fx::FxEffectType::Gain && type != fx::FxEffectType::Equalizer)
-            check(visual && visual->isVisible() && visual->getHeight() >= 150 && visual->getWidth() > 600,
-                  "shared visualization enlarges to inspector width");
+            check(visual && visual->isVisible() && visual->getHeight() >= 100 && visual->getWidth() >= 240 && visual->getWidth() <= 580,
+                  "descriptor visual has bounded width and useful height");
         if (type == fx::FxEffectType::Gain)
             check(!visual->isVisible(), "utility has no invented visualizer");
         for (auto *c : content->getChildren())
@@ -6849,6 +6850,14 @@ void workspaceInspectorAudit() {
             visual->mouseUp(e);
             check(std::abs(*page->graph().findNode(id)->parameter(fx::spectral::Low) - .15f) < .002,
                   "spectral boundary drag edits eligibility parameter");
+            viewport.setViewPosition(64,0);
+            auto scrolled=event(*visual).withNewPosition(juce::Point<float>{pos.getX()+pos.getWidth()*.15f,pos.getCentreY()});
+            const auto screenPoint=viewport.getLocalPoint(visual,scrolled.position.toInt());
+            check(viewport.getComponentAt(screenPoint)==visual,"scrolled spectral boundary uses viewport transform");
+            visual->mouseDown(scrolled);
+            visual->mouseDrag(scrolled.withNewPosition(juce::Point<float>{pos.getX()+pos.getWidth()*.3f,pos.getCentreY()}));
+            visual->mouseUp(scrolled);
+            check(std::abs(*page->graph().findNode(id)->parameter(fx::spectral::Low)-.3f)<.002,"visualizer dragging while horizontally scrolled edits canonical range");
             viewport.setViewPosition(0, 0);
             for (auto size :
                  {juce::Point<int>{1100, 760}, juce::Point<int>{1440, 900}, juce::Point<int>{1920, 1200}}) {
@@ -6864,13 +6873,55 @@ void workspaceInspectorAudit() {
         capture(*content, juce::String(fx::findFxEffect(type)->key) + "-inspector");
         capture(page->moduleParametersPanel(), juce::String(fx::findFxEffect(type)->key) + "-viewport");
         const float zoom = page->graphZoom();
-        viewport.setViewPosition(0, content->getHeight());
-        if (content->getHeight() > viewport.getHeight())
-            check(viewport.getViewPositionY() > 0, "inspector scroll reaches lower controls");
+        check(content->getHeight() <= viewport.getHeight(), "horizontal inspector has no vertical overflow");
+        viewport.setViewPosition(content->getWidth(),0);
+        if(content->getWidth()>viewport.getWidth()) {
+            check(viewport.getViewPositionX()>0,"rightmost inspector section reachable");
+            viewport.setViewPosition(0,0);
+            for(auto delta: {juce::Point<float>{-.1f,0.f},juce::Point<float>{0.f,-.1f}}) {
+                juce::MouseWheelDetails wheel{};wheel.deltaX=delta.x;wheel.deltaY=delta.y;
+                viewport.mouseWheelMove(event(viewport),wheel);
+                check(viewport.getViewPositionX()>0,"native horizontal and one-axis wheel navigate inspector");
+                viewport.setViewPosition(0,0);
+            }
+        }
+        if(content->getWidth()>viewport.getWidth()) {
+            viewport.setViewPosition(0,0);
+            juce::MouseWheelDetails wheel{};wheel.deltaY=-.1f;
+            const auto baseEvent=event(viewport).withNewPosition(juce::Point<float>{20,20});
+            const auto shifted=juce::MouseEvent(baseEvent.source,baseEvent.position,juce::ModifierKeys(juce::ModifierKeys::shiftModifier),baseEvent.pressure,baseEvent.orientation,baseEvent.rotation,baseEvent.tiltX,baseEvent.tiltY,baseEvent.eventComponent,baseEvent.originalComponent,baseEvent.eventTime,baseEvent.mouseDownPosition,baseEvent.mouseDownTime,baseEvent.getNumberOfClicks(),baseEvent.mouseWasDraggedSinceMouseDown());
+            viewport.mouseWheelMove(shifted,wheel);
+            check(viewport.getViewPositionX()>0,"Shift wheel navigates horizontal inspector");
+            // Scroll the last real control into view, then audit transformed hit bounds.
+            juce::Slider* last=nullptr;
+            for(auto* c:content->getChildren()) if(auto* slider=dynamic_cast<juce::Slider*>(c))
+                if(!last || slider->getRight()>last->getRight()) last=slider;
+            if(last) {
+                viewport.setViewPosition(std::max(0,last->getX()-40),0);
+                const auto point=viewport.getLocalPoint(last,last->getLocalBounds().getCentre());
+                check(viewport.getComponentAt(point)==last,"scrolled control paint and viewport hit coordinates agree");
+                if(last->onDragStart) last->onDragStart();
+                last->setValue(.61,juce::sendNotificationSync);
+                if(last->onDragEnd) last->onDragEnd();
+                check(std::abs(last->getValue()-.61)<.002,"scrolled parameter gesture retains canonical feedback");
+                const auto before=last->getValue();
+                last->mouseWheelMove(event(*last),wheel);
+                viewport.mouseWheelMove(event(*last),wheel);
+                check(last->getValue()==before,"descendant navigation leaves parameter untouched");
+                const int once=viewport.getViewPositionX();
+                viewport.mouseWheelMove(event(*last).getEventRelativeTo(&viewport),wheel);
+                check(viewport.getViewPositionX()==once,"bubbled wheel does not scroll twice");
+            }
+            if(visual && visual->isVisible()) {
+                viewport.setViewPosition(64,0);
+                auto point=viewport.getLocalPoint(visual,juce::Point<int>{100,60});
+                check(viewport.getComponentAt(point)==visual,"scrolled visualizer hit coordinates agree");
+            }
+        }
         check(page->graphZoom() == zoom, "inspector scrolling preserves graph zoom");
         page->selectNode(0);
         page->selectNode(id);
-        check(viewport.getViewPositionY() == 0, "changed selection resets scroll");
+        check(viewport.getViewPositionX() == 0 && viewport.getViewPositionY()==0, "changed selection resets scroll");
     }
     auto &panel = page->moduleParametersPanel();
     int utilities = 0;
@@ -6888,8 +6939,11 @@ void workspaceInspectorAudit() {
             if (b->getButtonText() == "FIT" || b->getName() == "NODES AUTO LAYOUT")
                 b->onClick();
         }
-    check(utilities == 5, "five graph utilities share Module Parameters header");
-    check(page->graphView().getY()==28 && panel.getHeight()==250,"workspace reclaims 16 graph pixels without growing inspector");
+    for(auto* a:panel.getChildren()) if(dynamic_cast<juce::TextButton*>(a))
+        for(auto* b:panel.getChildren()) if(a!=b && dynamic_cast<juce::TextButton*>(b))
+            check(!a->getBounds().intersects(b->getBounds()),"header command bounds never overlap");
+    check(utilities == 9, "all nine graph commands share Module Parameters header");
+    check(page->graphView().getY()==0 && panel.getHeight()==250,"workspace removes full 28px toolbar without growing inspector");
     const auto graphBefore = page->graph();
     page->setParameter(page->selectedNode(), 1, .33f);
     check(item(ui::OrigamiHeader::undoItem).enabled, "menu Undo enabled after graph edit");

@@ -40,7 +40,9 @@ private:
 };
 
 // Arbitrary live stereo audio. Periodic Hann analysis/synthesis, 75% overlap,
-// normalized by the sum of squared windows. Fixed N-sample causal latency.
+// normalized by the sum of squared windows. Exact N-2 sample causal latency:
+// the periodic Hann starts at zero,
+// and the frame is completed before reading its first nonzero synthesis sample.
 // Frame callback edits the full complex FFT in-place; it must restore Hermitian
 // symmetry. No allocation, FFT planning, locks or unbounded scheduling in tick.
 class StreamingSpectrum {
@@ -51,7 +53,7 @@ public:
     void tick(float left,float right,float& outLeft,float& outRight,FrameCallback,void*) noexcept;
     int size() const noexcept { return size_; }
     int hop() const noexcept { return hop_; }
-    int latency() const noexcept { return size_; }
+    int latency() const noexcept { return size_>0 ? size_-2 : 0; }
     std::int64_t frameStartSamples() const noexcept { return sampleCount_-size_; }
     std::size_t bytes() const noexcept;
 private:

@@ -80,6 +80,22 @@ void neutralTests() {
         std::cout<<"neutral rate="<<rate<<" fixture="<<fixture<<" RMS error="<<error<<" peak error="<<peak<<" latency="<<fx.latencySamples()<<" bytes="<<fx.storageBytes()<<'\n';
     }
 }
+void causalLatencyTests() {
+    for(double rate:{44100.,48000.,96000.,192000.}) {
+        const int n=rate>128000 ? 8192 : rate>64000 ? 4096 : 2048;
+        for(unsigned seed:{0u,1u,unsigned(n/8),unsigned(n/4-1)}) {
+            SpectralTune effect;effect.setProcessingPhase(seed);effect.prepare(rate);
+            check(effect.latencySamples()==n-2,"Hann streaming reports exact causal N-2 bound for every phase");
+            auto p=parameters();p[0]=0;p[3]=0;
+            std::vector<float> input(4*n,0);unsigned random=17;
+            for(int i=0;i<int(input.size());++i){random=random*1664525u+1013904223u;input[i]=float((double(random)/4294967296.-.5)*.2);}
+            auto output=process(effect,input,p,37);
+            double peak=0;
+            for(int i=n-2;i<int(output.size());++i)peak=std::max(peak,double(std::abs(output[i]-input[i-(n-2)])));
+            check(peak<1.e-6,"all scheduling phases reconstruct without future samples or extra buffering");
+        }
+    }
+}
 void tuningTests() {
     for(int pc=0;pc<12;++pc)for(float snap:{0.f,.5f,1.f}) {
         auto p=parameters();p[0]=snap;p[3]=0;p[4]=0;p[12]=float(1u<<pc)/4095;
@@ -128,7 +144,7 @@ void stateAndStreamingTests() {
         SpectralTune f;f.prepare(rate);auto extreme=parameters();for(auto& v:extreme)v=1;auto input=sine(400,rate,.1);if(input.size()>1){input[0]=std::nanf("");input[1]=std::numeric_limits<float>::infinity();}process(f,input,extreme,block);}
 }
 void motionAndBypassTests() {
-    for(bool clearMask:{false,true}){SpectralTune f;f.prepare(48000);auto p=parameters();p[12]=1.f/4095;float last=0,maxJump=0;double error=0;for(int block=0;block<400;++block){if(block==150){if(clearMask)p[12]=0;else p[0]=0;}float l[128],r[128];for(int i=0;i<128;++i)l[i]=r[i]=float(.2*std::sin(tau*280*(block*128+i)/48000));setRealtime(true);f.process(l,r,128,p.data());setRealtime(false);for(int i=0;i<128;++i){maxJump=std::max(maxJump,std::abs(l[i]-last));last=l[i];if(block>300)error=std::max(error,std::abs(l[i]-.2*std::sin(tau*280*(block*128+i-2048)/48000)));}}check(maxJump<.03 && error<1.e-6,"warm Snap zero / empty mask transition restores neutral phase without clicks");std::cout<<"neutral transition clearMask="<<clearMask<<" max sample jump="<<maxJump<<" settled error="<<error<<'\n';}
+    for(bool clearMask:{false,true}){SpectralTune f;f.prepare(48000);auto p=parameters();p[12]=1.f/4095;float last=0,maxJump=0;double error=0;for(int block=0;block<400;++block){if(block==150){if(clearMask)p[12]=0;else p[0]=0;}float l[128],r[128];for(int i=0;i<128;++i)l[i]=r[i]=float(.2*std::sin(tau*280*(block*128+i)/48000));setRealtime(true);f.process(l,r,128,p.data());setRealtime(false);for(int i=0;i<128;++i){maxJump=std::max(maxJump,std::abs(l[i]-last));last=l[i];if(block>300)error=std::max(error,std::abs(l[i]-.2*std::sin(tau*280*(block*128+i-2046)/48000)));}}check(maxJump<.03 && error<1.e-6,"warm Snap zero / empty mask transition restores neutral phase without clicks");std::cout<<"neutral transition clearMask="<<clearMask<<" max sample jump="<<maxJump<<" settled error="<<error<<'\n';}
 
     auto x=sine(280,48000);double phase=0;
     for(std::size_t i=0;i<x.size();++i){const double hz=i<x.size()/2 ? 280 : 440;
@@ -142,7 +158,7 @@ void motionAndBypassTests() {
         FxRenderer renderer;renderer.prepare(48000);renderer.setBypassMode(mode);renderer.sync(graph);float previous=0,maxJump=0;
         for(int block=0;block<300;++block){if(block==100 || block==200){graph.setEnabled(id,block==200);renderer.sync(graph);}float l[128],r[128];for(int i=0;i<128;++i)l[i]=r[i]=float(.2*std::sin(tau*280*(block*128+i)/48000));
             setRealtime(true);renderer.process(l,r,128);setRealtime(false);
-            for(int i=0;i<128;++i){maxJump=std::max(maxJump,std::abs(l[i]-previous));previous=l[i];check(std::isfinite(l[i]),"PWR transitions finite");if(block==199)check(std::abs(l[i]-.2*std::sin(tau*280*(block*128+i-2048)/48000))<1.e-6,"settled PWR bypass equals latency-aligned dry");}
+            for(int i=0;i<128;++i){maxJump=std::max(maxJump,std::abs(l[i]-previous));previous=l[i];check(std::isfinite(l[i]),"PWR transitions finite");if(block==199)check(std::abs(l[i]-.2*std::sin(tau*280*(block*128+i-2046)/48000))<1.e-6,"settled PWR bypass equals latency-aligned dry");}
         }
         check(maxJump<.03f,"PWR changes declick without stale-tail bursts");graph.setEnabled(id,true);
         std::cout<<"bypass mode="<<int(mode)<<" max sample jump="<<maxJump<<'\n';
@@ -159,8 +175,8 @@ void graphLatencyTests() {
     for(auto mode:{FxBypassMode::Hard,FxBypassMode::Crossfade,FxBypassMode::TailPreserve}) {
         FxRenderer r;r.prepare(48000);r.setBypassMode(mode);r.setTelemetryEnabled(true);r.sync(g);auto x=sine(300,48000,.2),l=x,rr=x;
         setRealtime(true);r.process(l.data(),rr.data(),int(l.size()));setRealtime(false);
-        check(r.latencySamples()==2048,"graph reports processor latency");
-        for(int i=2048;i<int(l.size());++i)check(std::abs(l[i]-x[i-2048])<1.e-6,"neutral graph unity after latency");
+        check(r.latencySamples()==2046,"graph reports processor latency");
+        for(int i=2046;i<int(l.size());++i)check(std::abs(l[i]-x[i-2046])<1.e-6,"neutral graph unity after latency");
         g.setEnabled(id,false);r.sync(g);l=x;rr=x;setRealtime(true);r.process(l.data(),rr.data(),int(l.size()));r.emergencyResetRuntime();setRealtime(false);
         check(!r.consumeNodeTelemetry(id).valid,"Panic invalidates renderer spectrum/waveform telemetry");
         g.setEnabled(id,true);
@@ -168,10 +184,10 @@ void graphLatencyTests() {
     FxNodeId source,out;FxGraph parallel;source=parallel.addBusSource(1,{0,0});out=parallel.addOutput({900,0});auto split=parallel.addSplit({100,0},2),merge=parallel.addMerge({700,0},2);id=parallel.addEffect(FxEffectType::SpectralTune,{350,0});parallel.setParameter(id,spectral::Snap,0);
     parallel.connect({source,0},{split,0});parallel.connect({split,0},{id,0});parallel.connect({id,0},{merge,0});parallel.connect({split,1},{merge,1});parallel.connect({merge,0},{out,0});
     FxRenderer r;r.prepare(48000);r.sync(parallel);auto x=sine(300,48000,.2),l=x,rr=x;setRealtime(true);r.process(l.data(),rr.data(),int(l.size()));setRealtime(false);
-    for(int i=2048;i<int(l.size());++i)check(std::abs(l[i]-x[i-2048])<1.e-6,"parallel merge aligns dry branch");
+    for(int i=2046;i<int(l.size());++i)check(std::abs(l[i]-x[i-2046])<1.e-6,"parallel merge aligns dry branch");
     FxEnvironment env;env.prepare(48000);auto bypass=makeDefaultFxGraph(7);FxGlobalSettings settings;settings.dryWet=.5;env.sync({{1,&g},{7,&bypass}},settings);l=x;rr=x;auto al=x,ar=x;float* aux[]{al.data(),ar.data()};setRealtime(true);env.process(l.data(),rr.data(),aux,2,int(l.size()));setRealtime(false);
-    check(env.latencySamples()==2048,"bus environment reports maximum latency");
-    for(int i=2048;i<int(l.size());++i)check(std::abs(l[i]-2*x[i-2048])<2.e-6,"global Mix and bus outputs align");
+    check(env.latencySamples()==2046,"bus environment reports maximum latency");
+    for(int i=2046;i<int(l.size());++i)check(std::abs(l[i]-2*x[i-2046])<2.e-6,"global Mix and bus outputs align");
     setRealtime(true);env.emergencyResetRuntime();setRealtime(false);std::fill(l.begin(),l.end(),0);std::fill(rr.begin(),rr.end(),0);std::fill(al.begin(),al.end(),0);std::fill(ar.begin(),ar.end(),0);setRealtime(true);env.process(l.data(),rr.data(),aux,2,int(l.size()));setRealtime(false);check(std::all_of(l.begin(),l.end(),[](float x){return x==0;}),"Panic clears graph/bus compensation histories");
     // Churn plans while rendering: adoption and retirement never allocate/delete.
     for(int i=0;i<40;++i){g=makeDefaultFxGraph();if(i&1)g.insertEffectBeforeOutput(FxEffectType::SpectralTune);env.sync({{1,&g},{7,&bypass}},settings);std::fill(l.begin(),l.end(),0);std::fill(rr.begin(),rr.end(),0);setRealtime(true);env.process(l.data(),rr.data(),aux,2,64);setRealtime(false);}
@@ -232,6 +248,6 @@ int main(int argc,char** argv) {
 #endif
     if(argc==3 && std::string(argv[1])=="--audio-fixtures"){audioFixtures(argv[2]);return failures ? 1 : 0;}
     if(argc==3 && std::string(argv[1])=="--benchmark") {benchmark(argv[2]);readHeapCounters();return rtAllocations || rtDeletes || rtMallocs || rtFrees ? 1 : 0;}
-    neutralTests();tuningTests();stateAndStreamingTests();motionAndBypassTests();graphLatencyTests();readHeapCounters();check(rtAllocations==0 && rtDeletes==0 && rtMallocs==0 && rtFrees==0,"process, reset, adoption: zero realtime allocations/deletions");
+    neutralTests();causalLatencyTests();tuningTests();stateAndStreamingTests();motionAndBypassTests();graphLatencyTests();readHeapCounters();check(rtAllocations==0 && rtDeletes==0 && rtMallocs==0 && rtFrees==0,"process, reset, adoption: zero realtime allocations/deletions");
     std::cout<<(failures ? "FAIL: " : "PASS: ")<<checks<<" spectral checks; RT allocations="<<rtAllocations<<" deletes="<<rtDeletes<<" C mallocs="<<rtMallocs<<" C frees="<<rtFrees<<'\n';return failures ? 1 : 0;
 }

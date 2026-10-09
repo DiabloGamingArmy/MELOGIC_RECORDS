@@ -1062,7 +1062,7 @@ const std::vector<FxEffectDescriptor>& fxEffectCatalog() noexcept {
         {FxEffectType::Diffuse,"diffuse","DIFFUSE",FxCategory::Time,FxVisual::Diffusion,true,diffuseParameters,std::size(diffuseParameters),&make<DiffuseFx>,0},
         {FxEffectType::Gain,"gain","GAIN",FxCategory::Utility,FxVisual::Utility,true,gainParameters,std::size(gainParameters),&make<GainFx>,0},
         {FxEffectType::StereoUtility,"stereo","STEREO UTILITY",FxCategory::Utility,FxVisual::Utility,true,stereoUtilityParameters,std::size(stereoUtilityParameters),&make<StereoUtilityFx>,0},
-        {FxEffectType::SpectralTune,"spectralTune","SPECTRAL TUNE",FxCategory::Spectral,FxVisual::Spectrum,true,spectral::parameters(),spectral::parameterCount,&spectral::create,2048},
+        {FxEffectType::SpectralTune,"spectralTune","SPECTRAL TUNE",FxCategory::Spectral,FxVisual::Spectrum,true,spectral::parameters(),spectral::parameterCount,&spectral::create,2046},
     };
     return catalog;
 }

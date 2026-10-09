@@ -17,7 +17,6 @@ namespace mct::origami::ui {
 namespace {
 using namespace mct::origami::fx;
 
-constexpr int toolbarHeight=28;
 constexpr int inspectorHeight=250;
 
 // The same painter used by SYNTH's macro/LFO controls. The normalized FX
@@ -2631,7 +2630,7 @@ private:
     const FxParameterDescriptor* descriptor(int band,int field) const { return findFxParameter(*findFxEffect(FxEffectType::Equalizer),id(band,field)); }
     float value(int band,int field) const { return node_.parameter(id(band,field)).value_or(descriptor(band,field)->defaultValue); }
     void set(int field,float v) { if(!syncing_) page_.setParameter(page_.selectedNode(),id(selected_,field),v); }
-    juce::Rectangle<float> curveArea() const { return getLocalBounds().toFloat().withHeight(160.0f); }
+    juce::Rectangle<float> curveArea() const { return getLocalBounds().toFloat().withHeight(float(std::max(80,getHeight()-74))); }
     static float xFor(float hz,juce::Rectangle<float> in) { return in.getX()+std::log(hz/20.0f)/std::log(1000.0f)*in.getWidth(); }
     static float yFor(float db,juce::Rectangle<float> in) { return in.getCentreY()-juce::jlimit(-24.0f,24.0f,db)/24.0f*in.getHeight()*0.5f; }
     juce::Point<float> point(int b,juce::Rectangle<float> in) const {
@@ -2663,8 +2662,28 @@ private:
     juce::Slider freq_,gain_,q_;
 };
 
-// One descriptor-driven, vertically scrollable detailed surface. Graph cards
-// retain spatial identity; this inspector owns one richer visualization.
+// Receives descendant wheel events exactly once; JUCE retains axis/inertia policy.
+class InspectorViewport final : public juce::Viewport {
+public:
+    void mouseWheelMove(const juce::MouseEvent& e,const juce::MouseWheelDetails& wheel) override {
+        auto* content=getViewedComponent();
+        const bool descendant=content && (e.originalComponent==content || content->isParentOf(e.originalComponent));
+        if(e.eventComponent==this && descendant) return;
+        juce::Viewport::mouseWheelMove(e.getEventRelativeTo(this),wheel);
+    }
+};
+// Declarative size classes derive from the shared visualization descriptor.
+int inspectorVisualWidth(FxVisual visual) {
+    switch(visual) {
+    case FxVisual::Utility: return 220;
+    case FxVisual::Spectrum: return 520;
+    case FxVisual::EqResponse: return 580;
+    case FxVisual::FilterResponse: return 360;
+    case FxVisual::Spatial: return 240;
+    default: return 280;
+    }
+}
+// One descriptor-driven horizontal surface with compact internal grids.
 class FxPage::ParametersPanel final : public juce::Component {
   public:
     explicit ParametersPanel(FxPage &page, ModulationBindings bindings)
@@ -2672,7 +2691,8 @@ class FxPage::ParametersPanel final : public juce::Component {
         setName("Unified module inspector");
         viewport_.setName("Module inspector scroll");
         viewport_.setViewedComponent(&rows_, false);
-        viewport_.setScrollBarsShown(true, false);
+        viewport_.setScrollBarsShown(false, true);
+        rows_.addMouseListener(&viewport_, true);
         viewport_.setScrollBarThickness(8);
         addAndMakeVisible(viewport_);
         rows_.addAndMakeVisible(power_);
@@ -2723,6 +2743,7 @@ class FxPage::ParametersPanel final : public juce::Component {
         };
     }
     ~ParametersPanel() override {
+        rows_.removeMouseListener(&viewport_);
         viewport_.setViewedComponent(nullptr, false);
     }
     juce::String headline() const {
@@ -2819,95 +2840,78 @@ class FxPage::ParametersPanel final : public juce::Component {
         visual_.repaint();
     }
     void resized() override {
-        viewport_.setBounds(getLocalBounds().reduced(10, 4));
-        const int width = std::max(100, viewport_.getWidth() - 10);
-        int y = 34;
-        power_.setBounds(0, 3, 42, 22);
-        remove_.setBounds(width - 28, 3, 28, 22);
+        viewport_.setBounds(getLocalBounds().reduced(6, 3));
+        const int height=std::max(180,viewport_.getHeight()-10);
         sections_.clear();
-        if (node_ && node_->effect == FxEffectType::SpectralTune) {
-            root_.setBounds(0, y, 68, 24);
-            scale_.setBounds(76, y, std::max(100, width - 300), 24);
-            all_.setBounds(width - 210, y, 62, 24);
-            clear_.setBounds(width - 142, y, 68, 24);
-            invert_.setBounds(width - 68, y, 68, 24);
-            y += 30;
-            for (int i = 0; i < 12; ++i)
-                notes_[i].setBounds(i * width / 12, y, width / 12 - 2, 26);
-            y += 36;
+        const auto* d=node_ ? findFxEffect(node_->effect) : nullptr;
+        const int firstWidth=d ? inspectorVisualWidth(d->visual) : 360;
+        power_.setBounds(0,0,42,22);
+        remove_.setBounds(firstWidth-28,0,28,22);
+        int x=firstWidth+16;
+        const bool spectral=node_ && node_->effect==FxEffectType::SpectralTune;
+        if(spectral) {
+            root_.setBounds(0,28,96,22); scale_.setBounds(102,28,182,22);
+            all_.setBounds(290,28,62,22); clear_.setBounds(358,28,68,22); invert_.setBounds(432,28,80,22);
+            for(int i=0;i<12;++i) notes_[i].setBounds(i*firstWidth/12,54,firstWidth/12-2,24);
         }
-        const auto *d = node_ ? findFxEffect(node_->effect) : nullptr;
-        const bool visible = d && d->visual != FxVisual::Utility && node_->kind == FxNodeKind::Effect && !eq_;
+        const bool visible=d && d->visual!=FxVisual::Utility && node_->kind==FxNodeKind::Effect && !eq_;
         visual_.setVisible(visible);
-        if (visible) {
-            visual_.setBounds(0, y, width, d->visual == FxVisual::Spectrum ? 180 : 150);
-            y += visual_.getHeight() + 12;
-        }
-        if (eq_) {
-            eq_->setBounds(0, y, width, 240);
-            y += 252;
-        }
-        const auto section = [&](juce::String name) {
-            sections_.push_back({name, y});
-            y += 24;
+        if(visible) visual_.setBounds(0,spectral ? 82 : 28,firstWidth,height-(spectral ? 82 : 28));
+        if(eq_) eq_->setBounds(0,28,firstWidth,height-28);
+        const auto pack=[&](juce::String title,std::vector<Entry*> group) {
+            if(group.empty()) return;
+            const int rows=std::max(1,(height-24)/84);
+            const int columns=(int(group.size())+rows-1)/rows;
+            const bool knobs=std::all_of(group.begin(),group.end(),[](auto* e){return e->knob;});
+            const int cellWidth=knobs ? 84 : 180;
+            const int width=columns*cellWidth;
+            sections_.push_back({title,x});
+            for(int i=0;i<int(group.size());++i) {
+                auto& e=*group[i];
+                e.cell={x+(i/rows)*cellWidth,24+(i%rows)*84,cellWidth-8,80};
+                if(e.knob) e.slider->setBounds(e.cell.withHeight(48).withSizeKeepingCentre(48,48));
+                else {
+                    const auto control=e.cell.withTrimmedTop(20).withHeight(24);
+                    if(e.slider) e.slider->setBounds(control.withTrimmedRight(52));
+                    if(e.choice) e.choice->setBounds(control);
+                }
+            }
+            x+=width+16;
         };
-        std::vector<Entry *> primary;
-        for (auto &e : entries_)
-            if (e.knob)
-                primary.push_back(&e);
-        if (!primary.empty()) {
-            section("PRIMARY");
-            const int columns = std::min(int(primary.size()), std::max(1, width / 110));
-            for (std::size_t i = 0; i < primary.size(); ++i) {
-                auto &e = *primary[i];
-                e.cell = {int(i % columns) * width / columns, y + int(i / columns) * 88, width / columns, 82};
-                e.slider->setBounds(e.cell.withHeight(52).withSizeKeepingCentre(52, 52));
+        std::vector<Entry*> advanced;
+        if(spectral) {
+            // Canonical IDs specify musical groups; layout uses the same packer.
+            for(const auto& group:std::vector<std::pair<juce::String,std::vector<FxParameterId>>>{
+                {"TUNING",{spectral::Snap,spectral::Shift,spectral::ShiftMode,spectral::Range}},
+                {"CHARACTER",{spectral::Smooth,spectral::Response,spectral::Formant,spectral::Stereo}},
+                {"RANGE / MIX",{spectral::Low,spectral::High,spectral::Mix}}}) {
+                std::vector<Entry*> selected;
+                for(auto id:group.second) for(auto& e:entries_) if(e.descriptor->id==id) selected.push_back(&e);
+                pack(group.first,selected);
             }
-            y += ((int(primary.size()) + columns - 1) / columns) * 88;
-        }
-        for (auto page : {FxParameterPage::Main, FxParameterPage::Advanced}) {
-            bool any = false;
-            for (auto &e : entries_)
-                any |= !e.knob && e.descriptor->page == page;
-            if (!any)
-                continue;
-            section(page == FxParameterPage::Main ? "CHARACTER" : "ADVANCED");
-            const int columns = width >= 700 ? 2 : 1;
-            int i = 0;
-            for (auto &e : entries_) {
-                if (e.knob || e.descriptor->page != page)
-                    continue;
-                e.cell = {i % columns * width / columns, y + i / columns * 48, width / columns - 12, 44};
-                auto control = e.cell.withTrimmedTop(18).withTrimmedRight(86);
-                if (e.slider)
-                    e.slider->setBounds(control.reduced(0, 3));
-                if (e.choice)
-                    e.choice->setBounds(control.withWidth(std::min(control.getWidth(), 220)));
-                ++i;
+        } else {
+            std::vector<Entry*> primary,character;
+            for(auto& e:entries_) {
+                if(e.descriptor->page==FxParameterPage::Advanced) advanced.push_back(&e);
+                else if(e.knob) primary.push_back(&e); else character.push_back(&e);
             }
-            y += ((i + columns - 1) / columns) * 48 + 8;
+            pack("PRIMARY",primary); pack("CHARACTER",character);
         }
-        if (node_ && node_->kind == FxNodeKind::Effect) {
-            section("MODULATION");
-            modulationY_ = y;
-            if (modulation_.empty())
-                y += 32;
-            for (auto &m : modulation_) {
-                m.y = y;
-                auto row = juce::Rectangle<int>(0, y, width, 32);
-                m.remove->setBounds(row.removeFromRight(26));
-                row.removeFromRight(4);
-                m.polarity->setBounds(row.removeFromRight(72));
-                row.removeFromRight(4);
-                m.enabled->setBounds(row.removeFromRight(42));
-                row.removeFromLeft(100);
-                m.source->setBounds(row.removeFromLeft(130));
-                row.removeFromLeft(8);
-                m.amount->setBounds(row.withTrimmedRight(50).reduced(0, 4));
-                y += 38;
+        if(node_ && node_->kind==FxNodeKind::Effect) {
+            sections_.push_back({"MODULATION",x}); modulationX_=x;
+            const int rows=std::max(1,(height-24)/72);
+            for(int i=0;i<int(modulation_.size());++i) {
+                auto& m=modulation_[i];m.x=x+(i/rows)*340;m.y=24+(i%rows)*72;
+                m.source->setBounds(m.x+84,m.y,136,22);
+                m.enabled->setBounds(m.x+224,m.y,40,22);
+                m.polarity->setBounds(m.x+268,m.y,68,22);
+                m.amount->setBounds(m.x+4,m.y+28,252,24);
+                m.remove->setBounds(m.x+308,m.y+28,28,24);
             }
+            x+=modulation_.empty() ? 220 : ((int(modulation_.size())+rows-1)/rows)*340;
         }
-        rows_.setSize(width, std::max(viewport_.getHeight(), y + 8));
+        if(!advanced.empty()) {x+=16;pack("ADVANCED",advanced);}
+        rows_.setSize(std::max(viewport_.getWidth(),x+8),height);
     }
 
   private:
@@ -2920,7 +2924,7 @@ class FxPage::ParametersPanel final : public juce::Component {
     };
     struct ModRow {
         ModRoute route;
-        int y = 0;
+        int x = 0, y = 0;
         std::unique_ptr<juce::Slider> amount;
         std::unique_ptr<juce::TextButton> source, remove, enabled, polarity;
     };
@@ -3046,15 +3050,15 @@ class FxPage::ParametersPanel final : public juce::Component {
             }
             for (auto &section : p.sections_) {
                 g.setColour(Palette::borderSoft().withAlpha(.4f));
-                g.drawHorizontalLine(section.second, 0, float(getWidth()));
-                text(g, section.first, {0, section.second + 3, getWidth(), 18}, Type::secondary,
+                g.drawVerticalLine(section.second-8, 0, float(getHeight()));
+                text(g, section.first, {section.second, 0, 240, 18}, Type::secondary,
                      Palette::muted());
             }
             for (auto &e : p.entries_) {
                 if (e.knob) {
-                    text(g, e.descriptor->label, e.cell.withTrimmedTop(54).withHeight(14), Type::label,
+                    text(g, e.descriptor->label, e.cell.withTrimmedTop(50).withHeight(14), Type::label,
                          Palette::secondary(), juce::Justification::centred);
-                    text(g, valueText(*p.node_, *e.descriptor), e.cell.withTrimmedTop(68).withHeight(14),
+                    text(g, valueText(*p.node_, *e.descriptor), e.cell.withTrimmedTop(64).withHeight(14),
                          Type::secondary, Palette::muted(), juce::Justification::centred);
                 } else {
                     text(g, e.descriptor->label, e.cell.withHeight(16), Type::label, Palette::secondary());
@@ -3067,14 +3071,14 @@ class FxPage::ParametersPanel final : public juce::Component {
                 juce::String label = "PARAM";
                 if (const auto *d = parameterDescriptor(*p.node_, fxAddressParameter(m.route.destination)))
                     label = d->label;
-                text(g, label, {0, m.y, 96, 32}, Type::label, Palette::secondary());
+                text(g, label, {m.x, m.y, 80, 22}, Type::label, Palette::secondary());
                 text(g, juce::String(m.route.amount, 2),
                      m.amount->getBounds().withX(m.amount->getRight() + 3).withWidth(45), Type::secondary,
                      Palette::muted());
             }
             if (p.modulation_.empty() && p.node_->kind == FxNodeKind::Effect)
-                text(g, "Drag a source onto a control, or right-click a control to assign modulation.",
-                     {0, p.modulationY_, getWidth(), 30}, Type::secondary, Palette::muted());
+                text(g, "Assign a source to a control.",
+                     {p.modulationX_, 28, 220, 30}, Type::secondary, Palette::muted());
         }
         ParametersPanel &owner;
     };
@@ -3244,7 +3248,7 @@ class FxPage::ParametersPanel final : public juce::Component {
     ModulationBindings bindings_;
     std::optional<FxNode> node_;
     std::array<ModRoute, ModulationState::capacity> routes_{};
-    juce::Viewport viewport_;
+    InspectorViewport viewport_;
     Visual visual_;
     Rows rows_;
     juce::TextButton power_{"PWR"}, remove_{"X"};
@@ -3253,7 +3257,7 @@ class FxPage::ParametersPanel final : public juce::Component {
     std::vector<Entry> entries_;
     std::vector<ModRow> modulation_;
     std::vector<std::pair<juce::String, int>> sections_;
-    int modulationY_ = 0;
+    int modulationX_ = 0;
     FxNodeId shownId_ = 0xffffffffu;
     BusId shownBus_ = 0;
     FxEffectType shownEffect_ = FxEffectType::None;
@@ -3658,7 +3662,7 @@ private:
 };
 
 // Existing 31px title shelf also owns compact graph utilities. The detailed
-// inspector is one full-width surface; CONTROL uses the same scroll contract.
+// audio inspector flows horizontally; CONTROL keeps its existing scroll surface.
 class FxPage::ModuleParametersPanel final : public Panel {
   public:
     ModuleParametersPanel(FxPage &page, ParametersPanel &parameters, ControlInspector &control)
@@ -3669,7 +3673,7 @@ class FxPage::ModuleParametersPanel final : public Panel {
         controlView_.setScrollBarThickness(8);
         addChildComponent(controlView_);
         for (auto *b :
-             {&page_.zoomOut_, &page_.zoomReset_, &page_.zoomIn_, &page_.zoomFit_, &page_.autoLayout_})
+             {&page_.zoomOut_, &page_.zoomReset_, &page_.zoomIn_, &page_.zoomFit_, &page_.autoLayout_, &page_.routing_, &page_.clear_, &page_.templates_, &page_.add_})
             addAndMakeVisible(*b);
     }
     ~ModuleParametersPanel() override {
@@ -3703,13 +3707,19 @@ class FxPage::ModuleParametersPanel final : public Panel {
         tools.removeFromLeft(8);
         page_.zoomFit_.setBounds(tools.removeFromLeft(42));
         tools.removeFromLeft(8);
-        page_.autoLayout_.setBounds(tools.removeFromLeft(100));
+        page_.autoLayout_.setBounds(tools.removeFromLeft(92));
+        tools.removeFromLeft(16);
+        page_.routing_.setBounds(tools.removeFromLeft(142)); tools.removeFromLeft(8);
+        page_.clear_.setBounds(tools.removeFromLeft(52)); tools.removeFromLeft(6);
+        page_.templates_.setBounds(tools.removeFromLeft(86)); tools.removeFromLeft(6);
+        page_.add_.setBounds(tools.removeFromLeft(120));
     }
 
   private:
     void paintContent(juce::Graphics &g, juce::Rectangle<int>) override {
         g.setColour(Palette::borderSoft());
         g.drawVerticalLine(192, 8, 24);
+        g.drawVerticalLine(574, 8, 24);
     }
     FxPage &page_;
     ParametersPanel &parameters_;
@@ -3933,12 +3943,6 @@ void FxPage::storeView() {
 
 void FxPage::resized() {
     auto area=getLocalBounds();
-    auto toolbar=area.removeFromTop(toolbarHeight).reduced(12,3);
-    toolbar.removeFromLeft(124);routing_.setBounds(toolbar.removeFromLeft(164));
-    add_.setBounds(toolbar.removeFromRight(140));toolbar.removeFromRight(8);
-    templates_.setBounds(toolbar.removeFromRight(104));toolbar.removeFromRight(12);
-    clear_.setBounds(toolbar.removeFromRight(70));
-
     // The sidebar owns the full height down to the keyboard; the graph sits
     // above the full-width MODULE PARAMETERS inspector on the right.
     sidebar_.setBounds(area.removeFromLeft(FxSidebar::width));
@@ -3956,12 +3960,6 @@ void FxPage::resized() {
 
 void FxPage::paint(juce::Graphics& g) {
     g.fillAll(Palette::background());
-    auto toolbar=getLocalBounds().removeFromTop(toolbarHeight);
-    g.setColour(Palette::panel());
-    g.fillRect(toolbar);
-    g.setColour(Palette::borderSoft());
-    g.drawHorizontalLine(toolbar.getBottom()-1,0.0f,float(getWidth()));
-    text(g,"NODE GRAPH",toolbar.reduced(14,0).withWidth(128),11.5f,Palette::secondary());
 }
 
 namespace { juce::Rectangle<float> nodeRect(FxCanvas&,const nodes::ControlNodeKey&); }

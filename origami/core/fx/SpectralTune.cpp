@@ -119,6 +119,7 @@ void SpectralTune::frame(std::complex<float>* l,std::complex<float>* r) noexcept
     const float low=controls_[6],high=std::min(controls_[7],float(rate_)*0.49f);
     const unsigned mask=unsigned(controls_[12])&4095;
     const float shiftRatio=std::exp2(controls_[1]/12.0f);
+    const float minimumMidi=69+12*std::log2(hzPerBin*0.5f/440),maximumMidi=69+12*std::log2(float(rate_)*0.49f/440);
     std::copy(rotation_.begin(),rotation_.end(),oldRotation_.begin());
     std::copy(mappingBlend_.begin(),mappingBlend_.end(),oldBlend_.begin());
     std::copy(targetMidi_.begin(),targetMidi_.end(),oldTargetMidi_.begin());
@@ -187,7 +188,7 @@ void SpectralTune::frame(std::complex<float>* l,std::complex<float>* r) noexcept
                     // Its mapped lobe is discarded by the bounded scatter below.
                     if(shifted<float(rate_)*0.49f && mask && controls_[0]>0) {
                         const float midi=desiredMidi;
-                        float nearest=spectral::nearestMidi(midi,std::uint16_t(mask),69+12*std::log2(hzPerBin*0.5f/440),69+12*std::log2(float(rate_)*0.49f/440));
+                        float nearest=spectral::nearestMidi(midi,std::uint16_t(mask),minimumMidi,maximumMidi);
                         const int held=oldHeldNote_[c*bins+oldPeak],pc=((held%12)+12)%12;
                         // 0.12 st bounded hysteresis stabilizes boundary chatter.
                         // A new mask/range or a real note movement releases it.
@@ -232,8 +233,8 @@ void SpectralTune::frame(std::complex<float>* l,std::complex<float>* r) noexcept
         for(int k=0;k<bins;++k) {
             const int peak=region_[c*bins+k],at=c*bins+peak;
             // DC/Nyquist and bins outside the selected interval stay untouched.
-            const bool affected=k>0 && k<bins-1 && taper(k*hzPerBin,low,high)>0;
-            const float shift=affected ? offset_[at] : 0,blend=affected ? mappingBlend_[at]*taper(k*hzPerBin,low,high) : 0;
+            const float eligibility=k>0 && k<bins-1 ? taper(k*hzPerBin,low,high) : 0;
+            const float shift=eligibility>0 ? offset_[at] : 0,blend=mappingBlend_[at]*eligibility;
             if(blend==0) {accumulate(k,peak,x[k]);continue;}
             if(std::abs(shift)<1.0e-5f) {accumulate(k,peak,x[k]*((1-blend)+blend*phasor_[at]));continue;}
             accumulate(k,peak,x[k]*(1-blend));
@@ -243,9 +244,13 @@ void SpectralTune::frame(std::complex<float>* l,std::complex<float>* r) noexcept
             // Centered FFT interpolation preserves the phase across the window's lobe.
             const auto rotate=phasor_[at];
             auto value=x[k]*rotate*blend;
-            const float sourceEnv=envelope_[c*bins+k],destEnv=envelope_[c*bins+std::clamp(base,0,bins-1)];
-            const float correction=sourceEnv>1.0e-6f ? std::clamp(destEnv/sourceEnv,0.25f,4.0f) : 1;
-            value*=1+controls_[5]*(correction-1);
+            // At Formant 0 the correction is exactly unity; avoid an unused
+            // envelope division/clamp while retaining identical translated values.
+            if(controls_[5]!=0) {
+                const float sourceEnv=envelope_[c*bins+k],destEnv=envelope_[c*bins+std::clamp(base,0,bins-1)];
+                const float correction=sourceEnv>1.0e-6f ? std::clamp(destEnv/sourceEnv,0.25f,4.0f) : 1;
+                value*=1+controls_[5]*(correction-1);
+            }
             // Four-point Lagrange interpolation in the centered spectrum.
             // Integer shifts remain exact; fractional shifts have a flatter
             // passband than two-tap linear scatter, without hidden gain/EQ.

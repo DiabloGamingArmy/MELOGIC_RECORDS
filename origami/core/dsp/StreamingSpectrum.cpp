@@ -77,10 +77,12 @@ void StreamingSpectrum::tick(float l,float r,float& ol,float& or_,FrameCallback 
     input_[inputPosition_]=std::isfinite(l) ? l : 0.0f;
     input_[size_+inputPosition_]=std::isfinite(r) ? r : 0.0f;
     if(++inputPosition_==size_) inputPosition_=0;
+    // Frame ending at t is ready now. Hann w[0]=0, so its first
+    // nonzero synthesis sample i=1 can be read in this same tick.
+    if(--untilFrame_==0) { frame(callback,context); untilFrame_=hop_; }
     ol=ola_[outputPosition_]; or_=ola_[2*size_+outputPosition_];
     ola_[outputPosition_]=ola_[2*size_+outputPosition_]=0.0f;
     if(++outputPosition_==2*size_) outputPosition_=0;
-    if(--untilFrame_==0) { frame(callback,context); untilFrame_=hop_; }
 }
 void StreamingSpectrum::frame(FrameCallback callback,void* context) noexcept {
     for(int c=0;c<2;++c) {
@@ -91,7 +93,9 @@ void StreamingSpectrum::frame(FrameCallback callback,void* context) noexcept {
     callback(context,spectrum_.data(),spectrum_.data()+size_);
     for(int c=0;c<2;++c) {
         auto* x=spectrum_.data()+c*size_; fft_.transform(x,true);
-        for(int i=0;i<size_;++i) ola_[c*2*size_+((outputPosition_+i)&(2*size_-1))]+=x[i].real()*window_[i]*normalization_;
+        // Frame starts at s=t-N+1; sample i is emitted at s+i+N-2.
+        // i=0 writes only zero into the already-consumed ring slot.
+        for(int i=0;i<size_;++i) ola_[c*2*size_+((outputPosition_+i-1)&(2*size_-1))]+=x[i].real()*window_[i]*normalization_;
     }
 }
 std::size_t StreamingSpectrum::bytes() const noexcept { return fft_.bytes()+(window_.size()+input_.size()+ola_.size())*sizeof(float)+spectrum_.size()*sizeof(std::complex<float>); }
