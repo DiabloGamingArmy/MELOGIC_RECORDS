@@ -1,0 +1,17 @@
+Baseline: 9b065cac4b2a847dbc0db5d555a3fb65d2b282d7
+Initial working tree clean; existing branch retained.
+Frontend admin/permission/License Keys/Manage Products tests: 9 passed, 0 skipped.
+Firestore rules emulator: 10 passed, 0 skipped.
+Backend licensing/owner/role emulator: 24 passed, 0 skipped.
+Existing desktop auth emulator: 3 passed, 0 skipped.
+Production callable handler tests use emulator Firestore and test-only Auth/MFA fixtures.
+They cover owner/admin role-only tokens, explicitly assigned licensing permission,
+all eight operations, generate/redeem, grant/revoke/re-grant and restricted identities.
+Full Functions: 126 total, 121 pass, 1 pre-existing failure, 4 emulator-only skips.
+Skipped suites separately run with emulator above.
+Known unchanged failure: musicDistribution.test.js:75 wording/regex mismatch.
+Web config check and Vite build passed. Existing large-chunk advisory remains.
+Read-only production product check: failed, reported status 500; existence unverified.
+No production UI success claimed, no deployment or production data mutation performed.
+No native/account lifecycle source changes. P0 shutdown crash remains independently open.
+No Firestore rules changes. No credential/private-key/JWT findings in changed text files.

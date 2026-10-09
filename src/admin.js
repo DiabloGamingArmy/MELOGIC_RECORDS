@@ -1,3 +1,4 @@
+import { hasAdminPermission, permissionDeniedMarkup } from './utils/adminPermissions'
 import { mountLicensingPanel } from './admin/licensingPanel'
 import { licensingRequest } from './data/licensingService'
 let licensingPanel = null
@@ -338,7 +339,7 @@ window.__melogicAdminRequireStepUp=performAdminStepUp
 
 
 const SECTIONS = [
-  { key: 'licenseKeys', route: '/admin/license-keys', label: 'License Keys', icon: 'package', permission: 'settingsManage' },
+  { key: 'licenseKeys', route: '/admin/license-keys', label: 'License Keys', icon: 'package', permission: 'licensesManage' },
   { key: 'dashboard', route: ROUTES.admin, label: 'Overview', icon: 'barChart', permission: 'admin' },
   { key: 'reviews', route: ROUTES.adminReviews, label: 'Audits', icon: 'checkCircle', permission: 'productReview' },
   { key: 'distribution', route: ROUTES.adminDistribution, label: 'Music Review', icon: 'music', permission: 'productReview' },
@@ -977,9 +978,7 @@ function setAuditTab(tabKey = 'listing') {
 }
 
 function can(permission = 'admin') {
-  if (permission === 'admin') return state.claims.admin === true
-  if (permission === 'emailSend' && ['owner', 'admin'].includes(state.claims.adminRole || '')) return true
-  return state.claims[permission] === true
+  return hasAdminPermission(state.claims, permission)
 }
 
 function isReviewPath(path = window.location.pathname) {
@@ -1513,7 +1512,7 @@ function overviewSnapshotTable(title = '', href = '', headers = [], rows = [], e
 }
 
 function permissionState(permission) {
-  return `<div class="admin-empty-state"><strong>Permission required</strong><span>${escapeHtml(permission)}</span></div>`
+  return permissionDeniedMarkup(permission)
 }
 
 function reviewQueueGrid(compact = false) {
@@ -3169,7 +3168,7 @@ function renderAccountActionMenu({ uid, user, publicProfile, isSelf, canNote, ca
     <div class="admin-account-actions-menu ${open ? 'is-open' : ''}" data-account-actions-menu>
       <button type="button" class="admin-icon-button" data-toggle-account-actions="${escapeHtml(uid)}" aria-haspopup="menu" aria-expanded="${open}" title="Account actions">${iconSvg('moreVertical')}</button>
       <div class="admin-account-actions-dropdown" role="menu" ${open ? '' : 'hidden'}>
-        <button type="button" class="${itemClass}" data-admin-manage-products="${escapeHtml(uid)}" ${can('settingsManage') ? '' : 'disabled'}>Manage Products</button>
+        <button type="button" class="${itemClass}" data-admin-manage-products="${escapeHtml(uid)}" ${can('licensesManage') ? '' : 'disabled'}>Manage Products</button>
         <button type="button" class="${itemClass}" data-admin-give-product="${escapeHtml(uid)}" ${canGrantProduct ? '' : 'disabled'}>Give Product</button>
         <button type="button" class="${itemClass}" data-admin-message-user="${escapeHtml(uid)}" ${isSelf ? 'disabled' : ''}>Message</button>
         <button type="button" class="${itemClass}" data-admin-email-user="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled'}>Email User</button>
@@ -3934,7 +3933,7 @@ function adminTeamTable(team = []) {
 }
 
 function permissionMatrixMarkup(permissions = {}) {
-  const keys = ['admin', 'productReview', 'listingEdit', 'userRead', 'userModerate', 'orderSupport', 'roleManage', 'auditRead', 'settingsManage', 'emailSend']
+  const keys = ['admin', 'productReview', 'listingEdit', 'userRead', 'userModerate', 'orderSupport', 'roleManage', 'auditRead', 'settingsManage', 'emailSend', 'licensesManage']
   return `
     <div class="admin-permission-matrix">
       ${keys.map((key) => {
@@ -6366,9 +6365,9 @@ function render() {
   licensingAccessDialog?.remove(); licensingAccessDialog = null
   state.section = currentSectionKey()
   if (state.section === 'licenseKeys') {
-    renderLayout(can('settingsManage') ? '<div data-licensing-root></div>' : permissionState('settingsManage'))
+    renderLayout(can('licensesManage') ? '<div data-licensing-root></div>' : permissionState('licensesManage'))
     const root = app.querySelector('[data-licensing-root]')
-    if (root) licensingPanel = mountLicensingPanel(root, { request: licensingRequest, allowed: can('settingsManage') })
+    if (root) licensingPanel = mountLicensingPanel(root, { request: licensingRequest, allowed: can('licensesManage') })
     return
   }
   if (state.section === 'dashboard') return renderLayout(dashboardView())
@@ -9117,7 +9116,7 @@ function leaveAdminContactCallRoom() {
 
 function bindEvents() {
   app.querySelectorAll('[data-admin-manage-products]').forEach(button => button.addEventListener('click', () => {
-    if (!can('settingsManage')) return
+    if (!can('licensesManage')) return
     licensingPanel?.dispose()
     licensingAccessDialog?.remove()
     const dialog = document.createElement('dialog')

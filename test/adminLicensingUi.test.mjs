@@ -3,13 +3,12 @@ import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
 import { mountLicensingPanel } from '../src/admin/licensingPanel.js'
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
-function fixture(targetUid = '', allowed = true) {
+function fixture(targetUid = '', allowed = true, products = [{ productId: 'origami', name: 'Origami', status: 'beta', editions: ['beta'] }]) {
   const dom = new JSDOM('<main></main>', { url: 'https://test.invalid/admin/license-keys' })
   // FormData must use this DOM's form implementation.
   const saved = globalThis.FormData; globalThis.FormData = dom.window.FormData
   let entitlement = null, keys = [], copies = [], calls = [], failNext = false
   Object.defineProperty(dom.window.navigator, 'clipboard', { value: { writeText: async text => copies.push(text) } })
-  const products = [{ productId: 'origami', name: 'Origami', status: 'beta', editions: ['beta'] }]
   const request = async (name, data = {}) => {
     calls.push({ name, data })
     if (failNext) { failNext = false; throw Error('Backend unavailable') }
@@ -97,4 +96,45 @@ test('existing Users context menu adds Manage Products and preserves existing ac
   assert.equal(dom.window.document.querySelector('[role="menu"]').hidden, false)
   assert.match(source, /route: '\/admin\/license-keys', label: 'License Keys'/)
   dom.window.close()
+})
+
+test('empty canonical catalog is a setup state, independent of admin authorization', async () => {
+  const f = fixture('', true, [])
+  try {
+    await f.panel.ready
+    assert.match(f.root.textContent, /No products configured/)
+    assert.equal(f.root.textContent.includes('Permission required'), false)
+    assert.equal(f.dom.window.document.querySelector('[data-license-action="generate"]').disabled, true)
+    f.click('product')
+    assert.equal(f.dom.window.document.querySelector('[name="productId"]').value, 'origami')
+    assert.equal(f.dom.window.document.querySelector('[name="editions"]').value, 'beta')
+  } finally { f.close() }
+})
+
+test('legacy owner claims reach functional key generation and user access controls', async () => {
+  const { hasAdminPermission } = await import('../src/utils/adminPermissions.js')
+  const allowed = hasAdminPermission({ admin: true, adminRole: 'owner' }, 'licensesManage')
+  const keys = fixture('', allowed)
+  try {
+    await keys.panel.ready
+    keys.click('generate')
+    for (const name of ['productId','edition','quantity','maxRedemptions','expiresAt','campaign']) assert.ok(keys.dom.window.document.querySelector(`[name="${name}"]`))
+    keys.click('cancel')
+  } finally { keys.close() }
+  const access = fixture('fixture-user', allowed)
+  try {
+    await access.panel.ready
+    access.click('grant')
+    access.dom.window.document.querySelector('[name="reason"]').value = 'Owner regression'
+    access.submit(); await tick(); await tick()
+    assert.match(access.root.textContent, /active/)
+    access.click('revoke-access')
+    access.dom.window.document.querySelector('[name="reason"]').value = 'Owner revocation'
+    access.submit(); await tick(); await tick()
+    assert.match(access.root.textContent, /revoked/)
+    access.click('grant')
+    access.dom.window.document.querySelector('[name="reason"]').value = 'Owner re-grant'
+    access.submit(); await tick(); await tick()
+    assert.match(access.root.textContent, /active/)
+  } finally { access.close() }
 })

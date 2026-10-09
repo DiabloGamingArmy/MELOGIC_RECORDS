@@ -1,106 +1,12 @@
 const { HttpsError } = require('firebase-functions/v2/https')
 
-const ADMIN_CLAIM_KEYS = [
-  'admin',
-  'adminRole',
-  'productReview',
-  'listingEdit',
-  'userRead',
-  'userModerate',
-  'orderSupport',
-  'roleManage',
-  'auditRead',
-  'settingsManage',
-  'emailSend'
-]
-
-const PERMISSION_KEYS = ADMIN_CLAIM_KEYS.filter((key) => key !== 'admin' && key !== 'adminRole')
-
-const ROLE_ALIASES = new Map([
-  ['owner', 'owner'],
-  ['admin', 'admin'],
-  ['administrator', 'admin'],
-  ['marketplacereviewer', 'marketplaceReviewer'],
-  ['marketplace_reviewer', 'marketplaceReviewer'],
-  ['marketplace-reviewer', 'marketplaceReviewer'],
-  ['reviewer', 'marketplaceReviewer'],
-  ['listingeditor', 'listingEditor'],
-  ['listing_editor', 'listingEditor'],
-  ['listing-editor', 'listingEditor'],
-  ['support', 'support'],
-  ['auditor', 'auditor'],
-  ['remove', 'remove'],
-  ['none', 'remove']
-])
-
-const ROLE_PERMISSIONS = {
-  owner: {
-    productReview: true,
-    listingEdit: true,
-    userRead: true,
-    userModerate: true,
-    orderSupport: true,
-    roleManage: true,
-    auditRead: true,
-    settingsManage: true,
-    emailSend: true
-  },
-  admin: {
-    productReview: true,
-    listingEdit: true,
-    userRead: true,
-    userModerate: true,
-    orderSupport: true,
-    roleManage: false,
-    auditRead: true,
-    settingsManage: true,
-    emailSend: true
-  },
-  marketplaceReviewer: {
-    productReview: true,
-    listingEdit: false,
-    userRead: false,
-    userModerate: false,
-    orderSupport: false,
-    roleManage: false,
-    auditRead: false,
-    settingsManage: false,
-    emailSend: false
-  },
-  listingEditor: {
-    productReview: false,
-    listingEdit: true,
-    userRead: false,
-    userModerate: false,
-    orderSupport: false,
-    roleManage: false,
-    auditRead: false,
-    settingsManage: false,
-    emailSend: false
-  },
-  support: {
-    productReview: false,
-    listingEdit: false,
-    userRead: true,
-    userModerate: false,
-    orderSupport: true,
-    roleManage: false,
-    auditRead: false,
-    settingsManage: false,
-    emailSend: true
-  },
-  auditor: {
-    productReview: false,
-    listingEdit: false,
-    userRead: false,
-    userModerate: false,
-    orderSupport: false,
-    roleManage: false,
-    auditRead: true,
-    settingsManage: false,
-    emailSend: false
-  }
-}
+const registry = require('./adminPermissions.json')
+const PERMISSION_KEYS = registry.permissions
+const ADMIN_CLAIM_KEYS = ['admin', 'adminRole', ...PERMISSION_KEYS]
+const ROLE_ALIASES = new Map(Object.entries(registry.aliases))
+const ROLE_PERMISSIONS = Object.fromEntries(Object.entries(registry.roles).map(([role, allowed]) => [role,
+  Object.fromEntries(PERMISSION_KEYS.map(key => [key, allowed === '*' || allowed.includes(key)]))
+]))
 
 const ROLE_RANKS = {
   owner: 100,

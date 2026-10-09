@@ -7,8 +7,8 @@ lifecycle code. Activation and signed offline tokens remain separate L02 work.
 
 ## Admin workflow
 
-Administrators with the existing `settingsManage` permission (canonical owner and
-admin roles) can open **License Keys** at `/admin/license-keys`. After deployment,
+Administrators with canonical `licensesManage` permission (owner and admin
+role defaults, or an explicitly assigned trusted Auth permission) can open **License Keys** at `/admin/license-keys`. After deployment,
 use **+ Product** to create/configure `origami`, name `Origami`, status `beta`,
 editions `beta`. This is an explicit administrator action; deployment creates no
 products, entitlements, keys or production test accounts. An existing reserved
@@ -75,7 +75,7 @@ marketplace checkout/payment processing or require a key for future purchases.
 
 ## Authorization and security
 
-Every new callable independently enforces canonical admin permission. Mutations
+Every licensing callable independently enforces canonical `licensesManage` admin permission. Mutations
 also use the existing verified-email, enrolled MFA and recent-auth step-up policy.
 Live Auth claims, disabled status, token revocation time and existing `adminUsers`
 active metadata are rechecked; stale browser claims and client-supplied `isAdmin`,
@@ -153,3 +153,35 @@ metadata; historical plaintext cannot and must not be recovered.
 L02 still requires device activation policy, secure server signing/key management,
 public-key verification and bounded offline refresh/revocation semantics. No private
 signing key or activation token is added here.
+
+
+## A01 permission hotfix
+
+The code-defined admin permission registry now lives in
+`functions/src/admin/adminPermissions.json`, shared by the backend and frontend.
+This replaces duplicated interpretation of Firebase Auth custom claims; it does
+not introduce Firestore role assignments. `roleDefinitions` describes account
+roles/badges and presentation, not these admin custom-claim permissions.
+
+An owner token with `admin: true` and `adminRole: owner` inherits all registered
+admin capabilities. Admin inherits its explicitly enumerated defaults, including
+`licensesManage`; restricted staff need the explicit trusted licensing claim.
+Owner/admin do not require rewritten user documents or a new token boolean.
+The backend still rechecks live Auth authority and all existing MFA requirements.
+Role reassignment strips/rebuilds this permission with the existing claim lifecycle.
+
+For this hotfix, rebuild Hosting and redeploy these nine Functions, including
+`setAdminUserRole` so future demotions strip the new permission correctly:
+
+```
+firebase deploy --project melogic-records --only functions:listLicensingProducts,functions:saveLicensingProduct,functions:getAdminProductAccess,functions:grantProductEntitlement,functions:revokeProductEntitlement,functions:generateLicenseKeys,functions:listLicenseKeys,functions:revokeLicenseKey,functions:setAdminUserRole,hosting:web
+```
+
+No rules/index changes or Firestore permission/role seed is required. No command
+is required after deployment. Refresh the admin page. If the catalog shows **No
+products configured**, use **+ Product**, retaining its Origami/Beta defaults,
+and save. This authorized operation provisions `products/origami`; Firebase deploy
+does not create it. Repeat configuration updates the same record, not another
+product. Production catalog presence could not be verified by the hotfix's
+read-only CLI-authenticated Firestore check (reported status 500); no production data was
+written, and no production UI success is claimed.

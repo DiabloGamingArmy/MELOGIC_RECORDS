@@ -4809,3 +4809,6 @@
 
 .admin-licensing-filter { display: flex; align-items: center; gap: 12px; }
 .admin-licensing-filter select { color: var(--admin-text); background: var(--admin-input); border: 1px solid var(--admin-border); padding: 8px; border-radius: 6px; }
+
+.admin-empty-state[role="alert"] { display: grid; gap: 0.4rem; }
+.admin-empty-state[role="alert"] p { margin: 0; }
