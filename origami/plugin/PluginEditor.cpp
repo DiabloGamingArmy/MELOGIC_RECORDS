@@ -92,9 +92,9 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
       performance_([&owner](int note,bool on,float velocity){return owner.enqueueUiKeyboardNote(note,on,velocity);},
           [&owner](float v){owner.setUiPitchWheel(v);},
           [&owner](float v){owner.setUiModWheel(v);},
-          [&owner](float up,float down){return owner.setUiPitchBendRanges(up,down);},
+          [this,&owner](float up,float down){const bool ok=owner.setUiPitchBendRanges(up,down);if(ok)syncGlobalViews();return ok;},
           [&owner]{return std::pair<float,float>{owner.getUiPitchBendRange(),owner.getUiPitchBendDownRange()};},
-          [&owner](const mct::origami::PerformanceState& p){return owner.setUiPerformanceState(p);},
+          [this,&owner](const mct::origami::PerformanceState& p){const bool ok=owner.setUiPerformanceState(p);if(ok)syncGlobalViews();return ok;},
           [&owner]{return owner.getUiPerformanceState();},
           [&owner](const mct::origami::ArpeggiatorState& a){return owner.setUiArpeggiatorState(a);},
           [&owner]{return owner.getUiArpeggiatorState();}),
@@ -104,7 +104,22 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner]{return owner.getUiArpeggiatorRuntimeSnapshot();},
           [&owner]{owner.clearUiArpeggiatorLatch();}),
       global_([&owner]{return owner.getUiVisualizationMask();},
-              [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);}),
+              [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);},
+              mct::origami::ui::GlobalPanelHost{
+                  [&owner]{return owner.getUiFinalOutput();},
+                  [this,&owner](float value){outputHistoryDraftRevision_=wavetableEditor_.authoringRevision();owner.setUiFinalOutput(value);syncGlobalViews();},
+                  [&owner]{return owner.finalOutputMeters();},
+                  [&owner]{return owner.getUiPerformanceState();},
+                  [this,&owner](const auto& p){const bool ok=owner.setUiPerformanceState(p);if(ok)syncGlobalViews();return ok;},
+                  [this,&owner](float up,float down){const bool ok=owner.setUiPitchBendRanges(up,down);if(ok)syncGlobalViews();return ok;},
+                  [&owner]{
+                      const auto d=owner.getAudioContinuityDiagnostics();const auto q=owner.getUiRenderBudgetSnapshot();
+                      mct::origami::ui::GlobalEngineInfo info;info.sampleRate=d.preparedSampleRate;
+                      info.blockSize=d.lastCallbackSamples>0?d.lastCallbackSamples:d.preparedBlockSize;info.maximumBlockSize=d.preparedBlockSize;
+                      info.activeVoices=q.load.activeVoices;info.maximumVoices=mct::origami::OrigamiEngine::voiceCount;
+                      info.audioLoad=q.smoothedDeadlineFraction;info.loadAvailable=d.callbacks>0 && d.callbackBudgetMs>0;return info;
+                  },
+                  [&owner]{owner.requestPanic();}}),
       fxPage_(owner.getUiFxWorkspace(),modulationBindings(owner,[this]{modulationRoutesChanged();}),
               mct::origami::ui::FxPageHost{[&owner]{return owner.consumeUiFxPeaks();},
                                             [&owner]{return owner.addUiBus();},
@@ -133,10 +148,12 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     addChildComponent(globalOverlay_);
     globalFx_->onClose=[this]{globalOverlay_.dismiss();};
     header_.onGlobalFxRequested=[this]{openGlobalFx();};
-    header_.masterKnob().onValueChange=[this]{outputHistoryDraftRevision_=wavetableEditor_.authoringRevision();processor_.setUiFinalOutput(mct::origami::FinalOutputGain::position(float(header_.masterKnob().getValue())));};
+    header_.masterKnob().onValueChange=[this]{outputHistoryDraftRevision_=wavetableEditor_.authoringRevision();processor_.setUiFinalOutput(mct::origami::FinalOutputGain::position(float(header_.masterKnob().getValue())));syncGlobalViews();};
     header_.masterKnob().onDragStart=[this]{processor_.beginFinalOutputGesture();};
     header_.masterKnob().onDragEnd=[this]{processor_.endFinalOutputGesture();};
-    header_.syncMaster(processor_.getUiFinalOutput(),processor_.finalOutputMeters());
+    global_.masterKnob().onDragStart=[this]{processor_.beginFinalOutputGesture();};
+    global_.masterKnob().onDragEnd=[this]{processor_.endFinalOutputGesture();};
+    syncGlobalViews();
     header_.onPanicRequested=[this]{processor_.requestPanic();};
     header_.canUndo=[this]{return wavetableEditorSelected_ && !preferFinalOutputHistory(false) ? wavetableEditor_.canUndoAuthoring() : processor_.canUndoUi();};
     header_.canRedo=[this]{return wavetableEditorSelected_ && !preferFinalOutputHistory(true) ? wavetableEditor_.canRedoAuthoring() : processor_.canRedoUi();};
@@ -535,6 +552,11 @@ void OrigamiAudioProcessorEditor::paintOverChildren(juce::Graphics& g) {
     }
 }
 
+void OrigamiAudioProcessorEditor::syncGlobalViews() {
+    header_.syncMaster(processor_.getUiFinalOutput(),processor_.finalOutputMeters());
+    global_.syncFromModel();performance_.syncPerformanceFromModel();
+}
+
 void OrigamiAudioProcessorEditor::timerCallback() {
     // Dynamic oscillator cards can introduce new knobs after editor creation.
     // Register them lazily without disturbing existing defaults.
@@ -607,7 +629,7 @@ void OrigamiAudioProcessorEditor::registerKnobDefaults(juce::Component& root) {
     if(auto* slider=dynamic_cast<juce::Slider*>(&root);slider && !wavetableEditor_.isParentOf(slider) && !slider->getProperties().contains("mct.history.gesture")) {
         slider->getProperties().set("mct.history.gesture",true);
         const auto begin=slider->onDragStart,end=slider->onDragEnd;
-        const bool finalOutput=slider==&header_.masterKnob();
+        const bool finalOutput=slider==&header_.masterKnob() || slider==&global_.masterKnob();
         slider->onDragStart=[this,begin,finalOutput]{processor_.beginUiTransaction(finalOutput ? "Adjust Master Output" : "Adjust parameter");if(begin)begin();};
         slider->onDragEnd=[this,end]{if(end)end();processor_.endUiTransaction();header_.refreshHistoryState();};
     }

@@ -7293,6 +7293,67 @@ void workspaceInspectorAudit() {
           "document history remains available outside Nodes");
 }
 
+void globalPageAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,128);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());
+    ui::GlobalPanel* global=nullptr;ui::OrigamiHeader* header=nullptr;ui::PerformanceKeyboard* performance=nullptr;
+    walk(*editor,[&](auto& c){if(auto* v=dynamic_cast<ui::GlobalPanel*>(&c))global=v;if(auto* v=dynamic_cast<ui::OrigamiHeader*>(&c))header=v;if(auto* v=dynamic_cast<ui::PerformanceKeyboard*>(&c))performance=v;});
+    check(global && header && performance,"Global and persistent views exist");header->selectMode(4);
+    const auto named=[&](juce::Component& root,const char* name)->juce::Component*{juce::Component* result=nullptr;walk(root,[&](auto& c){if(c.getName()==name)result=&c;});check(result,"named Global integration control");return result;};
+    const auto slider=[&](juce::Component& root,const char* name)->juce::Slider&{auto* s=dynamic_cast<juce::Slider*>(named(root,name));check(s,"named Global slider");return *s;};
+    const auto button=[&](const char* name)->juce::Button&{auto* b=dynamic_cast<juce::Button*>(named(*global,name));check(b,"named Global button");return *b;};
+    const auto label=[&](const char* name){auto* l=dynamic_cast<juce::Label*>(named(*global,name));check(l,"named engine label");return l->getText();};
+    check(global->isVisible() && ui::GlobalPanel::version()==JucePlugin_VersionString,"Global uses canonical build version");
+    const auto identity=ui::GlobalPanel::buildIdentity();check(identity.contains("Build ") && !identity.contains("/Users/") && !identity.containsIgnoreCase("ginobarnes") && !identity.contains("https:"),"public build identity omits private metadata");
+    auto& master=global->masterKnob();auto& headerMaster=header->masterKnob();
+    check(!master.getProperties().contains("mct.mod.destination") && std::abs(master.getNormalisableRange().convertFrom0to1(.5)+12)<1e-5,"Global shares Master mapping without modulation");
+    p.clearUiHistory();const float initial=p.getUiFinalOutput();master.onDragStart();for(int i=0;i<30;++i)master.setValue(-42+i,juce::sendNotificationSync);master.onDragEnd();
+    check(p.uiHistorySize()==1 && master.getValue()==headerMaster.getValue(),"Global Master drag coalesces and immediately synchronizes header");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(p.getUiFinalOutput()==initial && master.getValue()==headerMaster.getValue(),"Global Master Undo refreshes both views");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(std::abs(master.getValue()+13)<1e-4 && std::abs(headerMaster.getValue()+13)<1e-4,"Global Master Redo refreshes both views");
+    headerMaster.setValue(-12,juce::sendNotificationSync);check(master.getValue()==-12 && p.getUiFinalOutput()==.5f,"header Master immediately synchronizes Global");
+    static_cast<juce::AudioProcessorParameter*>(p.finalOutputParameter())->setValue(1);global->syncFromModel();check(master.getValue()==6,"host automation reaches Global canonical view");
+    global->chooseVoiceMode(VoiceMode::Mono);global->choosePriority(NotePriority::High);
+    auto& glide=slider(*global,"Global glide");glide.onDragStart();glide.setValue(.123,juce::sendNotificationSync);glide.onDragEnd();
+    check(std::abs(slider(*performance,"Glide").getValue()-.123)<1e-6,"Global glide immediately reaches bottom bar");
+    button("Global legato").setToggleState(false,juce::dontSendNotification);button("Global legato").onClick();
+    slider(*global,"Global pitch bend up").setValue(12,juce::sendNotificationSync);slider(*global,"Global pitch bend down").setValue(5,juce::sendNotificationSync);
+    check(slider(*performance,"Pitch bend up range").getValue()==12 && slider(*performance,"Pitch bend down range").getValue()==5,"signed bend endpoints immediately reach bottom bar");
+    p.clearUiHistory();slider(*performance,"Glide").setValue(.456,juce::sendNotificationSync);slider(*performance,"Pitch bend down range").setValue(-7,juce::sendNotificationSync);
+    check(p.uiHistorySize()==2,"performance and bend edits use document history");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(slider(*global,"Global pitch bend down").getValue()==5 && slider(*performance,"Pitch bend down range").getValue()==5,"bend Undo refreshes both views");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(std::abs(glide.getValue()-.123)<1e-6 && std::abs(slider(*performance,"Glide").getValue()-.123)<1e-6,"glide Undo refreshes both views");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);header->chooseUtility(ui::OrigamiHeader::redoItem);
+    check(std::abs(glide.getValue()-.456)<1e-6 && slider(*global,"Global pitch bend down").getValue()==-7,"bottom performance edits immediately reach Global");
+    bool mono=false,high=false;walk(*performance,[&](auto& c){if(auto* b=dynamic_cast<juce::TextButton*>(&c)){mono|=b->getButtonText()=="MONO";high|=b->getButtonText()=="HIGH";}});check(mono && high && !p.getUiPerformanceState().legato,"voice mode, priority and legato share canonical state");
+    auto invalid=p.getUiPerformanceState();invalid.glideSeconds=std::numeric_limits<float>::quiet_NaN();check(!p.setUiPerformanceState(invalid),"invalid performance input rejected without mutation");
+    p.clearUiHistory();const auto mask=p.getUiVisualizationMask();const char* activities[]={"ENV visualization","LFO visualization","RANDOM visualization","FUNCTION visualization","CHAOS visualization","DRIFT visualization","SEQUENCER visualization","OSC visualization"};
+    for(int i=0;i<8;++i){auto& b=button(activities[i]);b.setToggleState(!b.getToggleState(),juce::dontSendNotification);b.onClick();check(((p.getUiVisualizationMask()^mask)&(1u<<i))!=0,"existing Activity bit remains functional");}
+    check(p.uiHistorySize()==8,"Activity retains canonical history");header->chooseUtility(ui::OrigamiHeader::undoItem);check(button(activities[7]).getToggleState()==bool(mask&128),"Activity Undo refreshes Global");header->chooseUtility(ui::OrigamiHeader::redoItem);
+    juce::MemoryBlock saved;p.getStateInformation(saved);auto restored=std::make_unique<OrigamiAudioProcessor>();restored->setStateInformation(saved.getData(),int(saved.getSize()));
+    check(restored->getUiFinalOutput()==p.getUiFinalOutput() && restored->getUiVisualizationMask()==p.getUiVisualizationMask(),"host project restores Master and Activity");
+    const auto rp=restored->getUiPerformanceState();check(rp.voiceMode==VoiceMode::Mono && rp.notePriority==NotePriority::High && !rp.legato && std::abs(rp.glideSeconds-.456)<1e-6 && rp.pitchBendDownSemitones==-7 && rp.pitchBendRangeSemitones==12,"host project restores complete performance and signed bend");
+    {std::unique_ptr<juce::AudioProcessorEditor> re(restored->createEditor());ui::GlobalPanel* rg=nullptr;walk(*re,[&](auto& c){if(auto* v=dynamic_cast<ui::GlobalPanel*>(&c))rg=v;});check(rg && rg->masterKnob().getValue()==6 && std::abs(slider(*rg,"Global glide").getValue()-.456)<1e-6,"restored editor hydrates Global");}
+    const auto preset=saved;p.setUiFinalOutput(.5f);global->chooseVoiceMode(VoiceMode::Poly);
+    check(p.loadUiPresetState(preset,"g01-fixture","G01 fixture"),"canonical preset load succeeds");p.sendSynchronousChangeMessage();
+    check(master.getValue()==6 && std::abs(glide.getValue()-.456)<1e-6,"existing Global editor refreshes after preset restoration");
+    p.clearUiHistory();const auto state=[&]{juce::MemoryBlock b;p.getStateInformation(b);return b;};const auto beforeUtilities=state();
+    button("Global Settings").onClick();check(global->settingsOpen() && !master.isShowing(),"Settings stays under Global");
+    juce::SharedResourcePointer<ui::UserPreferences> prefs;const bool oldCapture=prefs->captureKeyboardInput();auto& capture=button("Global keyboard capture preference");capture.setToggleState(!oldCapture,juce::dontSendNotification);capture.onClick();
+    check(prefs->captureKeyboardInput()!=oldCapture && state()==beforeUtilities && p.uiHistorySize()==0,"shared application preference does not enter patch/history");capture.setToggleState(oldCapture,juce::dontSendNotification);capture.onClick();
+    const auto snapshot=[&](const juce::String& name){if(const char* folder=std::getenv("ORIGAMI_GLOBAL_REPORT")){const auto image=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.f);juce::FileOutputStream out(juce::File(juce::String(folder)+"/"+name+".png"));out.setPosition(0);out.truncate();check(juce::PNGImageFormat{}.writeImageToStream(image,out),"Global screenshot saved");}};
+    editor->setSize(1440,900);snapshot("settings-1440");button("Global Settings").onClick();
+    juce::AudioBuffer<float> audio(2,64);juce::MidiBuffer midi;midi.addEvent(juce::MidiMessage::noteOn(1,60,.8f),0);p.processBlock(audio,midi);global->syncFromModel();
+    check(label("Engine sample rate")=="48.0 kHz" && label("Engine audio block")=="64 / 128 samples" && label("Engine active MIDI voices")=="1 / 16" && label("Engine audio callback load").contains("%"),"engine reports actual prepared and callback telemetry");
+    const auto meters=p.finalOutputMeters();check(global->displayedMeters().level==meters.level && global->displayedMeters().hold==meters.hold,"Global uses exact final post-Master meter snapshot");
+    for(int width:{960,1440,1920}){editor->setSize(width,width*5/8);editor->resized();global->syncFromModel();for(auto* c:global->getChildren())if(c->isVisible())check(global->getLocalBounds().contains(c->getBounds()),"scaled Global child remains within page");snapshot("global-"+juce::String(width));}
+    for(int page:{0,1,2,3,4})header->selectMode(page);check(global->isVisible() && state()==beforeUtilities && p.uiHistorySize()==0,"page switching and telemetry do not mutate patch/history");
+    const auto panicCount=p.panicCount();button("Global Panic").onClick();audio.clear();midi.clear();p.processBlock(audio,midi);
+    check(p.panicCount()==panicCount+1 && p.getUiRenderBudgetSnapshot().load.activeVoices==0 && magnitude(audio)==0,"Global Panic terminates active voices safely");
+    audio=renderNote(p,64,.8f,64);check(magnitude(audio)>0 && state()==beforeUtilities && p.uiHistorySize()==0,"Panic preserves patch and subsequent note playback");
+    std::cout<<"PASS Global G01 plugin/UI audit\n";
+}
+
 int main(){juce::ScopedJuceInitialiser_GUI gui;
 // Preferences stay in memory (the user's file is never touched). The
 // shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
@@ -7302,5 +7363,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{unisonPluginAudit();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison plugin: "<<checks<<" checks\n";return 0;}finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{globalPageAudit();if(std::getenv("ORIGAMI_GLOBAL_ONLY")){std::cout<<"PASS focused Global: "<<checks<<" checks\n";return 0;}unisonPluginAudit();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison plugin: "<<checks<<" checks\n";return 0;}finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

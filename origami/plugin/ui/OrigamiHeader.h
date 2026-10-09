@@ -8,12 +8,14 @@
 namespace mct::origami::ui {
 class MasterOutputControl final : public juce::Component {
 public:
-    MasterOutputControl();
+    explicit MasterOutputControl(bool expanded=false);
+    FinalOutputMeters displayedMeters() const noexcept {return meters_;}
     juce::Slider& knob() noexcept {return knob_;}
     void sync(float normalized,FinalOutputMeters meters);
     void paint(juce::Graphics&) override;
     void resized() override;
 private:
+    bool expanded_=false;
     juce::Slider knob_;
     FinalOutputMeters meters_{};
 };

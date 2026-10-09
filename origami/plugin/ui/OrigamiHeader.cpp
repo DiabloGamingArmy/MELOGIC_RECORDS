@@ -6,7 +6,7 @@
 #include <BinaryData.h>
 #include "NativeChoiceMenu.h"
 namespace mct::origami::ui {
-MasterOutputControl::MasterOutputControl() {
+MasterOutputControl::MasterOutputControl(bool expanded) : expanded_(expanded) {
     knob_.setName("MASTER OUTPUT");
     knob_.setTooltip("Final Master Output gain (dB). Host automation only; no internal modulation.");
     knob_.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -27,10 +27,39 @@ void MasterOutputControl::sync(float normalized,FinalOutputMeters meters) {
     meters_=meters;repaint();
 }
 void MasterOutputControl::resized() {
+    if(expanded_) {knob_.setBounds(22,getHeight()/2-50,88,88);return;}
     const float scale=float(getWidth())/112.f;
     knob_.setBounds(juce::roundToInt(14.f*scale),13,juce::roundToInt(36.f*scale),36);
 }
 void MasterOutputControl::paint(juce::Graphics& g) {
+    if(expanded_) {
+        text(g,FinalOutputGain::text(FinalOutputGain::position(float(knob_.getValue()))),{8,getHeight()/2+42,116,26},17.f,Palette::text(),juce::Justification::centred);
+        text(g,"FINAL OUTPUT",{8,getHeight()/2+70,116,18},Type::label,Palette::muted(),juce::Justification::centred);
+        const float top=24.f,height=float(getHeight()-62),start=float(juce::jmax(166,getWidth()-132));
+        const auto position=[](float v){return v>0 ? std::clamp((20.f*std::log10(v)+60.f)/66.f,0.f,1.f) : 0.f;};
+        for(int db:{6,0,-12,-24,-36,-48,-60}) {
+            const int y=juce::roundToInt(top+height*(1.f-float(db+60)/66.f));
+            text(g,(db>0?"+":"")+juce::String(db),{int(start)-40,y-6,30,13},Type::secondary,Palette::muted(),juce::Justification::centredRight);
+            g.setColour(Palette::borderSoft());g.drawHorizontalLine(y,start-4,start+65);
+        }
+        for(unsigned c=0;c<2;++c) {
+            const float x=start+float(c)*44.f,width=18.f;
+            text(g,c==0?"L":"R",{int(x)-8,0,34,18},Type::label,Palette::secondary(),juce::Justification::centred);
+            const float db=meters_.level[c]>0 ? 20.f*std::log10(meters_.level[c]) : -1000.f;
+            for(int n=0;n<33;++n) {
+                const float threshold=-60.f+float(n+1)*2.f;
+                const auto colour=threshold<=-12 ? juce::Colour(0xff649b72) : threshold<=0 ? juce::Colour(0xffb7a25d) : juce::Colour(0xffb8564e);
+                g.setColour(colour.withAlpha(db>=threshold ? .95f : .12f));
+                g.fillRect(x,top+height-float(n+1)*height/33.f,width,juce::jmax(1.f,height/33.f-1.f));
+            }
+            if(meters_.hold[c]>0) {g.setColour(meters_.hold[c]>=1 ? juce::Colour(0xffb8564e) : Palette::secondary());g.fillRect(x,top+height*(1.f-position(meters_.hold[c])),width,1.5f);}
+            const auto peak=meters_.hold[c]>0 ? juce::String(20.f*std::log10(meters_.hold[c]),1) : juce::String::fromUTF8("-\xe2\x88\x9e");
+            text(g,peak,{int(x)-16,getHeight()-28,50,18},Type::control,meters_.hold[c]>=1 ? juce::Colour(0xffb8564e) : Palette::secondary(),juce::Justification::centred);
+        }
+        text(g,"PEAK dBFS",{int(start)-10,getHeight()-11,88,11},Type::secondary,Palette::muted(),juce::Justification::centred);
+        return;
+    }
+
     const float scale=float(getWidth())/112.f;
     const int labelWidth=juce::roundToInt(66.f*scale);
     text(g,"MASTER",{0,0,labelWidth,12},10.5f,Palette::secondary(),juce::Justification::centred);
@@ -86,7 +115,7 @@ OrigamiHeader::OrigamiHeader() {
         });
     };
     const juce::StringArray labels{"SYNTH","MIXER","NODES","MATRIX","GLOBAL"};
-    for(int i=0;i<5;++i) {auto& button=modes_[static_cast<std::size_t>(i)];button.setButtonText(labels[i]);button.setToggleState(i==0,juce::dontSendNotification);button.setEnabled(i==0 || i==2 || i==3 || i==4);button.setTooltip(i==0?"Synthesizer":i==2?"Effect routing":i==3?"Modulation routing":i==4?"Global visualization settings":"Not implemented");addAndMakeVisible(button);
+    for(int i=0;i<5;++i) {auto& button=modes_[static_cast<std::size_t>(i)];button.setButtonText(labels[i]);button.setToggleState(i==0,juce::dontSendNotification);button.setEnabled(i==0 || i==2 || i==3 || i==4);button.setTooltip(i==0?"Synthesizer":i==2?"Effect routing":i==3?"Modulation routing":i==4?"Master, performance, engine and settings":"Not implemented");addAndMakeVisible(button);
         button.onClick=[this,i] {for(std::size_t j=0;j<modes_.size();++j) modes_[j].setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);if(onModeSelected) onModeSelected(i);};}
 }
 std::vector<NativeChoiceItem> OrigamiHeader::utilityMenuItems() const {

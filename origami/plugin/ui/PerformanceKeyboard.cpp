@@ -64,7 +64,22 @@ PerformanceKeyboard::~PerformanceKeyboard() {
     if(mouseNote_>=0 && noteSetter_) noteSetter_(mouseNote_,false,0.0f);
 }
 
+void PerformanceKeyboard::syncPerformanceFromModel() {
+    if(performanceGetter_) {
+        const auto p=performanceGetter_();voiceModeId_=p.voiceMode==VoiceMode::Mono?2:1;
+        priorityId_=p.notePriority==NotePriority::High?2:p.notePriority==NotePriority::Low?3:1;
+        voiceMode_.setButtonText(voiceModeId_==2?"MONO":"POLY");priority_.setButtonText(priorityId_==2?"HIGH":priorityId_==3?"LOW":"LAST");
+        legato_.setToggleState(p.legato,juce::dontSendNotification);
+        if(!glide_.isMouseButtonDown())glide_.setValue(p.glideSeconds,juce::dontSendNotification);
+    }
+    if(rangeGetter_) {
+        const auto ranges=rangeGetter_();
+        const auto sync=[](juce::Slider& s,float value){if(s.isMouseButtonDown())return;for(auto* c:s.getChildren())if(auto* l=dynamic_cast<juce::Label*>(c))if(l->isBeingEdited())return;s.setValue(value,juce::dontSendNotification);};
+        sync(bendRange_,ranges.first);sync(bendDownRange_,ranges.second);
+    }
+}
 void PerformanceKeyboard::syncArpFromModel() {
+    syncPerformanceFromModel();
     if(!arpGetter_) return;
     const auto state=arpGetter_();
     arpEnable_.setToggleState(state.enabled,juce::dontSendNotification);

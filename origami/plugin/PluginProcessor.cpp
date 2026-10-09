@@ -549,6 +549,12 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         buffer.clear();
         finalOutputStage_.resetMeters();
         runtimeOutputPeak_.store(0.0f,std::memory_order_relaxed);
+        // Panic returns before normal telemetry publication. Reflect the reset
+        // immediately in the existing lock-free Global engine snapshot.
+        qosVoices_.store(0,std::memory_order_relaxed);
+        qosModules_.store(0,std::memory_order_relaxed);
+        qosUnison_.store(0,std::memory_order_relaxed);
+        qosOscEvals_.store(0,std::memory_order_relaxed);
         panicCount_.fetch_add(1,std::memory_order_release);
         return;
     }
@@ -1632,6 +1638,12 @@ float OrigamiAudioProcessor::getUiPitchBendDownRange() const noexcept {
     return uiInstrumentState_.performance.pitchBendDownSemitones;
 }
 bool OrigamiAudioProcessor::setUiPerformanceState(const mct::origami::PerformanceState& state) noexcept {
+    using namespace mct::origami;
+    if((state.voiceMode!=VoiceMode::Poly && state.voiceMode!=VoiceMode::Mono) ||
+       (state.notePriority!=NotePriority::Last && state.notePriority!=NotePriority::High && state.notePriority!=NotePriority::Low) ||
+       !std::isfinite(state.glideSeconds) || state.glideSeconds<0 || state.glideSeconds>5 ||
+       !std::isfinite(state.pitchBendRangeSemitones) || std::abs(state.pitchBendRangeSemitones)>PerformanceState::maxBendSemitones ||
+       !std::isfinite(state.pitchBendDownSemitones) || std::abs(state.pitchBendDownSemitones)>PerformanceState::maxBendSemitones) return false;
     UiEdit historyEdit(*this,"Change PerformanceState");
     const juce::ScopedLock lock(stateLock_);
     uiPerformanceState_=state;

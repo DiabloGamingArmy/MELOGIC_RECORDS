@@ -2455,6 +2455,7 @@ private:
     void openWavetableEditor(unsigned oscillatorId);
     void closeWavetableEditor();
     void timerCallback() override;
+    void syncGlobalViews();
     void handleAsyncUpdate() override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;

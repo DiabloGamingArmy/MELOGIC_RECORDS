@@ -221,6 +221,26 @@ if(ORIGAMI_BUILD_VST3)
     IS_MIDI_EFFECT FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
   )
+  # Public screenshot/build identity. Re-evaluate HEAD on every build, but
+  # rewrite the generated header only when its contents actually change.
+  find_package(Git QUIET)
+  set(ORIGAMI_BUILD_CHANNEL "DEVELOPMENT" CACHE STRING "Public release channel")
+  if(NOT ORIGAMI_BUILD_CHANNEL MATCHES "^[A-Za-z0-9 ._-]+$")
+    message(FATAL_ERROR "ORIGAMI_BUILD_CHANNEL must contain public label characters only")
+  endif()
+  add_custom_target(OrigamiBuildIdentity
+    COMMAND ${CMAKE_COMMAND}
+      "-DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/.."
+      "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+      "-DPUBLIC_VERSION=${PROJECT_VERSION}"
+      "-DPUBLIC_CHANNEL=${ORIGAMI_BUILD_CHANNEL}"
+      "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated"
+      "-DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/OrigamiBuildIdentity.h.in"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteBuildIdentity.cmake"
+    BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/OrigamiBuildIdentity.h"
+    VERBATIM)
+  add_dependencies(OrigamiPlugin OrigamiBuildIdentity)
+  target_include_directories(OrigamiPlugin PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
   juce_generate_juce_header(OrigamiPlugin)
   target_sources(OrigamiPlugin PRIVATE plugin/PluginProcessor.cpp plugin/PluginProcessor.h plugin/PluginEditor.cpp plugin/PluginEditor.h)
   # mct-origami-native-window-chrome-v1
