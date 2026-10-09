@@ -1,0 +1,21 @@
+Fresh local Release bundles; developer ad-hoc signatures only. Not notarized or installed.
+codesign --force --deep --sign - origami/build-multihost/OrigamiPlugin_artefacts/Release/AU/MCT Origami.component
+origami/build-multihost/OrigamiPlugin_artefacts/Release/AU/MCT Origami.component: replacing existing signature
+
+codesign --verify --deep --strict --verbose=2 origami/build-multihost/OrigamiPlugin_artefacts/Release/AU/MCT Origami.component
+origami/build-multihost/OrigamiPlugin_artefacts/Release/AU/MCT Origami.component: valid on disk
+origami/build-multihost/OrigamiPlugin_artefacts/Release/AU/MCT Origami.component: satisfies its Designated Requirement
+
+codesign --force --deep --sign - origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3
+origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: replacing existing signature
+
+codesign --verify --deep --strict --verbose=2 origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3
+origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: valid on disk
+origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: satisfies its Designated Requirement
+
+codesign --force --deep --sign - origami/build-multihost/OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app
+origami/build-multihost/OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app: replacing existing signature
+
+codesign --verify --deep --strict --verbose=2 origami/build-multihost/OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app
+origami/build-multihost/OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app: valid on disk
+origami/build-multihost/OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app: satisfies its Designated Requirement

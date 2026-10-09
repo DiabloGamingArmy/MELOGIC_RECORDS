@@ -9,6 +9,7 @@
 // block boundaries.
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxFilter.h"
+#include "core/fx/EqDomain.h"
 #include "core/fx/SpectralTune.h"
 #include "core/dsp/Comb.h"
 #include <algorithm>
@@ -774,6 +775,9 @@ public:
     }
     void reset() noexcept override { for(auto& b:band_) { b.state[0].reset(); b.state[1].reset(); } }
     void process(float* left,float* right,int samples,const float* p) noexcept override {
+        std::array<float,40> targets{};const auto* descriptor=findFxEffect(FxEffectType::Equalizer);
+        for(int i=0;i<40;++i)targets[i]=p?p[i]:descriptor->parameters[i].defaultValue;
+        eq::project(targets.data());p=targets.data();
         static constexpr SvfShape shapes[6]{SvfShape::HighPass,SvfShape::LowShelf,SvfShape::Bell,SvfShape::Notch,SvfShape::HighShelf,SvfShape::LowPass};
         for(int b=0;b<bands;++b) {
             auto& band=band_[b];
@@ -787,6 +791,9 @@ public:
             band.frequency.target=std::log(param(equalizerParameters,base+2,p));
             band.gain.target=param(equalizerParameters,base+3,p);
             band.q.target=param(equalizerParameters,base+4,p);
+            // A Bell -> cut/shelf switch cannot carry its old high-Q state
+            // through the smoothing ramp into the newly monotonic shape.
+            if(type!=2 && type!=3)band.q.value=std::min(band.q.value,float(1/std::sqrt(2.)));
             if(!primed_) for(auto* s:{&band.frequency,&band.gain,&band.q}) s->snap(s->target);
         }
         primed_=true;

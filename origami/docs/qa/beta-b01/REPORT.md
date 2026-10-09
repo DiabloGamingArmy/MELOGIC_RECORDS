@@ -87,3 +87,7 @@ UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
   ctest --test-dir origami/build-b01-sanitizers --output-on-failure
 origami/build-multihost/origami_perf_bench '1 osc,' 'typical' 'heavy everything' 'unison 16'
 ```
+
+## EQ follow-up
+
+The subsequent [EQ headroom investigation and correction](../eq-headroom/REPORT.md) reproduces the original 52,983,876 peak, classifies it as a parameter-domain defect and establishes a +24 dB maximum static cascade transfer without output limiting. Its complete Release/UBSan regressions pass. The extreme EQ-domain concern above is resolved by that correction; the separate ASan runtime and real-device/DAW deadline uncertainties remain.

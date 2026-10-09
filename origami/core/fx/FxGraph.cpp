@@ -5,6 +5,7 @@
 // mct-origami-fx-page-foundation-p01
 #include "core/fx/FxGraph.h"
 #include "core/fx/SpectralTune.h"
+#include "core/fx/EqDomain.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -558,6 +559,7 @@ FxEditResult FxGraph::setParameter(FxNodeId id,FxParameterId parameter,float val
         if(p.id!=parameter) continue;
         p.value=std::clamp(value,0.0f,1.0f);
         if(node->effect==FxEffectType::SpectralTune) spectral::normalizeState(*node,parameter);
+        if(node->effect==FxEffectType::Equalizer) eq::normalizeState(*node,parameter);
         return FxEditResult::Ok;
     }
     return FxEditResult::InvalidPort;
@@ -912,7 +914,7 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
             }
         }
         if(!graph.validate()) return false;
-        for(auto& n:graph.nodes_) if(n.effect==FxEffectType::SpectralTune) spectral::normalizeState(n);
+        for(auto& n:graph.nodes_) {if(n.effect==FxEffectType::SpectralTune) spectral::normalizeState(n);if(n.effect==FxEffectType::Equalizer)eq::normalizeState(n);}
         output=std::move(graph);
         return true;
     } catch(...) {

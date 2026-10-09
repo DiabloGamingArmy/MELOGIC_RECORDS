@@ -5,6 +5,8 @@
 #include "core/preset/StateCodec.h"
 #include "core/dsp/Unison.h"
 #include "tests/NodesScenarios.h"
+#include "tests/EqReference.h"
+#include "core/fx/EqDomain.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -123,36 +125,19 @@ void filters(){
         require(stats.peak>0,"filter has processed input");
     }
 }
-// Independent double-state oracle for extreme EQ gain. Eight valid resonant
-// sections can exceed an arbitrary full-scale ceiling without being unstable.
-// Compare the actual waveform to the linear transfer recurrence instead of
-// clipping it or treating requested amplification as numerical corruption.
-struct EqReference {
-    struct Band {float f=0,g=0,q=0;int type=-1;bool on=false;double state[2][2]{};double a1=0,a2=0,a3=0,m0=0,m1=0,m2=0;};
-    std::array<Band,8> bands{};bool primed=false;double rate=48000;float alpha=0;
-    explicit EqReference(double sr):rate(sr),alpha(float(std::exp(-1/(sr*.03)))){}
-    void process(const fx::FxEffectDescriptor& d,const float* params,const float* inL,const float* inR,double* outL,double* outR,int n){
-        for(std::size_t i=0;i<8;++i){auto& b=bands[i];const auto base=i*5;const bool on=fx::fxChoiceIndex(d.parameters[base],params[base])==1;const int type=fx::fxChoiceIndex(d.parameters[base+1],params[base+1]);if(on!=b.on || type!=b.type)std::memset(b.state,0,sizeof(b.state));b.on=on;b.type=type;
-            if(!primed){b.f=std::log(fx::fxParameterValue(d.parameters[base+2],params[base+2]));b.g=fx::fxParameterValue(d.parameters[base+3],params[base+3]);b.q=fx::fxParameterValue(d.parameters[base+4],params[base+4]);}}
-        primed=true;const auto smooth=[&](float& v,float t){v=t+(v-t)*alpha;if(std::abs(v-t)<1e-7f)v=t;};
-        for(int sample=0;sample<n;++sample){double x[2]{inL[sample],inR[sample]};
-            for(std::size_t i=0;i<8;++i){auto& b=bands[i];const auto base=i*5;smooth(b.f,std::log(fx::fxParameterValue(d.parameters[base+2],params[base+2])));smooth(b.g,fx::fxParameterValue(d.parameters[base+3],params[base+3]));smooth(b.q,fx::fxParameterValue(d.parameters[base+4],params[base+4]));if(!b.on)continue;
-                if((sample&31)==0){const double f=std::clamp(double(std::exp(b.f)),10.,rate*.49),A=std::pow(10.,double(b.g)/40),q=std::clamp(double(b.q),.1,40.);double g=std::tan(juce::MathConstants<double>::pi*f/rate),k=1/q;b.m0=0;b.m1=0;b.m2=1;
-                    switch(b.type){case 0:b.m0=1;b.m1=-k;b.m2=-1;break;case 1:g/=std::sqrt(A);b.m0=1;b.m1=k*(A-1);b.m2=A*A-1;break;case 2:k/=A;b.m0=1;b.m1=k*(A*A-1);b.m2=0;break;case 3:b.m0=1;b.m1=-k;b.m2=0;break;case 4:g*=std::sqrt(A);b.m0=A*A;b.m1=k*(1-A)*A;b.m2=1-A*A;break;default:break;}
-                    b.a1=1/(1+g*(g+k));b.a2=g*b.a1;b.a3=g*g*b.a1;}
-                for(int c=0;c<2;++c){const double v3=x[c]-b.state[c][1],v1=b.a1*b.state[c][0]+b.a2*v3,v2=b.state[c][1]+b.a2*b.state[c][0]+b.a3*v3;b.state[c][0]=2*v1-b.state[c][0];b.state[c][1]=2*v2-b.state[c][1];x[c]=b.m0*x[c]+b.m1*v1+b.m2*v2;}}
-            outL[sample]=x[0];outR[sample]=x[1];}
-    }
-};
+// Independent double-state oracle validates the waveform after canonical EQ
+// target projection. The shared oracle also preserves legacy behavior for the
+// focused headroom reproduction; no output clipping substitutes for this check.
+using test::EqReference;
 void effects(){
     juce::ScopedNoDenormals ftz;Random random;
     for(double rate:rates)for(const auto& d:fx::fxEffectCatalog())if(d.processesAudio){context="effect "+std::string(d.key)+" rate="+std::to_string(rate);auto processor=d.create();processor->prepare(rate);processor->reset();std::array<float,fx::maxFxParameters> p{};for(std::size_t i=0;i<d.parameterCount;++i)p[i]=d.parameters[i].defaultValue;
-        std::array<float,2048> l{},r{};std::array<double,2048> referenceL{},referenceR{};EqReference reference(rate);Stats stats;std::uint64_t offset=0;
+        std::array<float,2048> l{},r{};std::array<double,2048> referenceL{},referenceR{};EqReference reference(rate,true);Stats stats;std::uint64_t offset=0;
         // Defaults, all min/max, alternating corners, random; then every
         // enumerated mode individually with other parameters at defaults.
         std::vector<std::array<float,fx::maxFxParameters>> settings{p};for(int k=0;k<4;++k){auto v=p;for(std::size_t i=0;i<d.parameterCount;++i)v[i]=k==0?0:k==1?1:k==2?float(i%2):random.unit();settings.push_back(v);}for(std::size_t i=0;i<d.parameterCount;++i)for(int choice=0;choice<d.parameters[i].choices;++choice){auto v=p;v[i]=fx::fxChoiceNormalized(d.parameters[i],choice);settings.push_back(v);}
         for(const auto& values:settings)for(int n:blocks){for(int i=0;i<n;++i){l[std::size_t(i)]=offset%4==0?0:offset%4==1?float(std::sin(double(offset+i)*.03))*.25f:offset%4==2?8.f*float(std::sin(double(offset+i)*.27)):0; r[std::size_t(i)]=-l[std::size_t(i)]*.5f;}
-            if(d.type==fx::FxEffectType::Equalizer)reference.process(d,values.data(),l.data(),r.data(),referenceL.data(),referenceR.data(),n);
+            if(d.type==fx::FxEffectType::Equalizer){auto legal=values;fx::eq::project(legal.data());reference.process(d,legal.data(),l.data(),r.data(),referenceL.data(),referenceR.data(),n);}
             {probe::Guard g;processor->process(l.data(),r.data(),n,values.data());}noHeap();++callbacks;
             double bound=65536;
             if(d.type==fx::FxEffectType::Equalizer){double expected=0,error=0;for(int i=0;i<n;++i){expected=std::max({expected,std::abs(referenceL[std::size_t(i)]),std::abs(referenceR[std::size_t(i)])});error=std::max({error,std::abs(double(l[std::size_t(i)])-referenceL[std::size_t(i)]),std::abs(double(r[std::size_t(i)])-referenceR[std::size_t(i)])});}
@@ -260,6 +245,32 @@ std::uint64_t residentBytes(){
 #endif
     return 0;
 }
+void eqMaster(){
+ const auto& d=*fx::findFxEffect(fx::FxEffectType::Equalizer);
+ {
+  context="legacy EQ host/preset/history compatibility";auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,64);fx::FxNodeId id=0;
+  require(p.getUiFxDocument().edit([&](auto& g){id=g.insertEffectBeforeOutput(fx::FxEffectType::Equalizer);if(!id)return false;auto* old=const_cast<fx::FxNode*>(g.findNode(id));for(auto& v:old->parameters)v.value=1;return true;}),"construct structurally valid legacy EQ host state");
+  const auto legacy=state(p);p.setStateInformation(legacy.getData(),int(legacy.getSize()));
+  const auto verify=[&]{const auto* n=p.getUiFxDocument().graph().findNode(id);require(n!=nullptr,"restored EQ exists");double gain=0;for(int b=0;b<8;++b){require(n->parameter(d.parameters[b*5+4].id).value()<=fx::eq::monotonicQNormalized,"host/preset Q constrained");gain+=std::max(0.,double(n->parameter(d.parameters[b*5+3].id).value())*48-24);}require(gain<=24.00001,"host/preset boost budget constrained");};verify();
+  require(p.loadUiPresetState(legacy,"legacy-eq-headroom","Legacy EQ"),"legacy preset load");verify();p.clearUiHistory();const auto a=state(p);
+  require(p.getUiFxDocument().edit([&](auto& g){return g.setParameter(id,104,.5f)==fx::FxEditResult::Ok;}),"legal EQ gain edit");const auto b=state(p);require(a!=b,"EQ edit changes state");require(p.undoUi() && state(p)==a,"EQ Undo restores legal canonical state exactly");require(p.redoUi() && state(p)==b,"EQ Redo restores legal canonical state exactly");
+  juce::AudioBuffer<float> audio(2,64);juce::MidiBuffer midi;midi.addEvent(juce::MidiMessage::noteOn(1,60,.3f),0);Stats stats;hostBlock(p,audio,midi,stats);verify();
+ }
+
+ for(double rate:rates)for(int block:{1,17,257,2048}){
+  context="EQ bus/GLOBAL FX/Master rate="+std::to_string(rate)+" block="+std::to_string(block);
+  auto graph=fx::makeDefaultFxGraph(2);const auto id=graph.insertEffectBeforeOutput(fx::FxEffectType::Equalizer);require(id!=0,"bus EQ");
+  for(int b=0;b<8;++b)for(int k=0;k<5;++k){const float values[]{1,.4f,float(std::log(1000./20)/std::log(1000.)),.5625f,1};require(graph.setParameter(id,d.parameters[b*5+k].id,values[k])==fx::FxEditResult::Ok,"EQ canonical parameter");}
+  auto main=fx::makeDefaultFxGraph();auto env=std::make_unique<fx::FxEnvironment>();env->prepare(rate);env->sync({{mainBusId,&main},{2,&graph}},{});
+  std::array<float,2048> l{},r{},al{},ar{};std::array<float*,14> aux{};aux[0]=al.data();aux[1]=ar.data();Stats stats;FinalOutputStage master;master.prepare(rate,1);double prePeak=0;
+  for(int b=0;b<64;++b){if(b==16 || b==32){require(graph.setEnabled(id,b==32)==fx::FxEditResult::Ok,"EQ graph bypass toggle");env->sync({{mainBusId,&main},{2,&graph}},{});}l.fill(0);r.fill(0);for(int i=0;i<block;++i){al[std::size_t(i)]=float(.25*std::sin(6.283185307179586*1000*(b*block+i)/rate));ar[std::size_t(i)]=-.5f*al[std::size_t(i)];}
+   {probe::Guard g;env->process(l.data(),r.data(),aux.data(),2,block);}noHeap();++callbacks;for(int i=0;i<block;++i)prePeak=std::max(prePeak,std::abs(double(l[std::size_t(i)])));
+   std::array<float,2048> before=l;{probe::Guard g;master.process(l.data(),r.data(),block,1);}noHeap();for(int i=0;i<block;++i)require(std::abs(l[std::size_t(i)]-before[std::size_t(i)]*FinalOutputGain::linear(1))<1e-5f,"exactly one final gain stage after summed bus/GLOBAL FX");stats.inspect(l.data(),r.data(),block,32);
+  }
+  require(prePeak>0,"routed EQ reaches output");for(int b=0;b<int(rate*.025/block)+2;++b){l.fill(1);r.fill(-.5f);master.process(l.data(),r.data(),block,0);}require(std::all_of(l.begin(),l.begin()+block,[](float x){return x==0;}),"EQ-chain final Master mute is exact");
+ }
+}
+
 void longRender(){
     context="long render";auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,2048);complex(p);Stats stats;juce::AudioBuffer<float> audio(2,2048);juce::MidiBuffer midi;Random random;
     // Five minutes of sample time, independent of machine wall-clock speed.
@@ -272,7 +283,7 @@ int main(int argc,char** argv){juce::ScopedJuceInitialiser_GUI gui;ui::UserPrefe
     std::cout<<"libmalloc probe: "<<(probe::slot?"available":"unavailable (C++ only)")<<'\n';
     if(probe::slot){void* p;{probe::Guard g;auto* volatile allocate=&std::malloc;p=allocate(131073);}const bool observed=probe::allocations>0;std::free(p);if(!observed){std::cerr<<"FAIL allocation probe self-test\n";return 1;}}
 #endif
-    const std::pair<const char*,void(*)()> suites[]={{"matrix",matrix},{"oscillator",oscillator},{"filters",filters},{"effects",effects},{"midi",midi},{"arpStop",arpStop},{"modulation",modulation},{"master",master},{"tails",tails},{"states",states},{"routing",routing},{"lifecycle",lifecycle},{"long",longRender}};unsigned failures=0,selected=0;
+    const std::pair<const char*,void(*)()> suites[]={{"matrix",matrix},{"oscillator",oscillator},{"filters",filters},{"effects",effects},{"midi",midi},{"arpStop",arpStop},{"modulation",modulation},{"master",master},{"eqMaster",eqMaster},{"tails",tails},{"states",states},{"routing",routing},{"lifecycle",lifecycle},{"long",longRender}};unsigned failures=0,selected=0;
     for(const auto& suite:suites){if(argc>1 && std::string(suite.first).find(argv[1])==std::string::npos)continue;++selected;context=suite.first;const auto start=std::chrono::steady_clock::now();try{suite.second();std::cout<<"PASS "<<suite.first<<" ("<<std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<<" s)\n";}catch(const std::exception& e){++failures;std::cerr<<"FAIL "<<suite.first<<": "<<e.what()<<'\n';}std::cout.flush();}
     std::cout<<"B01 seed=0xb010cafe checks="<<checks<<" samples="<<samples<<" callbacks="<<callbacks<<" failures="<<failures<<'\n';if(!selected){std::cerr<<"No torture sections matched\n";return 2;}return failures?1:0;
 }

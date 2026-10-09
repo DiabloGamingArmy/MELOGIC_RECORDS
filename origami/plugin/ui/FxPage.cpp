@@ -7,6 +7,7 @@
 #include "SourceEntity.h"
 #include "ModulationUiTelemetry.h"
 #include "core/fx/FxFilter.h"
+#include "core/fx/EqDomain.h"
 #include "core/fx/SpectralTune.h"
 #include "core/dsp/Comb.h"
 #include <cmath>
@@ -2571,6 +2572,8 @@ public:
             addAndMakeVisible(*s);
         }
         freq_.setName("FX EQ freq"); gain_.setName("FX EQ gain"); q_.setName("FX EQ q");
+        gain_.setTooltip("Positive EQ gains share a +24 dB budget; cuts retain their full range.");
+        q_.setTooltip("Bell/Notch Q: 0.3–12. Cuts/Shelves: 0.3–0.707 (non-resonant).");
         freq_.onValueChange=[this]{set(3,float(freq_.getValue()));};
         gain_.onValueChange=[this]{set(4,float(gain_.getValue()));};
         q_.onValueChange=[this]{set(5,float(q_.getValue()));};
@@ -2662,8 +2665,11 @@ private:
         on_.setButtonText(value(selected_,1)>=0.5f ? "ON" : "OFF");
         type_.setButtonText(juce::String(fxParameterText(*descriptor(selected_,2),value(selected_,2))));
         if(!freq_.isMouseButtonDown()) freq_.setValue(value(selected_,3),juce::dontSendNotification);
-        if(!gain_.isMouseButtonDown()) gain_.setValue(value(selected_,4),juce::dontSendNotification);
-        if(!q_.isMouseButtonDown()) q_.setValue(value(selected_,5),juce::dontSendNotification);
+        double reserved=0;for(int b=0;b<8;++b)if(b!=selected_)reserved+=std::max(0.,double(value(b,4))-.5);
+        gain_.setRange(0,std::max(.5,1.-reserved),.000001);
+        q_.setRange(0,fx::eq::maximumQ(int(std::lround(value(selected_,2)*5))),.000001);
+        gain_.setValue(value(selected_,4),juce::dontSendNotification);
+        q_.setValue(value(selected_,5),juce::dontSendNotification);
         bool anyOff=false;
         for(int b=0;b<8;++b) anyOff|=value(b,1)<0.5f;
         add_.setEnabled(anyOff);

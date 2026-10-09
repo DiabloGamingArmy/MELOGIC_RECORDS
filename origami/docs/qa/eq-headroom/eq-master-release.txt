@@ -1,0 +1,3 @@
+libmalloc probe: available
+PASS eqMaster (0.161231 s)
+B01 seed=0xb010cafe checks=750700 samples=1486848 callbacks=1281 failures=0
