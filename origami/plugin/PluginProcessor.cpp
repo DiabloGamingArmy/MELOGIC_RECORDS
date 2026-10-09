@@ -35,8 +35,10 @@
 #include <limits>
 #include <optional>
 #include "core/preset/StateCodec.h"
-OrigamiAudioProcessor::OrigamiAudioProcessor()
+OrigamiAudioProcessor::OrigamiAudioProcessor(std::shared_ptr<const std::atomic<bool>> authorization)
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
+    if(authorization)authorization_=std::move(authorization);
+    else {account_=melogic::account::Service::shared();authorization_=account_->authorizationFlag();}
     // NEW and browser INIT share authored content, independent of codec defaults.
     const bool initRestored=engine_.restoreInstrumentState(mct::origami::canonicalInitState());
     jassert(initRestored);
@@ -534,6 +536,29 @@ void OrigamiAudioProcessor::advanceArpeggiator(juce::MidiBuffer& out,int startSa
 }
 
 void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
+    // One bounded output/performance boundary, shared by all shipping formats.
+    // No auth worker, storage, networking, parsing or mutex is reached here.
+    const bool authorized=isAuthorized();
+    if(!authorized) {
+        if(authorizationWasOpen_) {
+            engine_.emergencyResetRuntime();fxEnvironment_.emergencyResetRuntime();resetArpeggiatorRuntime(false);
+        }
+        authorizationWasOpen_=false;unauthorizedObserved_=true;
+        uiMidiRead_.store(uiMidiWrite_.load(std::memory_order_acquire),std::memory_order_release);
+        performanceUiHeldLow_.store(0,std::memory_order_release);performanceUiHeldHigh_.store(0,std::memory_order_release);
+        pendingUiPitch_.store(-1,std::memory_order_release);pendingUiMod_.store(-1,std::memory_order_release);
+        buffer.clear();midi.clear();finalOutputStage_.resetMeters();runtimeOutputPeak_.store(0,std::memory_order_relaxed);
+        qosVoices_.store(0,std::memory_order_relaxed);qosModules_.store(0,std::memory_order_relaxed);qosUnison_.store(0,std::memory_order_relaxed);qosOscEvals_.store(0,std::memory_order_relaxed);
+        return;
+    }
+    // Held UI notes queued after the last unauthorized block are discarded on
+    // reopening; new host MIDI in this block is allowed normally.
+    if(unauthorizedObserved_) {
+        unauthorizedObserved_=false;
+        uiMidiRead_.store(uiMidiWrite_.load(std::memory_order_acquire),std::memory_order_release);
+        performanceUiHeldLow_.store(0,std::memory_order_release);performanceUiHeldHigh_.store(0,std::memory_order_release);
+    }
+    authorizationWasOpen_=true;
     continuityCallbacks_.fetch_add(1,std::memory_order_relaxed);
     const auto callbackStartTicks=juce::Time::getHighResolutionTicks();
 

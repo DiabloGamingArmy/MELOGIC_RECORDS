@@ -18,7 +18,7 @@ function desktopAuthCore({ db, auth, now = Date.now }) {
     await db.runTransaction(async tx => {
       const snap = await tx.get(ref)
       const count = Number(snap.data()?.count || 0)
-      if (count >= (operation === 'begin' ? 20 : 240)) fail('resource-exhausted', 'Try again later.')
+      if (count >= (operation === 'poll' ? 240 : 20)) fail(operation === 'redeem' ? 'aborted' : 'resource-exhausted', 'Too many attempts. Wait a minute and retry.')
       tx.set(ref, { count: count + 1, expiresAt: new Date(now() + 120000) })
     })
   }
@@ -28,6 +28,7 @@ function desktopAuthCore({ db, auth, now = Date.now }) {
     return value
   }
   return {
+    throttle,
     async begin(data, ip) {
       const id = requestId(data)
       if (!/^[A-Za-z0-9_-]{43}$/.test(data?.challenge || '')) fail('invalid-argument', 'Invalid login challenge.')
@@ -40,7 +41,7 @@ function desktopAuthCore({ db, auth, now = Date.now }) {
       })
       return { requestId: id, expiresAt }
     },
-    async approve(data, uid) {
+    async approve(data, uid, authTime = Math.floor(now() / 1000)) {
       if (!uid) fail('unauthenticated', 'Sign in to Melogic first.')
       const id = requestId(data)
       if (typeof data.approve !== 'boolean') fail('invalid-argument', 'Confirm or cancel this request.')
@@ -50,7 +51,7 @@ function desktopAuthCore({ db, auth, now = Date.now }) {
       await db.runTransaction(async tx => {
         const value = valid(await tx.get(ref))
         if (value.status !== 'pending') fail('failed-precondition', 'Login request already handled.')
-        tx.update(ref, { status: data.approve ? 'approved' : 'cancelled', uid })
+        tx.update(ref, { status: data.approve ? 'approved' : 'cancelled', uid, authTime })
       })
       return { ok: true }
     },
@@ -68,13 +69,13 @@ function desktopAuthCore({ db, auth, now = Date.now }) {
           // Claim before issuing. A lost response requires a new login; it can
           // never replay a previously issued Firebase custom token.
           tx.update(ref, { status: 'consumed' })
-          return { status: 'approved', uid: value.uid }
+          return { status: 'approved', uid: value.uid, authTime: value.authTime }
         }
         return { status: value.status }
       })
       if (result.status !== 'approved') return { requestId: id, status: result.status }
       const user = await auth.getUser(result.uid)
-      if (user.disabled) fail('permission-denied', 'Account unavailable.')
+      if (user.disabled || !Number.isFinite(result.authTime) || (user.tokensValidAfterTime && new Date(user.tokensValidAfterTime).getTime() / 1000 > result.authTime)) fail('permission-denied', 'Account unavailable.')
       return { requestId: id, status: 'approved', customToken: await auth.createCustomToken(user.uid) }
     }
   }

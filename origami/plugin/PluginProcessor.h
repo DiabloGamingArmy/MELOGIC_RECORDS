@@ -22,6 +22,7 @@
 #include "DocumentHistory.h"
 #include "FinalOutput.h"
 #include <functional>
+#include <melogic/account/AccountService.h>
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
 #include "core/fx/FxGraph.h"
@@ -61,7 +62,11 @@ private:
 
 class OrigamiAudioProcessor final : public juce::AudioProcessor, public juce::ChangeBroadcaster {
 public:
-    OrigamiAudioProcessor();
+    // Dependency injection is used by test targets; shipping wrappers call the
+    // default constructor and receive the canonical service's read-only flag.
+    explicit OrigamiAudioProcessor(std::shared_ptr<const std::atomic<bool>> authorization = {});
+    bool isAuthorized() const noexcept {return authorization_->load(std::memory_order_acquire);}
+
     ~OrigamiAudioProcessor() override = default;
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -255,6 +260,10 @@ public:
     AudioContinuityDiagnostics getAudioContinuityDiagnostics() const noexcept;
     void resetAudioContinuityDiagnostics() noexcept;
 private:
+    std::shared_ptr<melogic::account::Service> account_;
+    std::shared_ptr<const std::atomic<bool>> authorization_;
+    bool authorizationWasOpen_=false,unauthorizedObserved_=false;
+    static_assert(std::atomic<bool>::is_always_lock_free);
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     // DAW macro parameters (owned by juce::AudioProcessor) by macro id - 1.
     std::array<OrigamiMacroParameter*,mct::origami::maxMacros> macroParameters_{};

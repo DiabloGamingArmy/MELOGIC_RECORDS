@@ -1,3 +1,4 @@
+#include "TestAuthorization.h"
 // mct-origami-dsp-performance-stereo-chain: performance regression harness.
 //
 // Drives the real OrigamiAudioProcessor::processBlock (engine + bus FX +
@@ -218,7 +219,7 @@ double percentile(std::vector<double> v,double q) {
 }
 
 Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
-    auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized()); auto& p=*owner;
     p.setPlayConfigDetails(0,2,s.sampleRate,s.block);
     p.prepareToPlay(s.sampleRate,s.block);
     if(s.setup) s.setup(p);
@@ -445,7 +446,7 @@ void browseStress() {
     const auto typical=[](OrigamiAudioProcessor& p){ oscillators(p,2,4); chain(p,false); routes(p,8,false); };
     const char* names[]{"idle UI thread","search / filter / sort 10k records","wavetable import (64 frames)","wavetable export (64 frames)","preset loads","wavetable loads into OSC 1"};
     for(int mode=0;mode<6;++mode) {
-        auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
+        auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized()); auto& p=*owner;
         p.setPlayConfigDetails(0,2,48000.0,256); p.prepareToPlay(48000.0,256);
         typical(p);
         juce::MemoryBlock presetA,presetB; p.getStateInformation(presetA);
@@ -511,6 +512,7 @@ void memoryReport() {
 }
 
 int main(int argc,char** argv) {
+    melogic::account::Service::useInMemoryForTesting();
     if(argc>=2 && std::strcmp(argv[1],"--memory")==0) { juce::ScopedJuceInitialiser_GUI gui; memoryReport(); return 0; }
     if(argc>=2 && std::strcmp(argv[1],"--browse-stress")==0) {
 #if defined(__APPLE__)
@@ -526,7 +528,7 @@ int main(int argc,char** argv) {
     juce::ScopedJuceInitialiser_GUI gui;
     dsp::prepareSpectralCompiler();
     if(argc>=2 && std::strcmp(argv[1],"--filter-prepare")==0) {
-        OrigamiAudioProcessor processor;oscillators(processor,4);auto state=processor.getUiInstrumentState();auto mod=state.modulation;SynthFilterId previous=0;
+        OrigamiAudioProcessor processor{origami_test::authorized()};oscillators(processor,4);auto state=processor.getUiInstrumentState();auto mod=state.modulation;SynthFilterId previous=0;
         for(std::size_t n=0;n<maxSynthFilters;++n) {const auto id=addSynthFilter(mod);if(previous) insertSynthFilterAfter(mod,id,previous);else insertSynthFilter(mod,state.oscillators,id,state.oscillators[0].id);previous=id;}
         std::vector<double> times;times.reserve(1000);
         for(int n=0;n<1000;++n) {const auto start=std::chrono::steady_clock::now();const bool ok=processor.setUiModulationState(mod);const auto stop=std::chrono::steady_clock::now();if(!ok) return 1;times.push_back(std::chrono::duration<double,std::micro>(stop-start).count());}

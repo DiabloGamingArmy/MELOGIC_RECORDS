@@ -127,7 +127,7 @@ void GlobalPanel::syncFromModel() {
     using melogic::account::State;
     const auto account=account_->snapshot();
     const bool identified=account.state==State::SignedIn || account.state==State::OfflineCached;
-    accountIdentity_.setText(identified?(account.identity.displayName.isEmpty()?account.identity.email:account.identity.displayName)+"\n"+(account.state==State::OfflineCached?"Offline / cached identity":account.identity.email):account.message,juce::dontSendNotification);
+    accountIdentity_.setText(identified?(account.identity.displayName.isEmpty()?account.identity.email:account.identity.displayName)+"\n"+(account.state==State::OfflineCached?"Offline / cached identity":account.identity.email)+"\n"+(account.authorization.state==melogic::account::AuthorizationState::Authorized?"Origami / Activated / "+account.authorization.edition:"Origami / not licensed"):account.message,juce::dontSendNotification);
     accountIdentity_.setTooltip(account.message);
     accountAction_.setButtonText(identified?"OPEN ACCOUNT":account.storageError?"RETRY ACCOUNT ACCESS":"SIGN IN TO MELOGIC");
     accountAction_.setEnabled(account.state!=State::AwaitingBrowser && account.state!=State::Restoring && account.state!=State::Refreshing && account.state!=State::SigningOut);
@@ -139,7 +139,7 @@ void GlobalPanel::syncFromModel() {
 void GlobalPanel::showSettings(bool open) {settingsOpen_=open;settings_.setButtonText(open?"BACK TO GLOBAL":"SETTINGS");resized();syncFromModel();}
 void GlobalPanel::resized() {
     const auto r=regions(contentBounds());identity_.setBounds(r.identity.withTrimmedLeft(r.identity.getWidth()-250));
-    accountIdentity_.setBounds(r.account.reduced(12,0).withY(r.account.getY()+25).withHeight(34));
+    accountIdentity_.setBounds(r.account.reduced(12,0).withY(r.account.getY()+25).withHeight(38));
     auto accountButtons=r.account.reduced(12,0).withY(r.account.getY()+63).withHeight(24);
     accountAction_.setBounds(accountButtons.removeFromLeft(juce::jmin(180,accountButtons.getWidth()-80)));accountButtons.removeFromLeft(8);accountSecondary_.setBounds(accountButtons.removeFromLeft(72));
     for(auto* c:std::array<juce::Component*,10>{{&master_,&voiceMode_,&priority_,&legato_,&glide_,&bendUp_,&bendDown_,&rate_,&block_,&voices_}})c->setVisible(!settingsOpen_);

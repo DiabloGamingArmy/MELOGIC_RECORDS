@@ -1,3 +1,4 @@
+#include "TestAuthorization.h"
 #include <melogic/account/AccountService.h>
 // B01: deterministic adversarial tests of production DSP and host boundaries.
 // No timing-based correctness gates, no test-only reductions of requested load.
@@ -150,7 +151,7 @@ void effects(){
 }
 juce::MemoryBlock state(OrigamiAudioProcessor& p){juce::MemoryBlock s;p.getStateInformation(s);return s;}
 void midi(){
-    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,128);require(p.setUiParameter(ParameterId::Release,.005f),"short release");Stats stats;juce::AudioBuffer<float> audio(2,257);juce::MidiBuffer messages;
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,128);require(p.setUiParameter(ParameterId::Release,.005f),"short release");Stats stats;juce::AudioBuffer<float> audio(2,257);juce::MidiBuffer messages;
     for(int b=0;b<256;++b){context="host MIDI flood block="+std::to_string(b);messages.clear();for(int k=0;k<128;++k){const int channel=1+(k%16),note=(b+k)%128,at=k*2;messages.addEvent(k%3?juce::MidiMessage::noteOn(channel,note,.1f):juce::MidiMessage::noteOff(channel,note),at);messages.addEvent(juce::MidiMessage::pitchWheel(channel,k%2?0:16383),at);messages.addEvent(juce::MidiMessage::controllerEvent(channel,64,k%2?127:0),at);}hostBlock(p,audio,messages,stats);require(p.getUiRenderBudgetSnapshot().load.activeVoices<=16,"bounded voice count");}
     messages.clear();for(int c=1;c<=16;++c)messages.addEvent(juce::MidiMessage::allNotesOff(c),0);hostBlock(p,audio,messages,stats);messages.clear();for(int b=0;b<32;++b)hostBlock(p,audio,messages,stats);require(p.getUiRenderBudgetSnapshot().load.activeVoices==0 && audio.getMagnitude(0,audio.getNumSamples())==0,"flood releases to silence");
     // Large valid host input must not grow MIDI scratch storage in the callback.
@@ -161,7 +162,7 @@ void midi(){
 }
 void arpStop(){
     for(bool soundOff:{false,true}){
-    context="ARP all-notes-off";auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,2048);require(p.setUiParameter(ParameterId::Release,.005f),"release");auto arp=p.getUiArpeggiatorState();arp.enabled=true;arp.latch=true;arp.syncToDaw=false;arp.internalTempo=400;require(p.setUiArpeggiatorState(arp),"latched ARP");Stats stats;juce::AudioBuffer<float> audio(2,2048);juce::MidiBuffer midi;midi.addEvent(juce::MidiMessage::noteOn(1,60,.3f),0);hostBlock(p,audio,midi,stats);midi.clear();midi.addEvent(soundOff?juce::MidiMessage::allSoundOff(1):juce::MidiMessage::allNotesOff(1),0);hostBlock(p,audio,midi,stats);midi.clear();for(int b=0;b<48;++b)hostBlock(p,audio,midi,stats);require(p.getUiRenderBudgetSnapshot().load.activeVoices==0 && audio.getMagnitude(0,2048)==0,"all-notes/sound-off clears latched ARP and cannot retrigger");
+    context="ARP all-notes-off";auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,2048);require(p.setUiParameter(ParameterId::Release,.005f),"release");auto arp=p.getUiArpeggiatorState();arp.enabled=true;arp.latch=true;arp.syncToDaw=false;arp.internalTempo=400;require(p.setUiArpeggiatorState(arp),"latched ARP");Stats stats;juce::AudioBuffer<float> audio(2,2048);juce::MidiBuffer midi;midi.addEvent(juce::MidiMessage::noteOn(1,60,.3f),0);hostBlock(p,audio,midi,stats);midi.clear();midi.addEvent(soundOff?juce::MidiMessage::allSoundOff(1):juce::MidiMessage::allNotesOff(1),0);hostBlock(p,audio,midi,stats);midi.clear();for(int b=0;b<48;++b)hostBlock(p,audio,midi,stats);require(p.getUiRenderBudgetSnapshot().load.activeVoices==0 && audio.getMagnitude(0,2048)==0,"all-notes/sound-off clears latched ARP and cannot retrigger");
     midi.ensureSize(4*1024*1024);for(int k=0;k<100000;++k)midi.addEvent(juce::MidiMessage::noteOff(1,k%128),0);midi.addEvent(juce::MidiMessage::noteOn(1,64,.5f),1);const auto count=midi.getNumEvents();hostBlock(p,audio,midi,stats);require(midi.getNumEvents()==count,"ARP host MIDI unchanged");midi.clear();for(int b=0;b<8;++b)hostBlock(p,audio,midi,stats);require(audio.getMagnitude(0,2048)>0,"ARP admits last oversized MIDI event after stop");
     }
 }
@@ -172,7 +173,7 @@ void complex(OrigamiAudioProcessor& p){
     require(p.getUiFxWorkspace().document(bus).edit([](auto& graph){return graph.insertEffectBeforeOutput(fx::FxEffectType::Delay)!=0;}),"insert bus FX");require(p.getUiFxDocument().edit([](auto& graph){return graph.insertEffectBeforeOutput(fx::FxEffectType::Compressor)!=0;}),"insert main FX");require(p.setUiFinalOutput(.5f),"master");
 }
 void states(){
-    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,257);context="complex state";complex(p);const auto a=state(p);Stats stats;juce::AudioBuffer<float> audio(2,257);juce::MidiBuffer midi;
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,257);context="complex state";complex(p);const auto a=state(p);Stats stats;juce::AudioBuffer<float> audio(2,257);juce::MidiBuffer midi;
     for(int pass=0;pass<200;++pass){context="state restore pass="+std::to_string(pass);require(p.setUiParameter(ParameterId::OscUnison,float(1+pass%16)),"mutate unison");require(p.setUiFinalOutput(float(pass%11)/10),"mutate master");auto osc=p.getUiOscillatorState(2);osc.pan=pass%2?-1:1;require(p.setUiOscillatorState(2,osc),"mutate oscillator");p.setStateInformation(a.getData(),int(a.getSize()));require(state(p)==a,"complete state equivalence");midi.clear();midi.addEvent(juce::MidiMessage::noteOn(1,pass%128,.1f),0);hostBlock(p,audio,midi,stats);midi.clear();hostBlock(p,audio,midi,stats);}
     for(int cut:{0,1,7,11,int(a.getSize()/2),int(a.getSize()-1)}){context="truncated host state";p.setStateInformation(a.getData(),cut);require(state(p)==a,"malformed state leaves canonical state unchanged");}
     const auto fullMod=p.getUiInstrumentState().modulation;
@@ -205,11 +206,11 @@ void routing(){
     context="graph mutations";fx::FxRenderer renderer;renderer.prepare(48000);auto graph=fx::makeDefaultFxGraph();std::array<float,257> l{},r{};Stats stats;
     for(int i=0;i<512;++i){const auto id=graph.insertEffectBeforeOutput(i%2?fx::FxEffectType::Gain:fx::FxEffectType::Filter);require(id!=0,"insert FX");require(renderer.sync(graph),"publish graph");l.fill(.1f);r.fill(-.1f);{probe::Guard g;renderer.process(l.data(),r.data(),257);}noHeap();stats.inspect(l.data(),r.data(),257,8);require(graph.setEnabled(id,false)==fx::FxEditResult::Ok,"bypass");require(renderer.sync(graph),"publish bypass");require(graph.removeNodeBridging(id)==fx::FxEditResult::Ok && renderer.sync(graph),"delete/recompile");{probe::Guard g;renderer.process(l.data(),r.data(),257);}noHeap();stats.inspect(l.data(),r.data(),257,8);}
     auto x=graph.addEffect(fx::FxEffectType::Gain,{0,0}),y=graph.addEffect(fx::FxEffectType::Gain,{0,0});require(graph.connect({x,0},{y,0})==fx::FxEditResult::Ok,"edge");const auto before=fx::encodeFxGraph(graph);require(graph.connect({y,0},{x,0})==fx::FxEditResult::WouldCreateCycle && fx::encodeFxGraph(graph)==before,"cycle rejected transactionally");
-    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,257);juce::AudioBuffer<float> audio(2,257);juce::MidiBuffer midi;
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,257);juce::AudioBuffer<float> audio(2,257);juce::MidiBuffer midi;
     for(int i=0;i<128;++i){context="bus mutation="+std::to_string(i);const auto bus=p.addUiBus();require(bus!=0,"create bus");auto osc=p.getUiOscillatorState(1);osc.busRouteCount=1;osc.busRoutes[0]={bus,.5f};require(p.setUiOscillatorState(1,osc),"reroute oscillator");require(p.getUiFxWorkspace().document(bus).edit([](auto& g){return g.insertEffectBeforeOutput(fx::FxEffectType::Gain)!=0;}),"bus effect");midi.clear();midi.addEvent(juce::MidiMessage::noteOn(1,60,.2f),0);hostBlock(p,audio,midi,stats);require(p.removeUiBus(bus),"delete sounding bus");midi.clear();hostBlock(p,audio,midi,stats);require(validInstrumentState(p.getUiInstrumentState()),"no dangling sends");}
 }
 void lifecycle(){
-    Stats stats;for(int instance=0;instance<20;++instance){context="lifecycle instance="+std::to_string(instance);auto owner=std::make_unique<OrigamiAudioProcessor>();auto other=std::make_unique<OrigamiAudioProcessor>();other->prepareToPlay(48000,128);const auto untouched=state(*other);
+    Stats stats;for(int instance=0;instance<20;++instance){context="lifecycle instance="+std::to_string(instance);auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto other=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());other->prepareToPlay(48000,128);const auto untouched=state(*other);
         for(double rate:rates){owner->prepareToPlay(rate,17);juce::AudioBuffer<float> audio(2,257);juce::MidiBuffer midi;midi.addEvent(juce::MidiMessage::noteOn(1,69,.2f),0);hostBlock(*owner,audio,midi,stats);owner->releaseResources();owner->prepareToPlay(rate,2048);audio.setSize(2,3);midi.clear();owner->requestPanic();hostBlock(*owner,audio,midi,stats);require(audio.getMagnitude(0,3)==0,"lifecycle Panic silence");require(state(*other)==untouched,"independent instances");}}
 }
 void modulation(){
@@ -249,7 +250,7 @@ std::uint64_t residentBytes(){
 void eqMaster(){
  const auto& d=*fx::findFxEffect(fx::FxEffectType::Equalizer);
  {
-  context="legacy EQ host/preset/history compatibility";auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,64);fx::FxNodeId id=0;
+  context="legacy EQ host/preset/history compatibility";auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,64);fx::FxNodeId id=0;
   require(p.getUiFxDocument().edit([&](auto& g){id=g.insertEffectBeforeOutput(fx::FxEffectType::Equalizer);if(!id)return false;auto* old=const_cast<fx::FxNode*>(g.findNode(id));for(auto& v:old->parameters)v.value=1;return true;}),"construct structurally valid legacy EQ host state");
   const auto legacy=state(p);p.setStateInformation(legacy.getData(),int(legacy.getSize()));
   const auto verify=[&]{const auto* n=p.getUiFxDocument().graph().findNode(id);require(n!=nullptr,"restored EQ exists");double gain=0;for(int b=0;b<8;++b){require(n->parameter(d.parameters[b*5+4].id).value()<=fx::eq::monotonicQNormalized,"host/preset Q constrained");gain+=std::max(0.,double(n->parameter(d.parameters[b*5+3].id).value())*48-24);}require(gain<=24.00001,"host/preset boost budget constrained");};verify();
@@ -273,7 +274,7 @@ void eqMaster(){
 }
 
 void longRender(){
-    context="long render";auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,2048);complex(p);Stats stats;juce::AudioBuffer<float> audio(2,2048);juce::MidiBuffer midi;Random random;
+    context="long render";auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,2048);complex(p);Stats stats;juce::AudioBuffer<float> audio(2,2048);juce::MidiBuffer midi;Random random;
     // Five minutes of sample time, independent of machine wall-clock speed.
     std::uint64_t warmResident=0;const std::uint64_t total=48000u*300u;for(std::uint64_t offset=0;offset<total;offset+=2048){if(!warmResident && offset>=48000u*60u)warmResident=residentBytes();midi.clear();if(offset%65536==0){midi.addEvent(juce::MidiMessage::allNotesOff(1),0);for(int n=0;n<8;++n)midi.addEvent(juce::MidiMessage::noteOn(1,36+int(random.next(60)),.1f),1);require(p.setUiParameter(ParameterId::OscDetune,float(random.next(101))),"long detune");}hostBlock(p,audio,midi,stats,32);}
     p.requestPanic();midi.clear();hostBlock(p,audio,midi,stats);for(int b=0;b<256;++b)hostBlock(p,audio,midi,stats);require(audio.getMagnitude(0,2048)==0 && p.getUiRenderBudgetSnapshot().load.activeVoices==0,"long render ends silent");std::cout<<"  five minutes / "<<total<<" frames; peak="<<stats.peak<<" rms="<<stats.rms()<<" resident warm/end bytes="<<warmResident<<"/"<<residentBytes()<<'\n';

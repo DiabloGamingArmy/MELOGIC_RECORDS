@@ -4,6 +4,7 @@
 // mct-origami-v25.1.0-arp-advanced-page
 #pragma once
 #include <JuceHeader.h>
+#include "ui/ActivationPanel.h"
 #include "ui/OrigamiHeader.h"
 #include "ui/UserPreferences.h"
 #include "ui/ContentBrowser.h"
@@ -72,6 +73,7 @@ public:
     void beginModulationDrag(mct::origami::ModSource);
     void updateModulationDragHover(juce::Point<int> editorPoint,double nowMs);
     void endModulationDrag();
+    void refreshAuthorizationState(){syncActivationGate();}
     int currentPage() const noexcept { return currentPage_; }
     // mct-origami-modulation-row-consistency
     // Every route mutation (from any view, via the modulation bindings) posts
@@ -2500,6 +2502,9 @@ private:
     bool preferFinalOutputHistory(bool redo) const;
     std::uint64_t outputHistoryDraftRevision_=0;
     bool historyMouseGesture_=false;
+    void syncActivationGate();
+    juce::Component normalSurface_;
+    mct::origami::ui::ActivationPanel activation_;
     OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;
     mct::origami::ui::OrigamiHeader header_;

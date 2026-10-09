@@ -22,11 +22,13 @@ public:
 class FakeBackend final : public Backend {
 public:
     bool offline=false,invalid=false,mismatch=false,denied=false,waiting=false;
-    unsigned refreshes=0,begins=0;
+    unsigned refreshes=0,begins=0,licenseChecks=0,redemptions=0;bool licensed=false;
     std::function<void()> duringRefresh;
     Session result(juce::int64 now){Session s;s.identity={"fixture-uid","Fixture Person","fixture@example.invalid",{}};s.refreshToken="fixture-only-not-a-real-token";s.verified=true;s.validatedAt=now;s.refreshAfter=now+3000000;return s;}
     Request begin(juce::int64 now) override{++begins;if(offline)throw Failure{Failure::Network};Request r;r.id=juce::String::repeatedString("a",64);r.verifier=juce::String::repeatedString("b",64);r.expiresAt=now+300000;r.browserURL="https://melogicrecords.studio/auth/desktop?request="+r.id;return r;}
     Poll poll(const Request& r,juce::int64 now) override{if(offline)throw Failure{Failure::Network};Poll p;p.requestId=mismatch?"injected":r.id;p.status=waiting?Poll::Pending:denied?Poll::Cancelled:Poll::Approved;p.session=result(now);return p;}
+    Authorization authorization(Session&,juce::int64 now) override {++licenseChecks;if(offline)throw Failure{Failure::Network};return licensed?Authorization{AuthorizationState::Authorized,"beta","Origami activated / Beta",now+900000}:Authorization{AuthorizationState::Unauthorized,{},"Account signed in; Origami is not licensed.",0};}
+    Authorization redeem(Session& session,const juce::String& key,juce::int64 now) override {++redemptions;if(key!="fixture-redemption-input-not-an-issued-key")throw Failure{Failure::InvalidKey};licensed=true;return authorization(session,now);}
     Session refresh(const Session&,juce::int64 now) override{++refreshes;if(duringRefresh)duringRefresh();if(offline)throw Failure{Failure::Network};if(invalid)throw Failure{Failure::InvalidSession};return result(now);}
 };
 void scenarios(){
@@ -91,6 +93,43 @@ void keychainRoundTrip(){
     bool rejected=false;try{first->load();}catch(const Failure& f){rejected=f.kind==Failure::Storage;}check(rejected,"malformed Keychain JSON fails closed");first->erase();
 }
 #endif
+void authorizationScenarios(){
+    constexpr juce::int64 now=1000000;
+    check(boundedServerDeadline(now+300001,now,300000)==now+300000,"network transit does not reject a valid login deadline or extend lifetime");
+    check(boundedServerDeadline(now+900025,now,900000)==now+900000,"authorization lease tolerates bounded skew and clamps lifetime");
+    for(auto deadline:{now,now+930001}){bool rejected=false;try{boundedServerDeadline(deadline,now,900000);}catch(const Failure&){rejected=true;}check(rejected,"expired/implausible deadline rejected");}
+    FakeStore store;FakeBackend backend;Coordinator first(store,backend),second(store,backend),third(store,backend);
+    first.step(Command::None,now);check(first.snapshot.authorization.state==AuthorizationState::Unauthorized,"startup is gated");
+    first.step(Command::SignIn,now);check(first.snapshot.authorization.state==AuthorizationState::Authenticating,"pending auth is not authorization");first.step(Command::None,now+1);
+    check(first.snapshot.state==State::SignedIn && first.snapshot.authorization.state==AuthorizationState::Unauthorized,"Firebase identity alone cannot authorize");
+    second.step(Command::None,now+2);third.step(Command::None,now+2);const auto generation=store.gen;
+    first.step(Command::Redeem,now+3,[]{return false;},"bad");check(first.snapshot.authorization.state==AuthorizationState::Error && store.gen==generation,"invalid key fails without changing session generation");
+    first.step(Command::Redeem,now+4,[]{return false;},"fixture-redemption-input-not-an-issued-key");check(first.snapshot.authorization.state==AuthorizationState::Authorized && store.gen!=generation,"trusted redemption authorizes and propagates new generation");
+    second.step(Command::None,now+5);third.step(Command::None,now+5);check(second.snapshot.authorization.state==AuthorizationState::Authorized && third.snapshot.authorization.state==AuthorizationState::Authorized,"three format-facing coordinators adopt shared activation");
+    second.step(Command::Logout,now+6);first.step(Command::None,now+7);third.step(Command::None,now+7);check(first.snapshot.authorization.state==AuthorizationState::Unauthorized && third.snapshot.authorization.state==AuthorizationState::Unauthorized && backend.licensed,"logout closes all account gates without revoking permanent ownership");
+    first.step(Command::Redeem,now+8,[]{return false;},"fixture-redemption-input-not-an-issued-key");check(first.snapshot.authorization.state==AuthorizationState::Unauthorized && backend.redemptions==2,"signed-out key cannot create an anonymous grant");
+    // Real worker publication is distinct from the coordinator's UI snapshot.
+    auto fake=std::make_unique<FakeBackend>();fake->licensed=true;auto service=std::make_unique<Service>(makeMemoryStore(),std::move(fake));auto signal=service->authorizationFlag();check(!signal->load(),"shared atomic starts closed");service->signIn();
+    const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(6);while(!signal->load() && std::chrono::steady_clock::now()<end)std::this_thread::sleep_for(std::chrono::milliseconds(10));check(signal->load(),"validated worker result publishes realtime authorization");service->logout();check(!signal->load(),"logout closes realtime flag immediately before storage IO");
+}
+void postTransportRegression(){
+    // Exercise JUCE's actual request serialization against a loopback fixture.
+    // No Firebase credential, browser callback listener or network dependency.
+    juce::StreamingSocket listener;check(listener.createListener(0,"127.0.0.1"),"HTTP fixture listener");
+    const auto port=listener.getBoundPort();std::string captured;std::thread server([&]{
+        if(listener.waitUntilReady(true,3000)<=0)return;
+        std::unique_ptr<juce::StreamingSocket> client(listener.waitForNextConnection());if(!client)return;
+        char bytes[2048];while(captured.find("\r\n\r\n")==std::string::npos && client->waitUntilReady(true,3000)>0){int n=client->read(bytes,sizeof(bytes),false);if(n<=0)return;captured.append(bytes,size_t(n));}
+        const auto bodyStart=captured.find("\r\n\r\n");const auto lower=juce::String(captured).toLowerCase();const int length=lower.fromFirstOccurrenceOf("content-length:",false,false).getIntValue();
+        while(bodyStart!=std::string::npos && captured.size()<bodyStart+4+size_t(length) && client->waitUntilReady(true,3000)>0){int n=client->read(bytes,sizeof(bytes),false);if(n<=0)break;captured.append(bytes,size_t(n));}
+        const char response[]="HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";client->write(response,int(sizeof(response)-1));
+    });
+    auto ownedStream=makeAuthPostStream("http://127.0.0.1:"+juce::String(port)+"/fixture?key=public-fixture-id","{\"token\":\"invalid-fixture-only\"}");auto& stream=*ownedStream;
+    stream.withCustomRequestCommand("POST").withConnectionTimeout(2000).withExtraHeaders("Content-Type: application/json\r\n");const bool connected=stream.connect(nullptr);server.join();
+    check(connected && stream.getStatusCode()==200,"native POST connects to deterministic fixture");
+    check(captured.find("POST /fixture?key=public-fixture-id ")!=std::string::npos,"Firebase API-key query remains in request URL");
+    const auto body=captured.substr(captured.find("\r\n\r\n")+4);check(body=="{\"token\":\"invalid-fixture-only\"}","query does not corrupt the JSON POST body");
+}
 void cancellationLifetime(){
     struct Pending {std::mutex mutex;std::condition_variable wake;bool entered=false,cancelled=false;};
     class BlockingBackend final : public Backend {
@@ -114,7 +153,13 @@ void lifetimes(){
     check(true,"shutdown joins worker and pending operations safely");
 }
 }
-int main(){try{scenarios();lifetimes();cancellationLifetime();
+int main(int argc,char** argv){if(argc==2 && juce::String(argv[1])=="--probe-firebase-transport"){
+    const auto config=juce::JSON::parse(juce::File::getCurrentWorkingDirectory().getChildFile("config/firebase-client.json"));
+    const auto endpoint="https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key="+config["apiKey"].toString();
+    const juce::String body="{\"token\":\"invalid-diagnostic-fixture-only\",\"returnSecureToken\":true}";
+    for(bool legacy:{true,false}){auto stream=legacy?std::make_unique<juce::WebInputStream>(juce::URL(endpoint).withPOSTData(body),true):makeAuthPostStream(endpoint,body);stream->withCustomRequestCommand("POST").withConnectionTimeout(2000).withExtraHeaders("Content-Type: application/json\r\n");const bool connected=stream->connect(nullptr);const auto response=connected?stream->readEntireStreamAsString():juce::String{};std::cout<<(legacy?"legacy":"repaired")<<" HTTP="<<stream->getStatusCode()<<" reached_invalid_custom_token="<<response.contains("INVALID_CUSTOM_TOKEN")<<" api_identifier_rejected="<<(response.containsIgnoreCase("API key") || response.contains("API_KEY"))<<"\n";}
+    return 0;
+}if(argc==2 && juce::String(argv[1])=="--probe-login"){try{auto backend=makeFirebaseBackend();backend->begin(juce::Time::currentTimeMillis());std::cout<<"begin_login accepted (request/proof intentionally omitted)\n";return 0;}catch(const Failure& f){std::cout<<"probe stage="<<f.stage<<" HTTP="<<f.httpStatus<<" kind="<<int(f.kind)<<"\n";return 2;}}try{scenarios();lifetimes();cancellationLifetime();authorizationScenarios();postTransportRegression();
 #if JUCE_MAC
 keychainRoundTrip();
 #endif

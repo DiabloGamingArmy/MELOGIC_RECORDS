@@ -18,9 +18,9 @@ test('Firestore transactions bind proof, UID, expiry and one-time issuance', { s
   const { getFirestore } = require('firebase-admin/firestore')
   const app = initializeApp({ projectId: 'melogic-records-desktop-test' }, 'l01-desktop-tests')
   const db = getFirestore(app)
-  let time = Date.now(), disabled = false, issued = 0
+  let time = Date.now(), disabled = false, revokedAfter = null, issued = 0
   const auth = {
-    async getUser(uid) { return { uid, disabled } },
+    async getUser(uid) { return { uid, disabled, tokensValidAfterTime: revokedAfter } },
     async createCustomToken(uid) { issued++; return `fixture-only-custom-token-${uid}` }
   }
   const c = desktopAuthCore({ db, auth, now: () => time })
@@ -51,6 +51,12 @@ test('Firestore transactions bind proof, UID, expiry and one-time issuance', { s
     await assert.rejects(c.poll(revoked, 'test-client'), { code: 'permission-denied' })
     assert.equal(issued, 1)
     disabled = false
+    const revokedGrant = await begin()
+    await c.approve({ requestId: revokedGrant.requestId, approve: true }, 'verified-uid', Math.floor(time / 1000) - 10)
+    revokedAfter = new Date(time).toISOString()
+    await assert.rejects(c.poll(revokedGrant, 'test-client'), { code: 'permission-denied' })
+    assert.equal(issued, 1)
+    revokedAfter = null
     const settled = []
     for (let i = 0; i < 21; i++) {
       try { await c.begin({ requestId: randomBytes(32).toString('hex'), challenge: hashProof('x'.repeat(43)) }, 'rate-limit-client'); settled.push({ status: 'fulfilled' }) }
@@ -58,6 +64,8 @@ test('Firestore transactions bind proof, UID, expiry and one-time issuance', { s
     }
     assert.equal(settled.filter(r => r.status === 'fulfilled').length, 20)
     assert.equal(settled.find(r => r.status === 'rejected').reason.code, 'resource-exhausted')
+    for (let i = 0; i < 20; i++) await c.throttle('redeem-limit-client', 'redeem')
+    await assert.rejects(c.throttle('redeem-limit-client', 'redeem'), { code: 'aborted' }) // never misreported as an already-used key
   } finally {
     await db.terminate();await deleteApp(app)
   }
