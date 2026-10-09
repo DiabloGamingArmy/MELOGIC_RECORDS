@@ -108,7 +108,8 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     for(const auto& name:s.modulation.macroNames) v34|=name[0]!='\0';
     const bool outputMixer=std::any_of(s.modulation.synthFilters.inputs.begin(),s.modulation.synthFilters.inputs.end(),[](const auto& in){return in.oscillator && in.busCount;});
     const bool typedFilters=std::any_of(s.modulation.synthFilters.filters.begin(),s.modulation.synthFilters.filters.end(),[](const auto& f){return f.id && (f.type!=dsp::FilterType::LowPass || f.values.gain!=0);});
-    const std::uint32_t version=typedFilters ? 38u : outputMixer ? 37u : (s.modulation.synthFilters.nextId!=1 || std::any_of(s.modulation.synthFilters.inputs.begin(),s.modulation.synthFilters.inputs.end(),[](const auto& in){return in.oscillator!=0;})) ? 36u : s.modulation.nextInstanceId!=1 ? 35u : v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
+    const bool phaseSettings=std::any_of(s.oscillators.begin(),s.oscillators.end(),[](const auto& m){return m.id && (m.phaseMode!=OscillatorPhaseMode::Natural || m.phaseDegrees!=0 || m.randomPhaseDegrees!=360 || !m.phaseRetrigger || !m.phasePerUnison);});
+    const std::uint32_t version=phaseSettings ? 39u : typedFilters ? 38u : outputMixer ? 37u : (s.modulation.synthFilters.nextId!=1 || std::any_of(s.modulation.synthFilters.inputs.begin(),s.modulation.synthFilters.inputs.end(),[](const auto& in){return in.oscillator!=0;})) ? 36u : s.modulation.nextInstanceId!=1 ? 35u : v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
     Writer w;w.word(magic);w.word(version);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
@@ -119,6 +120,7 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         w.real(m.wtPosition);w.real(m.waveform);w.real(m.octave);w.real(m.semitone);
         w.real(m.fineCents);w.word(m.unison);w.real(m.detuneCents);w.real(m.pan);w.real(m.level);
         w.real(m.blend);
+        if(version>=39) {w.word(static_cast<unsigned>(m.phaseMode));w.real(m.phaseDegrees);w.real(m.randomPhaseDegrees);w.word(m.phaseRetrigger?1:0);w.word(m.phasePerUnison?1:0);}
         w.word(static_cast<std::uint32_t>(m.process1));w.real(m.process1Amount);
         w.word(static_cast<std::uint32_t>(m.process2));w.real(m.process2Amount);
         w.word(m.process1Seed);w.word(m.process2Seed);
@@ -318,12 +320,14 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>38) return false;
+    if(version<1 || version>39) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     // Formats before collection flags implicitly contained the filter.
     s.modulation.filterEnabled=true;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
+    // Old zero meant one rendered lane. Missing legacy values already default to one.
+    if(version<=38 && s.parameters[std::size_t(ParameterId::OscUnison)]==0) s.parameters[std::size_t(ParameterId::OscUnison)]=1;
     // Validate before converting the legacy unison float to an integer.
     for(const auto& p:parameterRegistry()) {
         const auto v=s.parameters[static_cast<std::size_t>(p.id)];
@@ -342,7 +346,9 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             m.enabled=enabled==1;m.tableId=r.word();
             m.wtPosition=r.real();m.waveform=r.real();m.octave=r.real();m.semitone=r.real();
             m.fineCents=r.real();m.unison=r.word();m.detuneCents=r.real();m.pan=r.real();m.level=r.real();
+            if(version<=38 && m.unison==0) m.unison=1;
             m.blend=version>=13 ? r.real() : 1.0f;
+            if(version>=39) {const auto phase=r.word();if(phase>static_cast<unsigned>(OscillatorPhaseMode::Free)) return false;m.phaseMode=static_cast<OscillatorPhaseMode>(phase);m.phaseDegrees=r.real();m.randomPhaseDegrees=r.real();const auto retrigger=r.word(),per=r.word();if(retrigger>1 || per>1) return false;m.phaseRetrigger=retrigger!=0;m.phasePerUnison=per!=0;}
             if(version>=7) {
                 m.process1=static_cast<dsp::OscProcessType>(r.word());m.process1Amount=r.real();
                 m.process2=static_cast<dsp::OscProcessType>(r.word());m.process2Amount=r.real();

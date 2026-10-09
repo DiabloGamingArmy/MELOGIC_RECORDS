@@ -6670,6 +6670,39 @@ void spectralTunePluginAudit() {
     std::cout<<"PASS Spectral Tune plugin/UI audit\n";
 }
 
+void unisonPluginAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>();auto& p=*owner;p.prepareToPlay(48000,128);
+    check(p.getUiParameter(ParameterId::OscUnison)==1,"Unison Init count is one");
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());
+    juce::Slider* count=nullptr;
+    walk(*editor,[&](auto& c){if(auto* card=dynamic_cast<ui::OscillatorCard*>(&c))if(card->id()==1)walk(*card,[&](auto& child){if(auto* slider=dynamic_cast<juce::Slider*>(&child))if(slider->getName()=="OSC UNISON")count=slider;});});
+    check(count && count->getMinimum()==1 && count->getMaximum()==16 && count->getInterval()==1,"existing Unison control has discrete 1..16 range");
+    check(!count->getProperties().contains("mct.mod.destination"),"Unison topology is not an internal modulation destination");
+    check(count->getTextFromValue(8)=="8","Unison displays an integer");
+    p.clearUiHistory();check(bool(count->onDragStart) && bool(count->onDragEnd),"Unison uses centralized gesture hooks");
+    count->onDragStart();for(int n=2;n<=8;++n)count->setValue(n,juce::sendNotificationSync);count->onDragEnd();
+    check(p.getUiParameter(ParameterId::OscUnison)==8 && p.uiHistorySize()==1,"stepped drag coalesces into one history entry");
+    check(p.undoUi() && p.getUiParameter(ParameterId::OscUnison)==1 && p.redoUi() && p.getUiParameter(ParameterId::OscUnison)==8,"Unison 1-8 undo/redo");
+    check(p.setUiParameter(ParameterId::OscUnison,7.7f) && p.getUiParameter(ParameterId::OscUnison)==8,"Unison quantizes fractional edits");
+    check(p.setUiParameter(ParameterId::OscUnison,100) && p.getUiParameter(ParameterId::OscUnison)==16,"Unison maximum clamps");
+    check(p.setUiParameter(ParameterId::OscUnison,-2) && p.getUiParameter(ParameterId::OscUnison)==1,"Unison minimum clamps");
+    const auto id=p.addUiOscillator();check(id!=0,"second oscillator for independent count");
+    auto m=p.getUiOscillatorState(id);m.unison=16;m.detuneCents=32;m.phaseMode=OscillatorPhaseMode::Random;m.phasePerUnison=true;m.randomPhaseDegrees=180;
+    p.clearUiHistory();check(p.setUiOscillatorState(id,m) && p.undoUi() && p.getUiOscillatorState(id).unison==1 && p.redoUi() && p.getUiOscillatorState(id).unison==16,"independent oscillator count and phase use centralized history");
+    juce::MemoryBlock saved;p.getStateInformation(saved);
+    auto restored=std::make_unique<OrigamiAudioProcessor>();restored->setStateInformation(saved.getData(),int(saved.getSize()));restored->prepareToPlay(48000,128);
+    const auto recalled=restored->getUiOscillatorState(id);
+    check(recalled.unison==16 && recalled.detuneCents==32 && recalled.phaseMode==OscillatorPhaseMode::Random && recalled.randomPhaseDegrees==180,"host project restores independent unison and phase");
+    check(restored->getUiParameter(ParameterId::OscUnison)==1 && restored->getUiFinalOutput()==FinalOutputGain::unity,"Unison restore preserves other oscillator and final Master");
+    juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;midi.addEvent(juce::MidiMessage::noteOn(1,60,.7f),0);restored->processBlock(audio,midi);midi.clear();
+    pluginAllocations=0;pluginFrees=0;pluginGuardAllocations=true;restored->processBlock(audio,midi);pluginGuardAllocations=false;
+#ifndef ORIGAMI_SANITIZED
+    check(!pluginAllocations.load() && !pluginFrees.load(),"unison processor callback allocation guard");
+#endif
+    for(int ch=0;ch<2;++ch)for(int n=0;n<128;++n)check(std::isfinite(audio.getSample(ch,n)),"restored unison processor finite");
+    std::cout<<"PASS Unison plugin/UI audit\n";
+}
+
 void finalOutputAudit() {
     using G=FinalOutputGain;
     check(G::linear(0)==0.f && std::abs(G::db(.5f)+12.f)<1e-6f && G::db(1)==6.f,"Master endpoint and midpoint mapping");
@@ -7269,5 +7302,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{unisonPluginAudit();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison plugin: "<<checks<<" checks\n";return 0;}finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

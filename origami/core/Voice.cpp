@@ -30,8 +30,15 @@ void Voice::prepare(double sampleRate) noexcept {for(std::size_t f=0;f<maxSynthF
 void Voice::seedLfos() noexcept {
     for(std::size_t i=0;i<noteLfos_.size();++i) noteLfos_[i].setStreams(Lfo::voiceStream(voiceSeed(),i),Lfo::fractureSeed(i));
 }
-void Voice::reset() noexcept {for(auto& f:synthFilterRuntime_) f.reset(); instanceRevision_=~std::uint64_t{0}; instanceCount_=0; instanceRetrigger_=false; for(auto& r:instanceRuntime_) {r.id=0;r.envelope.reset();r.lfo.reset();}  topologyGeneration_=0; bindMorphHints(); for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& hints:rightSpectralHints_)hints={};for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);previousOscillatorSamplesRight_.fill(0.0f);rightTapMask_=rightPhaseModules_=0;oneShotRelease_=false;envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();for(auto& filter:moduleFiltersRight_)filter.reset();rightFilterLive_=0;operatorState_={};active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
+void Voice::reset() noexcept {for(auto& f:synthFilterRuntime_) f.reset(); instanceRevision_=~std::uint64_t{0}; instanceCount_=0; instanceRetrigger_=false; for(auto& r:instanceRuntime_) {r.id=0;r.envelope.reset();r.lfo.reset();}  topologyGeneration_=0; bindMorphHints(); for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& hints:rightSpectralHints_)hints={};for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);previousOscillatorSamplesRight_.fill(0.0f);rightTapMask_=rightPhaseModules_=0;unisonStereoLive_=false;oneShotRelease_=false;envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();for(auto& filter:moduleFiltersRight_)filter.reset();rightFilterLive_=0;operatorState_={};active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
+void Voice::rememberOscillatorPhases() noexcept {
+    for(std::size_t m=0;m<maxOscillatorModules;++m) if(oscillatorRuntime_[m].mixer.count) {
+        freePhaseIds_[m]=moduleIds_[m];freeCenterPhases_[m]=moduleBlendCenters_[m].phase();
+        for(unsigned u=0;u<maxUnisonVoices;++u) freePhases_[m][u]=moduleOscillators_[m][u].phase();
+    }
+}
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,std::uint8_t graphOwnedEnvelopes) noexcept {
+    rememberOscillatorPhases();
     reset();ampSettings_=settings;address_=address;velocity_=velocity;order_=order;++lifecycle_;seedLfos();
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
     active_=true;
@@ -67,10 +74,11 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     // mct-origami-stereo-modulation: two instantiations of one renderer. The
     // mono one (no stereo plan) compiles every stereo branch away and is the
     // pre-stereo code path.
-    if(topology.synthFilters.count) return compiled.hasStereoPlan()
+    const bool stereo=compiled.hasStereoPlan() || topology.unisonStereo || global.modules[0].unison>1 || unisonStereoLive_ || rightPhaseModules_!=0 || rightTapMask_!=0;
+    if(topology.synthFilters.count) return stereo
         ? render<true,true>(tables,global,sustain,compiled,modulation,pitchBendSemitones,pitchBendNormalized,modWheel,aftertouch,topology,sharedProcesses,observe)
         : render<false,true>(tables,global,sustain,compiled,modulation,pitchBendSemitones,pitchBendNormalized,modWheel,aftertouch,topology,sharedProcesses,observe);
-    return compiled.hasStereoPlan()
+    return stereo
         ? render<true,false>(tables,global,sustain,compiled,modulation,pitchBendSemitones,pitchBendNormalized,modWheel,aftertouch,topology,sharedProcesses,observe)
         : render<false,false>(tables,global,sustain,compiled,modulation,pitchBendSemitones,pitchBendNormalized,modWheel,aftertouch,topology,sharedProcesses,observe);
 }
@@ -311,7 +319,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
     // LEFT's state the next time it is needed).
     bool stereoActive=false;
     if constexpr(Stereo) {
-        stereoActive=effective->stereo.levelMask!=0 || effective->stereo.filterSplit() ||
+        stereoActive=topology.unisonStereo || global.modules[0].unison>1 || unisonStereoLive_ || effective->stereo.levelMask!=0 || effective->stereo.filterSplit() ||
                      (effective->stereo.rightMask&compiled.readStereoGroups())!=0 ||
                      rightTapMask_!=0 || rightPhaseModules_!=0;
         if(!stereoActive) rightFilterLive_=0;
@@ -339,6 +347,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         }
         topologyGeneration_=topology.generation;
     }
+    unisonStereoLive_=false;
     for(std::size_t active=0;active<topology.activeCount;++active) {
         const auto m=topology.active[active];
         const auto& module=((localModules>>m)&1u) ? local.modules[m] : global.modules[m];
@@ -351,6 +360,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         const auto& table=*tablePtr;
         auto& runtime=oscillatorRuntime_[m];
         const unsigned count=std::clamp(module.unison,1u,maxUnisonVoices);
+        const unsigned previousCount=runtime.mixer.count;
         runtime.prepareDetune(module.id,count,module.detuneCents);
 
         // Check the effective audio-rate controls every sample; reuse derived
@@ -364,6 +374,31 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
             ? std::clamp(module.level,0.0f,1.0f) : 0.0f;
         const float blend=std::isfinite(module.blend)
             ? std::clamp(module.blend,0.0f,1.0f) : 0.0f;
+
+        const bool randomized=module.phaseMode==OscillatorPhaseMode::Random || module.phaseMode==OscillatorPhaseMode::Natural;
+        const bool commonPhase=!randomized || !module.phasePerUnison || module.randomPhaseDegrees==0;
+        const bool firstEnsemble=runtime.mixer.prepare(count,blend,runtime.detuneCents,commonPhase,sampleRate_);
+        const auto startPhase=[&](unsigned u) noexcept {
+            if((module.phaseMode==OscillatorPhaseMode::Free || !module.phaseRetrigger) && freePhaseIds_[m]==module.id) return freePhases_[m][u];
+            if(randomized) {
+                if(module.phaseMode==OscillatorPhaseMode::Natural && (u==0 || !module.phasePerUnison)) return 0.0;
+                const auto seed=0x9e3779b9u ^ (slot_*0x85ebca6bu) ^ (lifecycle_*0xc2b2ae35u) ^ (module.id*0x27d4eb2du) ^ ((module.phasePerUnison?u:0u)*0x165667b1u);
+                return dsp::unisonRandomPhase(seed)*double(module.randomPhaseDegrees)/360.0;
+            }
+            return double(module.phaseDegrees)/360.0;
+        };
+        if(firstEnsemble || (noteOn && retrigger && module.phaseRetrigger && module.phaseMode!=OscillatorPhaseMode::Free && module.phaseMode!=OscillatorPhaseMode::Natural)) {
+            for(unsigned u=0;u<count;++u) moduleOscillators_[m][u].reset(startPhase(u));
+            moduleBlendCenters_[m].reset((module.phaseMode==OscillatorPhaseMode::Free || !module.phaseRetrigger) && freePhaseIds_[m]==module.id ? freeCenterPhases_[m] : startPhase(0));
+        } else if(count>previousCount) {
+            for(unsigned u=previousCount;u<count;++u) if(runtime.mixer.left[u]==0 && runtime.mixer.right[u]==0) {
+                const double phase=randomized ? startPhase(u) : moduleOscillators_[m][0].phase();
+                moduleOscillators_[m][u].reset(phase);
+            }
+        }
+        runtime.mixer.advance();
+        const bool ensembleStereo=runtime.mixer.renderCount>1;
+        unisonStereoLive_|=ensembleStereo;
 
         float panLeft,panRight;
         runtime.controls.pan(module.pan,panLeft,panRight);
@@ -520,49 +555,37 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
                 : oscillator.next(table,frequency,sampleRate_,position,processPlan,routedPhaseOffset,routedPhaseSkew);
         };
         float oscillatorMix=0.0f,oscillatorMixRight=0.0f;
-        if(!secondRead) {
-            if(count==1) {
-                oscillatorMix=renderOscillator(moduleOscillators_[m][0],baseFrequency);
-            } else {
-                float unisonStack=0.0f;
-                for(unsigned u=0;u<count;++u) {
-                    unisonStack+=renderOscillator(moduleOscillators_[m][u],baseFrequency*runtime.detuneRatios[u]);
-                }
-                unisonStack/=static_cast<float>(count);
-
-                const float centre=renderOscillator(moduleBlendCenters_[m],baseFrequency);
-                oscillatorMix=centre+(unisonStack-centre)*blend;
-            }
-            // RIGHT differs only after a route reads a different RIGHT source.
-            if(rightSplit) oscillatorMixRight=oscillatorMix;
-        } else {
-            // One phase advance per oscillator (two with stereo FM), LEFT and
-            // RIGHT reads.
-            auto& hints=rightSpectralHints_[m];
-            const auto renderStereo=[&](dsp::WavetableOscillator& oscillator,double frequency,double frequencyRight,float& right) noexcept {
-                return modulePlan.simple ? oscillator.nextStereoSimple(table,frequency,sampleRate_,position,positionRight,hints,right)
+        auto& mixer=runtime.mixer;
+        auto& hints=rightSpectralHints_[m];
+        for(unsigned u=0;u<mixer.renderCount;++u) {
+            float right=0.0f;
+            auto& oscillator=moduleOscillators_[m][u];
+            const double frequency=baseFrequency*runtime.detuneRatios[u];
+            const float left=secondRead
+                ? (modulePlan.simple ? oscillator.nextStereoSimple(table,frequency,sampleRate_,position,positionRight,hints,right)
                     : oscillator.nextStereo(table,frequency,sampleRate_,position,processPlan,routedPhaseOffset,routedPhaseSkew,
-                                            positionRight,processPlanRight,phaseOffsetRight,phaseSkewRight,hints,right,
-                                            rightPhase ? frequencyRight : 0.0);
-            };
-            if(count==1) {
-                oscillatorMix=renderStereo(moduleOscillators_[m][0],baseFrequency,baseFrequencyRight,oscillatorMixRight);
-            } else {
-                float unisonStack=0.0f,unisonStackRight=0.0f;
-                for(unsigned u=0;u<count;++u) {
-                    float right=0.0f;
-                    unisonStack+=renderStereo(moduleOscillators_[m][u],baseFrequency*runtime.detuneRatios[u],
-                                              baseFrequencyRight*runtime.detuneRatios[u],right);
-                    unisonStackRight+=right;
-                }
-                unisonStack/=static_cast<float>(count);
-                unisonStackRight/=static_cast<float>(count);
-                float centreRight=0.0f;
-                const float centre=renderStereo(moduleBlendCenters_[m],baseFrequency,baseFrequencyRight,centreRight);
-                oscillatorMix=centre+(unisonStack-centre)*blend;
-                oscillatorMixRight=centreRight+(unisonStackRight-centreRight)*blend;
-            }
+                        positionRight,processPlanRight,phaseOffsetRight,phaseSkewRight,hints,right,
+                        rightPhase ? baseFrequencyRight*runtime.detuneRatios[u] : 0.0))
+                : renderOscillator(oscillator,frequency);
+            if(!secondRead) right=left;
+            oscillatorMix+=left*mixer.left[u];oscillatorMixRight+=right*mixer.right[u];
         }
+        if(mixer.center!=0) {
+            float right=0.0f;
+            const float center=secondRead
+                ? (modulePlan.simple ? moduleBlendCenters_[m].nextStereoSimple(table,baseFrequency,sampleRate_,position,positionRight,hints,right)
+                    : moduleBlendCenters_[m].nextStereo(table,baseFrequency,sampleRate_,position,processPlan,routedPhaseOffset,routedPhaseSkew,
+                        positionRight,processPlanRight,phaseOffsetRight,phaseSkewRight,hints,right,rightPhase ? baseFrequencyRight : 0.0))
+                : renderOscillator(moduleBlendCenters_[m],baseFrequency);
+            if(!secondRead) right=center;
+            oscillatorMix+=center*mixer.center;oscillatorMixRight+=right*mixer.center;
+        }
+        // Width can split a module even without stereo modulation. Post routes,
+        // filters, bus sends still run once per combined channel, not per lane.
+        if(ensembleStereo && !rightSplit) {
+            for(std::size_t r=0;r<modulePlan.postCount;++r) {const auto& route=modulePlan.postRoutes[r];routeAmountRight[route.amountSlot]=routeAmount(route);}
+        }
+        rightSplit|=ensembleStereo;
         if(observe) {
             visualization_.moduleSamples[m]=oscillatorMix;
             visualization_.modulePhases[m]=static_cast<float>(moduleOscillators_[m][0].phase());
@@ -583,9 +606,9 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
             oscillatorMix=applyPostRoute(oscillatorMix,route.source,route.type,routeAmount(route));
             // RIGHT: the same post route with RIGHT's amount and the source
             // oscillator's RIGHT tap.
-            if constexpr(Stereo) if(rightSplit && route.type!=OscRouteType::Off && route.source>=0 &&
+            if(rightSplit && route.type!=OscRouteType::Off && route.source>=0 &&
                                     route.source<static_cast<int>(previousOscillatorSamples_.size()))
-                oscillatorMixRight=shapePostRoute(oscillatorMixRight,std::clamp(rightTap(static_cast<std::size_t>(route.source)),-1.0f,1.0f),
+                oscillatorMixRight=shapePostRoute(oscillatorMixRight,std::clamp(Stereo ? rightTap(static_cast<std::size_t>(route.source)) : previousOscillatorSamples_[static_cast<std::size_t>(route.source)],-1.0f,1.0f),
                                                   route.type,routeAmountRight[route.amountSlot]);
         }
         if(rightSplit && !std::isfinite(oscillatorMixRight)) oscillatorMixRight=0.0f;
@@ -625,7 +648,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
         // between channels renders LEFT and RIGHT from the same oscillator
         // signal (pitch / WT / processes stay shared); everything else keeps
         // the unchanged mono path below.
-        if(!Stereo || !stereoActive) {
+        if((!Stereo || !stereoActive) && !ensembleStereo) {
             // Mono plan (or no channel differs this sample): the original path.
             float sampleValue=oscillatorMix*envelopeValue;
             if(effective->filterEnabled) {
@@ -748,7 +771,7 @@ Voice::Samples Voice::render(const std::array<const dsp::Wavetable*,16>& tables,
 
     if(oneShotRelease_ && envelope_.stage()==dsp::Envelope::Stage::Sustain) { envelope_.noteOff(ampSettings_); oneShotRelease_=false; }
     if(envelope_.stage()==dsp::Envelope::Stage::Idle && filtersQuiet &&
-       (!(compiled.envelopeOwnedMask()&1u) || releasing_)) reset();
+       (!(compiled.envelopeOwnedMask()&1u) || releasing_)) {rememberOscillatorPhases();reset();}
     // FX ORDER = PRE MASTER: master gain is applied after the FX graph instead.
     if(effective->applyMaster) {
         outputs.left*=effective->master;outputs.right*=effective->master;outputs.mono*=effective->master;

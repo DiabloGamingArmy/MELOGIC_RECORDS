@@ -283,9 +283,13 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     phaseAngleLabel_.setText("FIXED PHASE",juce::dontSendNotification);
     phaseRandomRangeLabel_.setText("RANDOM RANGE",juce::dontSendNotification);
 
-    phaseRandom_.onClick=[this]{phaseStartMode_=PhaseStartMode::Random;refreshPhaseWorkspace();};
-    phaseFixed_.onClick=[this]{phaseStartMode_=PhaseStartMode::Fixed;refreshPhaseWorkspace();};
-    phaseFree_.onClick=[this]{phaseStartMode_=PhaseStartMode::Free;refreshPhaseWorkspace();};
+    phaseRandom_.onClick=[this]{phaseStartMode_=PhaseStartMode::Random;storePhaseSettings();refreshPhaseWorkspace();};
+    phaseFixed_.onClick=[this]{phaseStartMode_=PhaseStartMode::Fixed;storePhaseSettings();refreshPhaseWorkspace();};
+    phaseFree_.onClick=[this]{phaseStartMode_=PhaseStartMode::Free;storePhaseSettings();refreshPhaseWorkspace();};
+    phaseAngle_.onValueChange=[this]{storePhaseSettings();};
+    phaseRandomRange_.onValueChange=[this]{storePhaseSettings();};
+    phaseRetrigger_.onClick=[this]{storePhaseSettings();};
+    phasePerUnison_.onClick=[this]{storePhaseSettings();};
     refreshPhaseWorkspace();
 
     addChildComponent(routeViewport_);routeViewport_.setViewedComponent(&routeContent_,false);routeViewport_.setScrollBarsShown(true,false);routeViewport_.setScrollBarThickness(4);
@@ -460,7 +464,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         detuneSlider_.setName("OSC DETUNE");
         blendSlider_.setName("OSC BLEND");
 
-        unisonSlider_.setRange(0.0, 16.0, 1.0);
+        unisonSlider_.setRange(1.0, 16.0, 1.0);
+        unisonSlider_.setNumDecimalPlacesToDisplay(0);
         detuneSlider_.setRange(0.0, 100.0, 0.1);
         blendSlider_.setRange(0.0,1.0,0.001);
         blendSlider_.setTooltip("Unison blend — centre oscillator to full detuned stack");
@@ -1025,6 +1030,12 @@ void OscillatorCard::syncFromModel() {
     if(moduleGetter_ && !process1Menu_.isPopupActive() && !process2Menu_.isPopupActive()) {
         const auto state=moduleGetter_(display_.id);
         if(state.id) {
+            phaseStartMode_=state.phaseMode;
+            if(!phaseAngle_.isMouseButtonDown()) phaseAngle_.setValue(state.phaseDegrees,juce::dontSendNotification);
+            if(!phaseRandomRange_.isMouseButtonDown()) phaseRandomRange_.setValue(state.randomPhaseDegrees,juce::dontSendNotification);
+            phaseRetrigger_.setToggleState(state.phaseRetrigger,juce::dontSendNotification);
+            phasePerUnison_.setToggleState(state.phasePerUnison,juce::dontSendNotification);
+            refreshPhaseWorkspace();
             if(!blendSlider_.isMouseButtonDown() && !blendSlider_.isEditingText())
                 blendSlider_.setValue(state.blend,juce::dontSendNotification);
             const juce::ScopedValueSetter<bool> guard(syncingProcess_,true);
@@ -1103,16 +1114,24 @@ void OscillatorCard::setDisplayOrdinal(unsigned ordinal) {
     setOrdinal(ordinal);
 }
 
+void OscillatorCard::storePhaseSettings() {
+    if(!moduleGetter_ || !moduleSetter_) return;
+    auto s=moduleGetter_(display_.id);if(!s.id) return;
+    s.phaseMode=phaseStartMode_;s.phaseDegrees=float(phaseAngle_.getValue());s.randomPhaseDegrees=float(phaseRandomRange_.getValue());
+    s.phaseRetrigger=phaseRetrigger_.getToggleState();s.phasePerUnison=phasePerUnison_.getToggleState();
+    moduleSetter_(display_.id,s);
+}
+
 void OscillatorCard::refreshPhaseWorkspace() {
-    phaseRandom_.setToggleState(phaseStartMode_==PhaseStartMode::Random,juce::dontSendNotification);
+    phaseRandom_.setToggleState(phaseStartMode_==PhaseStartMode::Random || phaseStartMode_==PhaseStartMode::Natural,juce::dontSendNotification);
     phaseFixed_.setToggleState(phaseStartMode_==PhaseStartMode::Fixed,juce::dontSendNotification);
     phaseFree_.setToggleState(phaseStartMode_==PhaseStartMode::Free,juce::dontSendNotification);
-    phaseSelector_.setButtonText(phaseStartMode_==PhaseStartMode::Random ? "RAND"
+    phaseSelector_.setButtonText(phaseStartMode_==PhaseStartMode::Natural ? "AUTO" : phaseStartMode_==PhaseStartMode::Random ? "RAND"
                                  : phaseStartMode_==PhaseStartMode::Fixed ? "FIXED" : "FREE");
     phaseAngle_.setEnabled(phaseStartMode_==PhaseStartMode::Fixed);
-    phaseRandomRange_.setEnabled(phaseStartMode_==PhaseStartMode::Random);
+    phaseRandomRange_.setEnabled(phaseStartMode_==PhaseStartMode::Random || phaseStartMode_==PhaseStartMode::Natural);
     phaseRetrigger_.setEnabled(phaseStartMode_!=PhaseStartMode::Free);
-    phasePerUnison_.setEnabled(phaseStartMode_==PhaseStartMode::Random);
+    phasePerUnison_.setEnabled(phaseStartMode_==PhaseStartMode::Random || phaseStartMode_==PhaseStartMode::Natural);
     repaint();
 }
 
@@ -2062,7 +2081,7 @@ void OscillatorRack::createCard(unsigned moduleId) {
                 case mct::origami::ParameterId::OscOctave: s.octave=value; break;
                 case mct::origami::ParameterId::OscSemitone: s.semitone=value; break;
                 case mct::origami::ParameterId::OscFine: s.fineCents=value; break;
-                case mct::origami::ParameterId::OscUnison: s.unison=static_cast<unsigned>(juce::jlimit(0,16,juce::roundToInt(value))); break;
+                case mct::origami::ParameterId::OscUnison: s.unison=static_cast<unsigned>(juce::jlimit(1,16,juce::roundToInt(value))); break;
                 case mct::origami::ParameterId::OscDetune: s.detuneCents=value; break;
                 case mct::origami::ParameterId::OscPan: s.pan=value; break;
                 case mct::origami::ParameterId::OscLevel: s.level=value; break;

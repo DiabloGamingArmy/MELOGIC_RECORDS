@@ -153,7 +153,7 @@ void nestedStateV34() {
     bool truncated=true;
     for(std::size_t n=0;n<bytes.size();++n) { InstrumentState t; truncated&=!decodeInstrumentState(bytes.data(),n,t); }
     check(truncated,"every truncation of a v34 state is rejected");
-    { auto future=bytes; word(future,4,39); check(!decodeInstrumentState(future.data(),future.size(),out),"an unknown future version (39) is rejected"); }
+    { auto future=bytes; word(future,4,40); check(!decodeInstrumentState(future.data(),future.size(),out),"an unknown future version (40) is rejected"); }
     // The state ends with the names: per macro a length word and one word per
     // character. MACRO 2 is "Wobble" (6), MACRO 3..16 are empty (14 words).
     const std::size_t tail=14*4,name2=bytes.size()-tail-6*4;

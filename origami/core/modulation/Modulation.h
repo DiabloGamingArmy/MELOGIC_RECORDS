@@ -888,7 +888,7 @@ struct ModulationFrame {
 
 // Fields copied by ModulationFrame::copyForVoice: the size is pinned so any
 // field change trips here and forces copyForVoice to be updated with it.
-static_assert(sizeof(ModulationFrame)==10976+4*maxSourceInstances+2*sizeof(float)*ModulationState::capacity+sizeof(StereoModulationFrame)+sizeof(SynthFilterValues)*maxSynthFilters+8,"ModulationFrame changed: update copyForVoice");
+static_assert(sizeof(ModulationFrame)==11232+4*maxSourceInstances+2*sizeof(float)*ModulationState::capacity+sizeof(StereoModulationFrame)+sizeof(SynthFilterValues)*maxSynthFilters+8,"ModulationFrame changed: update copyForVoice");
 
 class CompiledModulation {
 public:

@@ -67,6 +67,7 @@ struct OscillatorRenderPlan {
     std::size_t activeCount=0;
     std::uint64_t generation=0;
     std::size_t busCount=1;
+    bool unisonStereo=false;
     bool auxActive=false; // any oscillator sends to a user bus
 
     void processPlan(std::size_t m,const OscillatorModuleState& source,dsp::OscProcessPlan& out) const noexcept {
@@ -80,7 +81,7 @@ struct OscillatorRenderPlan {
     }
 
     void compile(const std::array<OscillatorModuleState,16>& state,const BusSlotMap& slots=BusSlotMap{}) noexcept {
-        activeCount=0;
+        activeCount=0;unisonStereo=false;
         busCount=std::clamp<std::size_t>(slots.count,1,maxRenderBuses);
         auxActive=false;
         const auto oldIds=ids;
@@ -88,6 +89,7 @@ struct OscillatorRenderPlan {
         for(std::size_t m=0;m<state.size();++m) {
             const auto& source=state[m];auto& plan=modules[m];const auto oldBus=plan.busSend,oldFilter=plan.filterSend;plan={};
             if(!source.id || !source.enabled) continue;
+            unisonStereo|=source.unison>1;
             active[activeCount++]=static_cast<std::uint8_t>(m);
             for(std::size_t b=0;b<busCount;++b) plan.busSend[b]=oscBusSend(source,slots.ids[b]);
             if(oldIds[m]==source.id) {plan.busSend=oldBus;plan.filterSend=oldFilter;}

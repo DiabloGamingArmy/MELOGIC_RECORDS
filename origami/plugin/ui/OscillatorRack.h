@@ -151,8 +151,9 @@ private:
     juce::TextButton phaseSelector_{"RAND"};
     juce::TextButton outputSelector_{"DIRECT OUT"};
 
-    enum class PhaseStartMode : std::uint8_t { Random, Fixed, Free };
-    PhaseStartMode phaseStartMode_=PhaseStartMode::Random;
+    using PhaseStartMode = OscillatorPhaseMode;
+    PhaseStartMode phaseStartMode_=PhaseStartMode::Natural;
+    void storePhaseSettings();
     juce::TextButton phaseRandom_{"RANDOM"},phaseFixed_{"FIXED"},phaseFree_{"FREE"};
     RackSlider phaseAngle_,phaseRandomRange_;
     juce::Label phaseAngleLabel_,phaseRandomRangeLabel_;

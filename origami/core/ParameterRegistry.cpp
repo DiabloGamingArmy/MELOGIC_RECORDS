@@ -18,7 +18,7 @@ const std::array<ParameterDescriptor, parameterCount>& parameterRegistry() noexc
         {ParameterId::OscOctave,"osc.1.octave","OSC 1 Octave","oct",0,-4,4,ParameterScale::Choice,0},
         {ParameterId::OscSemitone,"osc.1.semitone","OSC 1 Semitone","st",0,-12,12,ParameterScale::Choice,0},
         {ParameterId::OscFine,"osc.1.fine","OSC 1 Fine","cent",0,-100,100,ParameterScale::Linear,0},
-        {ParameterId::OscUnison,"osc.1.unison","OSC 1 Unison","voices",1,0,16,ParameterScale::Choice,0},
+        {ParameterId::OscUnison,"osc.1.unison","OSC 1 Unison","voices",1,1,16,ParameterScale::Choice,0},
         {ParameterId::OscDetune,"osc.1.detune","OSC 1 Detune","cent",12,0,100,ParameterScale::Linear,.01f}
     }};
     return registry;

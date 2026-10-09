@@ -135,6 +135,9 @@ struct OscRouteSlot {
     bool enabled = true;
 };
 
+// Natural preserves legacy single-lane phase, decorrelating added unison lanes.
+enum class OscillatorPhaseMode : std::uint8_t { Natural, Fixed, Random, Free };
+
 struct OscillatorModuleState {
     OscillatorModuleId id = 0;
     bool enabled = false;
@@ -147,6 +150,9 @@ struct OscillatorModuleState {
     unsigned unison = 1;
     float detuneCents = 12.0f;
     float blend = 0.35f;
+    OscillatorPhaseMode phaseMode = OscillatorPhaseMode::Natural;
+    float phaseDegrees = 0.0f, randomPhaseDegrees = 360.0f;
+    bool phaseRetrigger = true, phasePerUnison = true;
     float pan = 0.0f;
     float level = 0.7f;
     // Init/new oscillators are intentionally clean. Processes are opt-in via OSC CHAIN.
@@ -321,7 +327,7 @@ private:
         s.octave=std::clamp(s.octave,-4.0f,4.0f);
         s.semitone=std::clamp(s.semitone,-12.0f,12.0f);
         s.fineCents=std::clamp(s.fineCents,-100.0f,100.0f);
-        s.unison=std::min(s.unison,16u);
+        s.unison=std::clamp(s.unison,1u,16u);
         s.detuneCents=std::clamp(s.detuneCents,0.0f,100.0f);
         if(!std::isfinite(s.blend)) s.blend=0.35f;
         s.blend=std::clamp(s.blend,0.0f,1.0f);

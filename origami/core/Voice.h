@@ -9,6 +9,7 @@
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-v33.1.2-osc-blend-engine
 #pragma once
+#include "dsp/Unison.h"
 #include "dsp/Wavetable.h"
 #include "dsp/FastMath.h"
 #include "dsp/OscillatorControlCache.h"
@@ -77,7 +78,7 @@ public:
     VoiceInfo info() const noexcept;
     void setCombPool(SynthCombPool* pool) noexcept {combPool_=pool;}
     void setSlot(std::uint32_t slot) noexcept { slot_=slot; }
-    void restartLifecycles() noexcept { lifecycle_=0; } // engine reset: renders repeat
+    void restartLifecycles() noexcept { lifecycle_=0;freePhaseIds_.fill(0);moduleIds_.fill(0); } // engine reset: renders repeat
     bool active() const noexcept { return active_; }
     std::uint64_t order() const noexcept { return order_; }
     std::uint8_t channel() const noexcept { return address_.channel; }
@@ -106,7 +107,7 @@ private:
     std::array<std::uint32_t,CompiledModulation::operatorSlotCount> operatorEventCounts_{}; // monitoring only
     // mct-origami-unison-detune-v19.2
     static constexpr unsigned maxOscillatorModules = 16;
-    static constexpr unsigned maxUnisonVoices = 16;
+    static constexpr unsigned maxUnisonVoices = dsp::maxUnison;
     using ModuleOscillators = std::array<dsp::WavetableOscillator, maxUnisonVoices>;
     // Realtime oscillator cache: only genuinely derived state is retained.
     // Continuous level/blend values are consumed directly from the modulation
@@ -117,11 +118,12 @@ private:
         unsigned unison=0;
         std::array<double,maxUnisonVoices> detuneRatios{};
         dsp::OscillatorControlCache controls;
+        dsp::UnisonMixer mixer;
 
         void invalidate() noexcept {
             id=0;detuneCents=0.0f;unison=0;
             detuneRatios.fill(1.0);
-            controls.invalidate();
+            controls.invalidate();mixer.reset();
         }
 
         void prepareDetune(OscillatorModuleId moduleId,unsigned count,float cents) noexcept {
@@ -132,16 +134,18 @@ private:
                std::equal_to<float>{}(detuneCents,sanitizedCents)) return;
 
             id=moduleId;unison=sanitizedCount;detuneCents=sanitizedCents;
-            detuneRatios.fill(1.0);
+            if(unison==1u) detuneRatios[0]=1.0;
             if(unison>1u) for(unsigned i=0;i<unison;++i) {
-                const double unit=(2.0*static_cast<double>(i)/static_cast<double>(unison-1u))-1.0;
-                detuneRatios[i]=dsp::fastExp2Audio(
-                    (unit*static_cast<double>(detuneCents))/1200.0);
+                detuneRatios[i]=dsp::unisonRatio(i,unison,detuneCents);
             }
         }
     };
 
     std::array<ModuleOscillators, maxOscillatorModules> moduleOscillators_{};
+    std::array<std::array<double,maxUnisonVoices>,maxOscillatorModules> freePhases_{};
+    std::array<OscillatorModuleId,maxOscillatorModules> freePhaseIds_{};
+    std::array<double,maxOscillatorModules> freeCenterPhases_{};
+    void rememberOscillatorPhases() noexcept;
     std::array<dsp::WavetableOscillator,maxOscillatorModules> moduleBlendCenters_{};
     std::array<OscillatorModuleId,maxOscillatorModules> moduleIds_{};
     std::uint64_t topologyGeneration_=0;
@@ -207,6 +211,7 @@ private:
     // for the rest of the note, so RIGHT never jumps back). Cold.
     std::array<float,maxOscillatorModules> previousOscillatorSamplesRight_{};
     std::uint16_t rightTapMask_=0,rightPhaseModules_=0;
+    bool unisonStereoLive_=false;
     template<bool Stereo> void runVoiceProgram(const CompiledModulation&,const ModulationState&,const ModulationFrame& global,
         ModulationFrame& local,std::array<float,CompiledModulation::voiceSourceCount>& voiceSources,
         StereoSourceValues& voiceStereo,float sourceLfoScale,bool observe) noexcept;

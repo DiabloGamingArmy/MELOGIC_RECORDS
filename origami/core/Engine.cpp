@@ -473,7 +473,7 @@ template<class Module> auto* dezipField(Module& m,std::size_t i) noexcept {
 }
 bool sameDezipStructure(const OscillatorModuleState& a,const OscillatorModuleState& b) noexcept {
     if(a.id!=b.id || a.enabled!=b.enabled || a.tableId!=b.tableId || a.waveform!=b.waveform || a.octave!=b.octave ||
-       a.semitone!=b.semitone || a.unison!=b.unison || a.process1!=b.process1 || a.process1Seed!=b.process1Seed ||
+       a.semitone!=b.semitone || a.unison!=b.unison || a.phaseMode!=b.phaseMode || a.phaseDegrees!=b.phaseDegrees || a.randomPhaseDegrees!=b.randomPhaseDegrees || a.phaseRetrigger!=b.phaseRetrigger || a.phasePerUnison!=b.phasePerUnison || a.process1!=b.process1 || a.process1Seed!=b.process1Seed ||
        a.process2!=b.process2 || a.process2Seed!=b.process2Seed || a.route1SourceId!=b.route1SourceId ||
        a.route1Type!=b.route1Type || a.route2SourceId!=b.route2SourceId || a.route2Type!=b.route2Type ||
        a.processCount!=b.processCount || a.routeCount!=b.routeCount || a.busRouteCount!=b.busRouteCount) return false;

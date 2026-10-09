@@ -5,6 +5,7 @@
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-osc1-smooth-basic-shapes-v22.3
 #include "core/Engine.h"
+#include "core/dsp/Unison.h"
 #include "core/dsp/FastMath.h"
 #include "core/dsp/Filter.h"
 #include "core/RealtimeThreadPolicy.h"
@@ -86,7 +87,7 @@ void canonicalInitAudit() {
     check(init.oscillators[0].id==1 && init.oscillators[0].enabled && init.nextId==2,"Init stable single oscillator identity");
     const auto& o=init.oscillators[0];
     check(o.tableId==dsp::BuiltinWavetableId::BasicShapes && o.wtPosition==1.f/3.f && o.waveform==1,"Init unmixed canonical saw frame");
-    check(o.octave==0 && o.semitone==0 && o.fineCents==0 && o.unison==0 && o.detuneCents==0 && o.blend==.5f && o.pan==0 && o.level==1,"Init exact oscillator controls");
+    check(o.octave==0 && o.semitone==0 && o.fineCents==0 && o.unison==1 && o.detuneCents==0 && o.blend==.5f && o.pan==0 && o.level==1,"Init exact oscillator controls");
     check(o.processCount==0 && o.routeCount==0 && oscBusSend(o,mainBusId)==1,"Init clean direct output");
     for(std::size_t i=1;i<init.oscillators.size();++i) check(!init.oscillators[i].id && !init.oscillators[i].enabled,"no extra Init oscillators");
     const auto v=[&](ParameterId id){return init.parameters[std::size_t(id)];};
@@ -111,7 +112,7 @@ void canonicalInitAudit() {
     std::cout<<"Init gain stages MIDI60 raw="<<rawPeak<<" rawRMS="<<std::sqrt(rawPower/rawCount)<<" postENV/level="<<rawPeak<<" stereoPostRoute="<<rawPeak*.70710678<<" previousMaster0.2="<<rawPeak*.70710678*.2<<" calibratedMaster0.35="<<rawPeak*.70710678*.35<<'\n';
     auto e=std::make_unique<OrigamiEngine>();e->restoreInstrumentState(init);prepare(*e);e->noteOn(60,1);auto reference=render(*e,48000,256);
     for(std::size_t block:{1u,7u,127u,511u,1024u}) {e->reset();e->noteOn(60,1);check(render(*e,48000,block)==reference,"Init deterministic block partitions");}
-    for(unsigned unison:{0u,4u,8u,16u}) for(bool chord:{false,true}) {
+    for(unsigned unison:{1u,4u,8u,16u}) for(bool chord:{false,true}) {
         auto s=init;s.oscillators[0].unison=unison;s.parameters[std::size_t(ParameterId::OscUnison)]=float(unison);s.oscillators[0].detuneCents=12;s.parameters[std::size_t(ParameterId::OscDetune)]=12;
         check(e->restoreInstrumentState(s),"Init unison/chord restore");e->reset();e->noteOn(48,1);if(chord) for(int n:{55,60,64}) e->noteOn(n,1);
         prepare(*e,48000,2);e->noteOn(48,1);if(chord)for(int n:{55,60,64})e->noteOn(n,1);
@@ -1243,17 +1244,19 @@ void optimizedPathGoldenAudit() {
     // Scenario 3 uses interpolated random spectral frames; its old quantized
     // hash was 0x004177b6dc1873d3 (and 0x8ab144d7b625d5a0 while a key crossing
     // still faded the full-weight endpoint back from the previous key). The
-    // other five paths are unchanged.
+    // other paths retain their pinned single-lane hashes. Unison repair
+    // deliberately re-baselines scenarios 0 (8 lanes) and 5 (3 lanes):
+    // stereo ensembles, independent phases and compensated summing.
     static constexpr std::uint64_t expected[golden::scenarioCount]{
-        0x8b54461996998697ull,0xf2cb0320aab297acull,0x69eb600ae29a68dbull,
-        0xf726293442577439ull,0x47585a3f316d4135ull,0xa740b1d6675595c3ull};
+        0x053118a75389cdb9ull,0xf2cb0320aab297acull,0x69eb600ae29a68dbull,
+        0xf726293442577439ull,0x47585a3f316d4135ull,0xcf211d5863c3b2efull};
     for(int s=0;s<golden::scenarioCount;++s) {
         const auto a=golden::render(s,32),b=golden::render(s,256),c=golden::render(s,1000),again=golden::render(s,256);
         if(print) std::cout<<"GOLDEN "<<golden::scenarioName(s)<<" 0x"<<std::hex<<b.hash<<std::dec<<"\n";
         check(a.finite && b.finite && c.finite,"golden render stays finite");
         check(a.hash==b.hash && b.hash==c.hash,"optimised paths are block-size independent (32 / 256 / 1000)");
         check(again.hash==b.hash,"optimised paths render deterministically");
-        check(b.hash==expected[s],"optimised paths match the pre-optimisation golden render");
+        check(b.hash==expected[s],"paths match pinned single-lane or repaired-unison golden render");
     }
 }
 
@@ -1542,12 +1545,15 @@ void synthFilterRoutingAudit() {
     for(double rate:{8000.,22050.,44100.,48000.,96000.,192000.,384000.}) {table.prepare(rate);for(float cutoff:{20.f,1000.f,20000.f}) for(float res:{0.f,1.f}) {dsp::LowPassFilter filter;const auto coeff=table.make(cutoff,res);for(int n=0;n<4096;++n) {const float sample=filter.next(n==0?1.f:0.f,coeff);check(std::isfinite(sample) && std::abs(sample)<8,"extreme Synth TPT remains finite and bounded");}}}
 }
 
+#include "UnisonAudit.h"
+
 int main() {
     // OrigamiEngine/Voice are intentionally large fixed-storage realtime
     // objects. Keep every engine-heavy regression off the process stack so the
     // test runner cannot overflow before it reaches its first diagnostic.
     // Production engine ownership already follows this pattern.
     try {
+        unison_audit::run();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison: "<<checks<<" checks\n";return 0;}
         canonicalInitAudit();filter_response_audit::run(check);synthCombStorageLifecycleAudit();multimodeSynthLifecycleAudit();oscillatorRouteMixerAudit();synthFilterRoutingAudit();
         correctiveSpectralPreview();
         sourceInstanceRealtimeAudit();
