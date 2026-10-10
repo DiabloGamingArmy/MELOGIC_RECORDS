@@ -36,6 +36,35 @@ struct Reader {
     }
     float real() {auto n=word();float f;std::memcpy(&f,&n,4);return f;}
 };
+void writeInstance(Writer& w,const SourceInstance& a) {
+    w.word(a.id); if(!a.id) return;
+    w.word(a.number);w.word(static_cast<std::uint32_t>(a.family));
+    for(float v:{a.envelope.attack,a.envelope.decay,a.envelope.sustain,a.envelope.release,a.envelope.attackCurve,a.envelope.decayCurve,a.envelope.releaseCurve}) w.real(v);
+    const auto& l=a.lfo;w.word(static_cast<std::uint32_t>(l.shape));w.word(static_cast<std::uint32_t>(l.mode));w.real(l.rateHz);w.word(l.pointCount);
+    for(const auto& p:l.points) {w.real(p.x);w.real(p.y);w.real(p.curve);}
+    w.word(l.pingPong ? 1 : 0);
+    for(float v:{l.smooth,l.attackSeconds,l.delaySeconds,l.phase,l.skew,l.quantize,l.entropy,l.fracture,l.stereo}) w.real(v);
+    for(float v:{a.random.rateHz,a.random.smoothing,a.random.hold,a.random.delaySeconds,a.function.rateHz,a.function.curve,
+        a.chaos.rateHz,a.chaos.chaos,a.chaos.flow,a.chaos.damping,a.chaos.warp,a.chaos.smoothing,a.drift.rateHz,a.sequencer.rateHz}) w.real(v);
+    w.word(static_cast<std::uint32_t>(a.chaos.axis));w.word(static_cast<std::uint32_t>(a.chaos.method));
+    const auto& q=a.sequencer;w.word(q.activeSteps);w.word(static_cast<std::uint32_t>(q.direction));w.word(q.loop ? 1 : 0);w.real(q.humanize);
+    for(float v:q.steps) w.real(v);for(float v:q.probability) w.real(v);for(auto v:q.ratchets) w.word(v);
+}
+bool readInstance(Reader& r,SourceInstance& a) {
+    a={};a.id=r.word();if(!a.id) return r.ok;
+    a.number=r.word();a.family=static_cast<SourceFamily>(r.word());
+    for(float* v:{&a.envelope.attack,&a.envelope.decay,&a.envelope.sustain,&a.envelope.release,&a.envelope.attackCurve,&a.envelope.decayCurve,&a.envelope.releaseCurve}) *v=r.real();
+    auto& l=a.lfo;l.shape=static_cast<LfoShape>(r.word());l.mode=static_cast<LfoMode>(r.word());l.rateHz=r.real();l.pointCount=r.word();
+    for(auto& p:l.points) {p.x=r.real();p.y=r.real();p.curve=r.real();}
+    auto flag=r.word();if(flag>1) return false;l.pingPong=flag==1;
+    for(float* v:{&l.smooth,&l.attackSeconds,&l.delaySeconds,&l.phase,&l.skew,&l.quantize,&l.entropy,&l.fracture,&l.stereo}) *v=r.real();
+    for(float* v:{&a.random.rateHz,&a.random.smoothing,&a.random.hold,&a.random.delaySeconds,&a.function.rateHz,&a.function.curve,
+        &a.chaos.rateHz,&a.chaos.chaos,&a.chaos.flow,&a.chaos.damping,&a.chaos.warp,&a.chaos.smoothing,&a.drift.rateHz,&a.sequencer.rateHz}) *v=r.real();
+    a.chaos.axis=static_cast<ChaosAxis>(r.word());a.chaos.method=static_cast<ChaosMethod>(r.word());
+    auto& q=a.sequencer;q.activeSteps=r.word();q.direction=static_cast<SequenceDirection>(r.word());flag=r.word();if(flag>1) return false;q.loop=flag==1;q.humanize=r.real();
+    for(auto& v:q.steps) v=r.real();for(auto& v:q.probability) v=r.real();for(auto& v:q.ratchets) v=r.word();return r.ok;
+}
+
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
@@ -77,7 +106,10 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     const float up=s.performance.pitchBendRangeSemitones,down=s.performance.pitchBendDownSemitones;
     v34|=!(up>=1.0f && up<=48.0f && down<=-1.0f && down>=-48.0f);
     for(const auto& name:s.modulation.macroNames) v34|=name[0]!='\0';
-    const std::uint32_t version=v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
+    const bool outputMixer=std::any_of(s.modulation.synthFilters.inputs.begin(),s.modulation.synthFilters.inputs.end(),[](const auto& in){return in.oscillator && in.busCount;});
+    const bool typedFilters=std::any_of(s.modulation.synthFilters.filters.begin(),s.modulation.synthFilters.filters.end(),[](const auto& f){return f.id && (f.type!=dsp::FilterType::LowPass || f.values.gain!=0);});
+    const bool phaseSettings=std::any_of(s.oscillators.begin(),s.oscillators.end(),[](const auto& m){return m.id && (m.phaseMode!=OscillatorPhaseMode::Natural || m.phaseDegrees!=0 || m.randomPhaseDegrees!=360 || !m.phaseRetrigger || !m.phasePerUnison);});
+    const std::uint32_t version=phaseSettings ? 39u : typedFilters ? 38u : outputMixer ? 37u : (s.modulation.synthFilters.nextId!=1 || std::any_of(s.modulation.synthFilters.inputs.begin(),s.modulation.synthFilters.inputs.end(),[](const auto& in){return in.oscillator!=0;})) ? 36u : s.modulation.nextInstanceId!=1 ? 35u : v34 ? 34u : lfoStereo ? 33u : lfoFunctions ? 32u : dynamicMacros ? 31u : sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u;
     Writer w;w.word(magic);w.word(version);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
@@ -88,6 +120,7 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         w.real(m.wtPosition);w.real(m.waveform);w.real(m.octave);w.real(m.semitone);
         w.real(m.fineCents);w.word(m.unison);w.real(m.detuneCents);w.real(m.pan);w.real(m.level);
         w.real(m.blend);
+        if(version>=39) {w.word(static_cast<unsigned>(m.phaseMode));w.real(m.phaseDegrees);w.real(m.randomPhaseDegrees);w.word(m.phaseRetrigger?1:0);w.word(m.phasePerUnison?1:0);}
         w.word(static_cast<std::uint32_t>(m.process1));w.real(m.process1Amount);
         w.word(static_cast<std::uint32_t>(m.process2));w.real(m.process2Amount);
         w.word(m.process1Seed);w.word(m.process2Seed);
@@ -265,6 +298,18 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
             w.word(length);
             for(std::uint32_t c=0;c<length;++c) w.word(static_cast<unsigned char>(name[c]));
         }
+    if(version>=35) {w.word(mod.nextInstanceId);w.word(maxSourceInstances);for(const auto& a:mod.instances) writeInstance(w,a);}
+    if(version>=36) {
+        const auto& c=mod.synthFilters;w.word(c.nextId);w.word(maxSynthFilters);
+        for(const auto& f:c.filters) {w.word(f.id);if(!f.id) continue;w.word(f.power?1u:0u);w.word(f.next);
+            for(float v:{f.values.cutoff,f.values.resonance,f.values.drive,f.values.mix,f.values.keytrack}) w.real(v);if(version>=38) {w.word(static_cast<unsigned>(f.type));w.real(f.values.gain);}
+            w.word(f.busCount);for(std::size_t b=0;b<f.busCount;++b) {w.word(f.buses[b].bus);w.real(f.buses[b].level);}}
+        for(const auto& in:c.inputs) {
+            w.word(in.oscillator);
+            if(version>=37 && in.filter) {w.word(0);w.word(1);w.word(in.filter);w.real(1);w.word(1);}
+            else {w.word(in.filter);w.word(in.busCount);for(std::size_t b=0;b<in.busCount;++b) {w.word(in.buses[b].bus);w.real(in.buses[b].level);if(version>=37) w.word(in.buses[b].filter?1:0);}}
+        }
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -275,10 +320,14 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>34) return false;
+    if(version<1 || version>39) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
+    // Formats before collection flags implicitly contained the filter.
+    s.modulation.filterEnabled=true;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
+    // Old zero meant one rendered lane. Missing legacy values already default to one.
+    if(version<=38 && s.parameters[std::size_t(ParameterId::OscUnison)]==0) s.parameters[std::size_t(ParameterId::OscUnison)]=1;
     // Validate before converting the legacy unison float to an integer.
     for(const auto& p:parameterRegistry()) {
         const auto v=s.parameters[static_cast<std::size_t>(p.id)];
@@ -297,7 +346,9 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             m.enabled=enabled==1;m.tableId=r.word();
             m.wtPosition=r.real();m.waveform=r.real();m.octave=r.real();m.semitone=r.real();
             m.fineCents=r.real();m.unison=r.word();m.detuneCents=r.real();m.pan=r.real();m.level=r.real();
+            if(version<=38 && m.unison==0) m.unison=1;
             m.blend=version>=13 ? r.real() : 1.0f;
+            if(version>=39) {const auto phase=r.word();if(phase>static_cast<unsigned>(OscillatorPhaseMode::Free)) return false;m.phaseMode=static_cast<OscillatorPhaseMode>(phase);m.phaseDegrees=r.real();m.randomPhaseDegrees=r.real();const auto retrigger=r.word(),per=r.word();if(retrigger>1 || per>1) return false;m.phaseRetrigger=retrigger!=0;m.phasePerUnison=per!=0;}
             if(version>=7) {
                 m.process1=static_cast<dsp::OscProcessType>(r.word());m.process1Amount=r.real();
                 m.process2=static_cast<dsp::OscProcessType>(r.word());m.process2Amount=r.real();
@@ -484,7 +535,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         }
         for(auto& m:s.oscillators) if(m.id) {
             const auto routes=r.word();
-            if(routes<1 || routes>maxOscBusRoutes) return false;
+            if(routes<1 || routes>(version>=37?maxOscBusRoutes:8)) return false;
             m.busRouteCount=static_cast<std::uint8_t>(routes);
             for(std::size_t i=0;i<routes;++i) {m.busRoutes[i].bus=r.word();m.busRoutes[i].level=r.real();}
             for(std::size_t i=routes;i<maxOscBusRoutes;++i) m.busRoutes[i]={};
@@ -552,6 +603,19 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             name.fill('\0');
             for(std::uint32_t c=0;c<length;++c) { const auto ch=r.word(); if(ch==0u || ch>255u) return false; name[c]=static_cast<char>(ch); }
         }
+    }
+    if(version>=35) {s.modulation.nextInstanceId=r.word();if(r.word()!=maxSourceInstances) return false;for(auto& a:s.modulation.instances) if(!readInstance(r,a)) return false;}
+    if(version>=36) {
+        auto& c=s.modulation.synthFilters;c.nextId=r.word();if(r.word()!=maxSynthFilters) return false;
+        for(auto& f:c.filters) {f={};f.id=r.word();if(!f.id) continue;const auto power=r.word();if(power>1) return false;f.power=power==1;f.next=r.word();
+            for(float* v:{&f.values.cutoff,&f.values.resonance,&f.values.drive,&f.values.mix,&f.values.keytrack}) *v=r.real();
+            if(version>=38) {const auto type=r.word();if(type>=dsp::filterTypes.size() || !dsp::filterTypes[type].synth) return false;f.type=static_cast<dsp::FilterType>(type);f.values.gain=r.real();}
+            const auto count=r.word();if(count>(version>=37?maxOscBusRoutes:8)) return false;f.busCount=static_cast<std::uint8_t>(count);
+            for(std::size_t b=0;b<f.busCount;++b) {f.buses[b].bus=r.word();f.buses[b].level=r.real();}}
+        for(auto& in:c.inputs) {in={};in.oscillator=r.word();in.filter=r.word();if(version>=37 && in.filter) return false;const auto count=r.word();if(count>(version>=37?maxOscBusRoutes:8)) return false;in.busCount=static_cast<std::uint8_t>(count);for(std::size_t b=0;b<in.busCount;++b) {in.buses[b].bus=r.word();in.buses[b].level=r.real();if(version>=37) {const auto kind=r.word();if(kind>1) return false;in.buses[b].filter=kind==1;}}}
+    }
+    if(version==36) for(auto& in:s.modulation.synthFilters.inputs) if(in.oscillator && in.filter) {
+        const auto id=in.filter;in.filter=0;in.busCount=1;in.buses={};in.buses[0]={id,1,true};
     }
     // mct-origami-nodes-n01: (source, destination) pairs are unique. States
     // written before that rule may repeat a pair; merge them deterministically

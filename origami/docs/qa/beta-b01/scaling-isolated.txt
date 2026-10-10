@@ -1,0 +1,12 @@
+libmalloc probe: available
+  scaling 1 voices x 1 OSC x 16 unison = 16 lanes: median=0.2425 p99=0.270166 ms/2048 (48k deadline=42.667ms)
+  scaling 8 voices x 1 OSC x 16 unison = 128 lanes: median=1.47529 p99=1.54579 ms/2048 (48k deadline=42.667ms)
+  scaling 16 voices x 1 OSC x 16 unison = 256 lanes: median=2.85825 p99=3.25042 ms/2048 (48k deadline=42.667ms)
+  scaling 1 voices x 4 OSC x 16 unison = 64 lanes: median=0.701 p99=0.738167 ms/2048 (48k deadline=42.667ms)
+  scaling 8 voices x 4 OSC x 16 unison = 512 lanes: median=4.80363 p99=4.87512 ms/2048 (48k deadline=42.667ms)
+  scaling 16 voices x 4 OSC x 16 unison = 1024 lanes: median=9.57292 p99=9.68013 ms/2048 (48k deadline=42.667ms)
+  scaling 1 voices x 16 OSC x 16 unison = 256 lanes: median=2.52771 p99=2.56338 ms/2048 (48k deadline=42.667ms)
+  scaling 8 voices x 16 OSC x 16 unison = 2048 lanes: median=18.4367 p99=18.5491 ms/2048 (48k deadline=42.667ms)
+  scaling 16 voices x 16 OSC x 16 unison = 4096 lanes: median=36.4212 p99=36.6727 ms/2048 (48k deadline=42.667ms)
+PASS oscillator (8.02979 s)
+B01 seed=0xb010cafe checks=12106 samples=7663616 callbacks=1871 failures=0

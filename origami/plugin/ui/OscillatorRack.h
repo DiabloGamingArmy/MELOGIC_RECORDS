@@ -77,8 +77,20 @@ private:
     std::function<void(OscillatorModuleId,OscRouteType)> onRouteSelected_;
 };
 
-class OscillatorCard final : public Panel {
+class OscillatorCard final : public Panel,public juce::DragAndDropTarget {
 public:
+    std::function<bool(const ModulationState&)> synthRoutingSetter;
+    bool dropSynthFilter(SynthFilterId);
+    bool isInterestedInDragSource(const SourceDetails&) override;
+    void itemDragEnter(const SourceDetails&) override;
+    void itemDragExit(const SourceDetails&) override;
+    void itemDropped(const SourceDetails&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    // Read-only renderer diagnostics (message-thread, last painted frame).
+    const dsp::OscProcessPlan& viewportProcessPlan() const noexcept { return spectralPreviewPlan_; }
+    const std::array<float,2048>& viewportWaveform() const noexcept { return spectralPreviewCache_; }
+    const juce::Path& viewportStroke() const noexcept { return viewportStroke_; }
+
     explicit OscillatorCard(OscillatorDisplay display,std::function<void(unsigned)> remove,
                             std::function<bool(mct::origami::ParameterId,float)> setter={},
                             std::function<float(mct::origami::ParameterId)> getter={},
@@ -110,9 +122,13 @@ public:
         juce::Rectangle<int> title,power,remove;
         std::array<juce::Rectangle<int>,3> labels{},selectors{};
     };
+    bool addOutputRoute(std::uint32_t destination,bool filter);
     HeaderLayout headerLayout() const;
     static constexpr float headerLabelSize=Type::control;
 private:
+    bool synthDropOver_=false,synthDropAllowed_=false;
+    OscillatorModuleState routingState() const;
+    bool commitBusRouting(const OscillatorModuleState&);
     // Oscillator body navigation. The top bar remains persistent while the
     // content below it can be replaced by focused configuration workspaces.
     // Patch 1 establishes Main as the authoritative existing workspace; Phase
@@ -135,8 +151,9 @@ private:
     juce::TextButton phaseSelector_{"RAND"};
     juce::TextButton outputSelector_{"DIRECT OUT"};
 
-    enum class PhaseStartMode : std::uint8_t { Random, Fixed, Free };
-    PhaseStartMode phaseStartMode_=PhaseStartMode::Random;
+    using PhaseStartMode = OscillatorPhaseMode;
+    PhaseStartMode phaseStartMode_=PhaseStartMode::Natural;
+    void storePhaseSettings();
     juce::TextButton phaseRandom_{"RANDOM"},phaseFixed_{"FIXED"},phaseFree_{"FREE"};
     RackSlider phaseAngle_,phaseRandomRange_;
     juce::Label phaseAngleLabel_,phaseRandomRangeLabel_;
@@ -225,6 +242,8 @@ private:
     std::array<RackSlider,maxOscBusRoutes> busLevels_;
     std::array<juce::TextButton,maxOscBusRoutes> busRemoves_;
     std::array<juce::Rectangle<int>,maxOscBusRoutes> busRowBounds_{};
+    struct RouteContent final : juce::Component {std::function<void(juce::Graphics&)> draw;void paint(juce::Graphics& g) override {if(draw) draw(g);}};
+    RouteContent routeContent_;juce::Viewport routeViewport_;
     juce::TextButton busAdd_{"+ ADD ROUTE"};
     std::size_t busRowCount_=0;
     bool syncingBus_=false;
@@ -293,9 +312,8 @@ private:
     // UI-only spectral preview cache. FFT/IFFT work is reused until a visually
     // meaningful source/process key changes.
     std::array<float,2048> spectralPreviewCache_{};
-    std::array<float,2048> spectralPreviewPrevious_{};
-    float spectralPreviewMorph_=1.0f;
-    int spectralPreviewWtKey_=-1;
+    juce::Path viewportStroke_;
+    float spectralPreviewPosition_=-1;
     const void* spectralPreviewTable_=nullptr;
     const void* shownTable_=nullptr; // the canonical table the viewport last drew // the table the cached spectral preview was built from
     dsp::OscProcessPlan spectralPreviewPlan_{};
@@ -316,6 +334,7 @@ public:
 };
 class OscillatorRack final : public Panel, private juce::Timer {
 public:
+    void setSynthRoutingSetter(std::function<bool(const ModulationState&)> setter) {synthRoutingSetter_=std::move(setter);for(auto& card:cards_) card->synthRoutingSetter=synthRoutingSetter_;}
     using ParameterSetter=std::function<bool(mct::origami::ParameterId,float)>;
     using ParameterGetter=std::function<float(mct::origami::ParameterId)>;
     using ModuleAdder=std::function<unsigned()>;
@@ -343,6 +362,7 @@ public:
     std::function<juce::String(unsigned)> wavetableName; // the oscillator's table, for its selector
     std::function<std::shared_ptr<const mct::origami::content::WavetableData>(unsigned)> wavetableData; // for the viewport
 private:
+    std::function<bool(const ModulationState&)> synthRoutingSetter_;
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     void timerCallback() override {
         if(isShowing()) advanceVisualFrame();

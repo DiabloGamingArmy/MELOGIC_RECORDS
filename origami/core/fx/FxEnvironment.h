@@ -25,6 +25,8 @@ class FxEnvironment {
 public:
     static constexpr int chunk=FxRenderer::chunk;
     FxEnvironment();
+    ~FxEnvironment();
+    int latencySamples() const noexcept { return latency_.load(std::memory_order_acquire); }
 
     // ---- non-realtime (never concurrent with process)
     void prepare(double sampleRate);
@@ -37,13 +39,28 @@ public:
     // entering `bus`'s graph (what its IN node emits) since the last call.
     std::pair<float,float> consumeInputPeaks(FxBusId bus) noexcept;
     FxRenderer::NodeTelemetrySnapshot consumeNodeTelemetry(FxBusId bus,FxNodeId node) noexcept;
+    void setNodeTelemetryEnabled(FxBusId bus,bool enabled) noexcept;
     const FxRenderer& renderer(std::size_t slot) const noexcept { return *renderers_[slot]; }
 
     // ---- realtime. aux: 2*(maxRenderBuses-1) planar pointers (may be null).
     void process(float* mainLeft,float* mainRight,float* const* aux,std::size_t busCount,int samples,
                  const FxModulationOutput* modulation=nullptr,bool preMaster=false,float masterGain=1.0f) noexcept;
+    void emergencyResetRuntime() noexcept;
 
 private:
+    struct PlanTransaction {
+        std::array<PreparedFxPlan*,maxRenderBuses> plans{};
+        std::size_t buses=1;
+        ~PlanTransaction() { for(auto* plan:plans) delete plan; }
+    };
+    void adoptTransaction() noexcept;
+    void drainTransactions() noexcept;
+    std::atomic<PlanTransaction*> pendingTransaction_{nullptr};
+    static constexpr std::size_t transactionCapacity=32;
+    std::array<PlanTransaction*,transactionCapacity> retiredTransactions_{};
+    std::atomic<std::size_t> transactionWrite_{0},transactionRead_{0};
+    std::atomic<int> latency_{0};
+    std::size_t audioBuses_=1;
     void processChunk(float* mainLeft,float* mainRight,float* const* aux,std::size_t buses,int offset,int n) noexcept;
     std::array<std::unique_ptr<FxRenderer>,maxRenderBuses> renderers_;
     std::atomic<std::size_t> activeBuses_{1};

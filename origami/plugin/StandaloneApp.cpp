@@ -1,4 +1,5 @@
 #include <JuceHeader.h>
+#include <cstdio>
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include "PluginProcessor.h"
 
@@ -27,11 +28,11 @@ public:
     }
 
     const juce::String getApplicationName() override { return "MCT Origami"; }
-    const juce::String getApplicationVersion() override { return JucePlugin_VersionString; }
+    const juce::String getApplicationVersion() override { return melogic::update::installedIdentity().version; }
     bool moreThanOneInstanceAllowed() override { return true; }
     void anotherInstanceStarted(const juce::String&) override {}
 
-    void initialise(const juce::String&) override
+    void initialise(const juce::String& commandLine) override
     {
         // Standalone policy: always boot the synth itself from canonical Init.
         // JUCE's audio-device settings remain persistent; only the saved plugin
@@ -43,6 +44,16 @@ public:
             settings->saveIfNeeded();
         }
 
+#if ORIGAMI_ACCOUNT_QUIT_PROBE
+        if(commandLine=="--account-isolated" || commandLine.startsWith("--account-quit-after-ms=")) {
+            // Automated quit loops must never repeatedly prompt for the login Keychain.
+            melogic::account::Service::useInMemoryForTesting();
+            isolatedQuitProbe_=true;
+            std::fputs("ORIGAMI_ACCOUNT_ISOLATED_QUIT_PROBE_V1\n",stderr);
+        }
+#endif
+        account_=melogic::account::Service::shared();
+        updates_=melogic::update::Service::shared();
         window_ = std::make_unique<juce::StandaloneFilterWindow>(
             getApplicationName(),
             juce::LookAndFeel::getDefaultLookAndFeel()
@@ -62,6 +73,14 @@ public:
         // JUCE standalone/device bridge is driving. No DSP or device settings
         // are changed here.
         diagnosticTimer_.startTimer(2000);
+#if ORIGAMI_ACCOUNT_QUIT_PROBE
+        if(commandLine.startsWith("--account-quit-after-ms=")) {
+            const auto delay=commandLine.fromFirstOccurrenceOf("=",false,false).getIntValue();
+            quitProbe_.startTimer(juce::jlimit(1,30000,delay));
+        }
+#else
+        juce::ignoreUnused(commandLine);
+#endif
     }
 
     void timerCallback()
@@ -107,8 +126,19 @@ public:
 
     void shutdown() override
     {
+#if ORIGAMI_ACCOUNT_QUIT_PROBE
+        quitProbe_.stopTimer();
+#endif
+        melogic::account::diagnostic("standalone","shutdown_begin");
         diagnosticTimer_.stopTimer();
+        if(updates_)updates_->shutdown();
+        updates_.reset();
+        if(account_)account_->shutdown();
         window_.reset();
+        account_.reset();
+#if ORIGAMI_ACCOUNT_QUIT_PROBE
+        if(isolatedQuitProbe_)melogic::account::Service::releaseInMemoryForTesting();
+#endif
         // StandaloneFilterWindow may save the processor state while tearing
         // down. Remove only that state again so the next launch is Init while
         // device/sample-rate/buffer preferences remain remembered.
@@ -119,6 +149,7 @@ public:
             settings->saveIfNeeded();
         }
         properties_.saveIfNeeded();
+        melogic::account::diagnostic("standalone","shutdown_complete");
     }
 
     void systemRequestedQuit() override
@@ -127,6 +158,12 @@ public:
     }
 
 private:
+#if ORIGAMI_ACCOUNT_QUIT_PROBE
+    bool isolatedQuitProbe_=false;
+    class QuitProbe final : public juce::Timer {
+        void timerCallback() override {stopTimer();juce::JUCEApplicationBase::quit();}
+    } quitProbe_;
+#endif
     class DiagnosticTimer final : public juce::Timer {
     public:
         explicit DiagnosticTimer(OrigamiStandaloneApplication& owner):owner_(owner) {}
@@ -134,6 +171,8 @@ private:
     private:
         OrigamiStandaloneApplication& owner_;
     } diagnosticTimer_{*this};
+    std::shared_ptr<melogic::account::Service> account_;
+    std::shared_ptr<melogic::update::Service> updates_;
     juce::ApplicationProperties properties_;
     std::unique_ptr<juce::StandaloneFilterWindow> window_;
 };

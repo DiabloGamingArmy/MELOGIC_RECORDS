@@ -1,0 +1,109 @@
+CURRENT BLOCK peak=0.014991001226
+NEW PEAK setting=0 offset=1 block=2 sample=1 inputMode=1 peak=0.014991001226 rms=0.0118524944195
+ band=1 type=1 frequency=100.006904602 gain=0 Q=0.705991029739 stageBlockPeak=0.014991001226 stageRMS=0.0118524944195 legacySmoothedEndF=100.006919861 legacySmoothedEndQ=0.705991029739
+ band=2 type=2 frequency=400.894348145 gain=0 Q=0.705991029739 stageBlockPeak=0.014991001226 stageRMS=0.0118524944195 legacySmoothedEndF=400.894439697 legacySmoothedEndQ=0.705991029739
+ band=3 type=2 frequency=2004.61047363 gain=0 Q=0.705991029739 stageBlockPeak=0.014991001226 stageRMS=0.0118524944195 legacySmoothedEndF=2004.61083984 legacySmoothedEndQ=0.705991029739
+ band=4 type=4 frequency=7980.49755859 gain=0 Q=0.705991029739 stageBlockPeak=0.014991001226 stageRMS=0.0118524944195 legacySmoothedEndF=7980.50097656 legacySmoothedEndQ=0.705991029739
+ band=5 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=0.014991001226 stageRMS=0.0118524944195 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=6 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=0.014991001226 stageRMS=0.0118524944195 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=7 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=0.014991001226 stageRMS=0.0118524944195 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=8 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=0.014991001226 stageRMS=0.0118524944195 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+CURRENT BLOCK peak=7.9903178215
+NEW PEAK setting=0 offset=6 block=8 sample=0 inputMode=2 peak=7.9903178215 rms=5.19069995821
+ band=1 type=1 frequency=100.006904602 gain=0 Q=0.705991029739 stageBlockPeak=7.9903178215 stageRMS=5.19069995821 legacySmoothedEndF=100.006919861 legacySmoothedEndQ=0.705991029739
+ band=2 type=2 frequency=400.894348145 gain=0 Q=0.705991029739 stageBlockPeak=7.9903178215 stageRMS=5.19069995821 legacySmoothedEndF=400.894439697 legacySmoothedEndQ=0.705991029739
+ band=3 type=2 frequency=2004.61047363 gain=0 Q=0.705991029739 stageBlockPeak=7.9903178215 stageRMS=5.19069995821 legacySmoothedEndF=2004.61083984 legacySmoothedEndQ=0.705991029739
+ band=4 type=4 frequency=7980.49755859 gain=0 Q=0.705991029739 stageBlockPeak=7.9903178215 stageRMS=5.19069995821 legacySmoothedEndF=7980.50097656 legacySmoothedEndQ=0.705991029739
+ band=5 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.9903178215 stageRMS=5.19069995821 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=6 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.9903178215 stageRMS=5.19069995821 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=7 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.9903178215 stageRMS=5.19069995821 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=8 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.9903178215 stageRMS=5.19069995821 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+CURRENT BLOCK peak=7.99769973755
+NEW PEAK setting=0 offset=14 block=16 sample=15 inputMode=2 peak=7.99769973755 rms=5.99950776827
+ band=1 type=1 frequency=100.006904602 gain=0 Q=0.705991029739 stageBlockPeak=7.99769973755 stageRMS=5.99950776827 legacySmoothedEndF=100.006919861 legacySmoothedEndQ=0.705991029739
+ band=2 type=2 frequency=400.894348145 gain=0 Q=0.705991029739 stageBlockPeak=7.99769973755 stageRMS=5.99950776827 legacySmoothedEndF=400.894439697 legacySmoothedEndQ=0.705991029739
+ band=3 type=2 frequency=2004.61047363 gain=0 Q=0.705991029739 stageBlockPeak=7.99769973755 stageRMS=5.99950776827 legacySmoothedEndF=2004.61083984 legacySmoothedEndQ=0.705991029739
+ band=4 type=4 frequency=7980.49755859 gain=0 Q=0.705991029739 stageBlockPeak=7.99769973755 stageRMS=5.99950776827 legacySmoothedEndF=7980.50097656 legacySmoothedEndQ=0.705991029739
+ band=5 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99769973755 stageRMS=5.99950776827 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=6 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99769973755 stageRMS=5.99950776827 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=7 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99769973755 stageRMS=5.99950776827 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=8 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99769973755 stageRMS=5.99950776827 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+CURRENT BLOCK peak=7.99994468689
+NEW PEAK setting=0 offset=142 block=64 sample=50 inputMode=2 peak=7.99994468689 rms=5.79572460208
+ band=1 type=1 frequency=100.006904602 gain=0 Q=0.705991029739 stageBlockPeak=7.99994468689 stageRMS=5.79572460208 legacySmoothedEndF=100.006919861 legacySmoothedEndQ=0.705991029739
+ band=2 type=2 frequency=400.894348145 gain=0 Q=0.705991029739 stageBlockPeak=7.99994468689 stageRMS=5.79572460208 legacySmoothedEndF=400.894439697 legacySmoothedEndQ=0.705991029739
+ band=3 type=2 frequency=2004.61047363 gain=0 Q=0.705991029739 stageBlockPeak=7.99994468689 stageRMS=5.79572460208 legacySmoothedEndF=2004.61083984 legacySmoothedEndQ=0.705991029739
+ band=4 type=4 frequency=7980.49755859 gain=0 Q=0.705991029739 stageBlockPeak=7.99994468689 stageRMS=5.79572460208 legacySmoothedEndF=7980.50097656 legacySmoothedEndQ=0.705991029739
+ band=5 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99994468689 stageRMS=5.79572460208 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=6 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99994468689 stageRMS=5.79572460208 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=7 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99994468689 stageRMS=5.79572460208 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=8 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99994468689 stageRMS=5.79572460208 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+CURRENT BLOCK peak=7.99999713898
+NEW PEAK setting=0 offset=974 block=512 sample=335 inputMode=2 peak=7.99999713898 rms=5.65695579499
+ band=1 type=1 frequency=100.006904602 gain=0 Q=0.705991029739 stageBlockPeak=7.99999713898 stageRMS=5.65695579499 legacySmoothedEndF=100.006919861 legacySmoothedEndQ=0.705991029739
+ band=2 type=2 frequency=400.894348145 gain=0 Q=0.705991029739 stageBlockPeak=7.99999713898 stageRMS=5.65695579499 legacySmoothedEndF=400.894439697 legacySmoothedEndQ=0.705991029739
+ band=3 type=2 frequency=2004.61047363 gain=0 Q=0.705991029739 stageBlockPeak=7.99999713898 stageRMS=5.65695579499 legacySmoothedEndF=2004.61083984 legacySmoothedEndQ=0.705991029739
+ band=4 type=4 frequency=7980.49755859 gain=0 Q=0.705991029739 stageBlockPeak=7.99999713898 stageRMS=5.65695579499 legacySmoothedEndF=7980.50097656 legacySmoothedEndQ=0.705991029739
+ band=5 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99999713898 stageRMS=5.65695579499 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=6 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99999713898 stageRMS=5.65695579499 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=7 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99999713898 stageRMS=5.65695579499 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=8 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=7.99999713898 stageRMS=5.65695579499 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+CURRENT BLOCK peak=8
+NEW PEAK setting=0 offset=2510 block=2048 sample=1289 inputMode=2 peak=8 rms=5.65693943644
+ band=1 type=1 frequency=100.006904602 gain=0 Q=0.705991029739 stageBlockPeak=8 stageRMS=5.65693943644 legacySmoothedEndF=100.006919861 legacySmoothedEndQ=0.705991029739
+ band=2 type=2 frequency=400.894348145 gain=0 Q=0.705991029739 stageBlockPeak=8 stageRMS=5.65693943644 legacySmoothedEndF=400.894439697 legacySmoothedEndQ=0.705991029739
+ band=3 type=2 frequency=2004.61047363 gain=0 Q=0.705991029739 stageBlockPeak=8 stageRMS=5.65693943644 legacySmoothedEndF=2004.61083984 legacySmoothedEndQ=0.705991029739
+ band=4 type=4 frequency=7980.49755859 gain=0 Q=0.705991029739 stageBlockPeak=8 stageRMS=5.65693943644 legacySmoothedEndF=7980.50097656 legacySmoothedEndQ=0.705991029739
+ band=5 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=8 stageRMS=5.65693943644 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=6 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=8 stageRMS=5.65693943644 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=7 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=8 stageRMS=5.65693943644 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+ band=8 type=2 frequency=997.768859863 gain=0 Q=0.705991029739 stageBlockPeak=8 stageRMS=5.65693943644 legacySmoothedEndF=997.769104004 legacySmoothedEndQ=0.705991029739
+LEGACY peak=52983838.7595 offset=10602 sample=447 block=1024
+ legacy band=1 coefficientHz=3226.52709961 coefficientQ=8.8839263916
+ legacy band=2 coefficientHz=3277.31884766 coefficientQ=8.8839263916
+ legacy band=3 coefficientHz=3337.25390625 coefficientQ=8.8839263916
+ legacy band=4 coefficientHz=3389.5559082 coefficientQ=8.8839263916
+ legacy band=5 coefficientHz=3311.15698242 coefficientQ=8.8839263916
+ legacy band=6 coefficientHz=3311.15698242 coefficientQ=8.8839263916
+ legacy band=7 coefficientHz=3311.15698242 coefficientQ=8.8839263916
+ legacy band=8 coefficientHz=3311.15698242 coefficientQ=8.8839263916
+CURRENT BLOCK peak=6.30106210709
+NEW PEAK setting=2 offset=10602 block=1024 sample=1020 inputMode=2 peak=8 rms=2.45008985804
+ band=1 type=5 frequency=20000 gain=24 Q=12 stageBlockPeak=7.75368595123 stageRMS=4.65519546584 legacySmoothedEndF=6043.04980469 legacySmoothedEndQ=9.95573043823
+ band=2 type=5 frequency=20000 gain=24 Q=12 stageBlockPeak=7.52273130417 stageRMS=4.05134446326 legacySmoothedEndF=6105.2578125 legacySmoothedEndQ=9.95573043823
+ band=3 type=5 frequency=20000 gain=24 Q=12 stageBlockPeak=7.30369853973 stageRMS=3.63405722788 legacySmoothedEndF=6178.26708984 legacySmoothedEndQ=9.95573043823
+ band=4 type=5 frequency=20000 gain=24 Q=12 stageBlockPeak=7.08749485016 stageRMS=3.31412679195 legacySmoothedEndF=6241.63525391 legacySmoothedEndQ=9.95573043823
+ band=5 type=5 frequency=20000 gain=24 Q=12 stageBlockPeak=6.88481330872 stageRMS=3.03865408703 legacySmoothedEndF=6146.53222656 legacySmoothedEndQ=9.95573043823
+ band=6 type=5 frequency=20000 gain=24 Q=12 stageBlockPeak=6.68620014191 stageRMS=2.81129941937 legacySmoothedEndF=6146.53222656 legacySmoothedEndQ=9.95573043823
+ band=7 type=5 frequency=20000 gain=24 Q=12 stageBlockPeak=6.49162626266 stageRMS=2.61973669275 legacySmoothedEndF=6146.53222656 legacySmoothedEndQ=9.95573043823
+ band=8 type=5 frequency=20000 gain=24 Q=12 stageBlockPeak=6.30106210709 stageRMS=2.45008985804 legacySmoothedEndF=6146.53222656 legacySmoothedEndQ=9.95573043823
+CURRENT BLOCK peak=8.45938682556
+NEW PEAK setting=4 offset=19718 block=1024 sample=1009 inputMode=2 peak=8.45938682556 rms=4.73883784384
+ band=1 type=3 frequency=480.470031738 gain=-15.5462579727 Q=0.324031829834 stageBlockPeak=7.73292922974 stageRMS=5.33450587578 legacySmoothedEndF=289.273956299 legacySmoothedEndQ=0.402579665184
+ band=2 type=2 frequency=175.903106689 gain=-9.05690193176 Q=6.93043851852 stageBlockPeak=7.57999801636 stageRMS=5.28422719401 legacySmoothedEndF=401.857696533 legacySmoothedEndQ=7.81387853622
+ band=3 type=3 frequency=2244.6875 gain=16.1593036652 Q=1.98314058781 stageBlockPeak=7.57999801636 stageRMS=5.28422719401 legacySmoothedEndF=1031.98120117 legacySmoothedEndQ=1.77137815952
+ band=4 type=5 frequency=18006.7792969 gain=-22.7189750671 Q=0.467050224543 stageBlockPeak=7.57999801636 stageRMS=5.28422719401 legacySmoothedEndF=18302.7558594 legacySmoothedEndQ=2.48139739037
+ band=5 type=0 frequency=2688.60058594 gain=-0.0157470703125 Q=2.92254424095 stageBlockPeak=7.57999801636 stageRMS=5.28422719401 legacySmoothedEndF=1197.62780762 legacySmoothedEndQ=2.54640650749
+ band=6 type=2 frequency=54.4392433167 gain=2.99601745605 Q=0.497050732374 stageBlockPeak=7.39617061615 stageRMS=5.13032277074 legacySmoothedEndF=152.696731567 legacySmoothedEndQ=2.50620532036
+ band=7 type=4 frequency=30.5529956818 gain=-17.7970237732 Q=0.363726586103 stageBlockPeak=7.39617061615 stageRMS=5.13032277074 legacySmoothedEndF=29.7915802002 legacySmoothedEndQ=0.435328781605
+ band=8 type=1 frequency=5159.00390625 gain=7.25658130646 Q=1.90308904648 stageBlockPeak=8.45938682556 stageRMS=4.73883784384 legacySmoothedEndF=6525.65039062 legacySmoothedEndQ=3.66620373726
+CURRENT BLOCK peak=12.1969661713
+NEW PEAK setting=4 offset=20742 block=2048 sample=2033 inputMode=2 peak=12.1969661713 rms=7.64759372564
+ band=1 type=3 frequency=480.470031738 gain=-15.5462579727 Q=0.324031829834 stageBlockPeak=7.32315444946 stageRMS=4.92017891623 legacySmoothedEndF=425.131164551 legacySmoothedEndQ=0.342975229025
+ band=2 type=2 frequency=175.903106689 gain=-9.05690193176 Q=6.93043851852 stageBlockPeak=7.29751014709 stageRMS=4.91641637148 legacySmoothedEndF=214.686279297 legacySmoothedEndQ=7.14349937439
+ band=3 type=3 frequency=2244.6875 gain=16.1593036652 Q=1.98314058781 stageBlockPeak=7.29751014709 stageRMS=4.91641637148 legacySmoothedEndF=1861.07434082 legacySmoothedEndQ=1.93206977844
+ band=4 type=5 frequency=18006.7792969 gain=-22.7189750671 Q=0.467050224543 stageBlockPeak=7.29751014709 stageRMS=4.91641637148 legacySmoothedEndF=18078.2949219 legacySmoothedEndQ=0.952882707119
+ band=5 type=0 frequency=2688.60058594 gain=-0.0157470703125 Q=2.92254424095 stageBlockPeak=7.29751014709 stageRMS=4.91641637148 legacySmoothedEndF=2212.21655273 legacySmoothedEndQ=2.83183240891
+ band=6 type=2 frequency=54.4392433167 gain=2.99601745605 Q=0.497050732374 stageBlockPeak=7.26628303528 stageRMS=4.91557936285 legacySmoothedEndF=69.8134155273 legacySmoothedEndQ=0.981571137905
+ band=7 type=4 frequency=30.5529956818 gain=-17.7970237732 Q=0.363726586103 stageBlockPeak=7.26628303528 stageRMS=4.91557936285 legacySmoothedEndF=30.3675727844 legacySmoothedEndQ=0.380994796753
+ band=8 type=1 frequency=5159.00390625 gain=7.25658130646 Q=1.90308904648 stageBlockPeak=12.1969661713 stageRMS=7.64759372564 legacySmoothedEndF=5459.8515625 legacySmoothedEndQ=2.3282995224
+LEGACY FINAL peak=52983838.7595 CORRECTED peak=12.1969661713
+FIXTURE stage=0 peak=8 rms=3.68722482677
+FIXTURE stage=1 peak=8.28244876862 rms=3.61002326205
+FIXTURE stage=2 peak=8.28244876862 rms=3.54531528441
+FIXTURE stage=3 peak=8.53145885468 rms=3.46073094075
+FIXTURE stage=4 peak=8.51833629608 rms=3.45281339306
+FIXTURE stage=5 peak=8.51833629608 rms=3.45169562565
+FIXTURE stage=6 peak=8.51833629608 rms=3.44698932108
+FIXTURE stage=7 peak=8.51833629608 rms=3.44618425251
+FIXTURE stage=8 peak=12.1969661713 rms=3.47221638546

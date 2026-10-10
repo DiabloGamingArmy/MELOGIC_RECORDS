@@ -1,0 +1,42 @@
+▶ A01 full licensing lifecycle and transaction safety
+  ✔ generate → existing redeem → authorize → revoke → unauthorized → grant → authorize (1075.756875ms)
+  ✔ invalid product/edition/expiration, absent target and bounds (55.082417ms)
+  ✔ batch entropy/uniqueness, masked listing and no plaintext in database/audit (400.449583ms)
+  ✔ two users, one capacity; same user retry; revocation race serializes (6519.233584ms)
+  ✔ expired/revoked/wrong product/edition keys and disabled product reject (146.246333ms)
+✔ A01 full licensing lifecycle and transaction safety (9343.465125ms)
+✔ A01 each privileged operation rejects normal, removed, disabled and stale administrators (4.561792ms)
+✔ S256 challenge uses the RFC 7636 vector (1.165ms)
+✔ desktop grants reject malformed requests before IO (1.13225ms)
+✔ Firestore transactions bind proof, UID, expiry and one-time issuance (6383.123583ms)
+✔ deployed callable handlers resolve owner/admin roles without migrated booleans; full licensing UI operations (4503.328ms)
+✔ license input is opaque, bounded and trimmed without changing identity (2.245166ms)
+▶ L01.1 entitlement and redemption transactions
+  ✔ authentication alone does not authorize; no anonymous key grant (848.303334ms)
+  ✔ invalid, wrong product/edition, expired, revoked, corrupt capacity fail closed (1075.825209ms)
+  ✔ concurrent redemption admits one UID; retry idempotent; no raw key stored (3301.354708ms)
+  ✔ expiry, wrong product and absent edition close authorization (80.58025ms)
+✔ L01.1 entitlement and redemption transactions (5313.030042ms)
+✔ strict SemVer, bounded identities and spoofing input rejected (1.413666ms)
+✔ selection, policy, response allowlist and build-only ordering (5.229584ms)
+✔ oversized active catalog fails closed (0.676042ms)
+✔ malformed catalog rows ignored (1.077583ms)
+✔ publication enforces immutable identity and monotonic build allocation (1.602ms)
+[2026-10-10T04:29:43.107Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x841ac67c error. Code: 7 Message: 7 PERMISSION_DENIED:
+false for 'create' @ L1493, false for 'create' @ L2658, false for 'update' @ L1493, false for 'update' @ L2658
+[2026-10-10T04:29:43.202Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x841ac67e error. Code: 7 Message: 7 PERMISSION_DENIED:
+false for 'create' @ L1493, false for 'create' @ L2658, false for 'update' @ L1493, false for 'update' @ L2658
+[2026-10-10T04:29:43.276Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x841ac680 error. Code: 7 Message: 7 PERMISSION_DENIED:
+false for 'create' @ L1493, false for 'create' @ L2658, false for 'update' @ L1493, false for 'update' @ L2658
+✔ Firestore emulator enforces release privacy and denies client publication (5971.96325ms)
+✔ release selection uses real Firestore and canonical entitlement (3899.913708ms)
+✔ callable identity checks revocation and cannot be spoofed (0.493083ms)
+✔ release build configuration rejects accidental public identity (196.594417ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 26
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10252.8415

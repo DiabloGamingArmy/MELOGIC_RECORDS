@@ -5,11 +5,14 @@
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-osc1-smooth-basic-shapes-v22.3
 #include "core/Engine.h"
+#include "core/dsp/Unison.h"
 #include "core/dsp/FastMath.h"
 #include "core/dsp/Filter.h"
 #include "core/RealtimeThreadPolicy.h"
 #include "core/preset/Patch.h"
+#include "core/preset/StateCodec.h"
 #include "tests/OptimizedPathGolden.h"
+#include "tests/FilterResponseTests.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -69,7 +72,7 @@ void registryAndPatches() {
     check(std::abs(engine.parameterState()[static_cast<std::size_t>(ParameterId::Waveform)]-0.5f)<1e-6f,
           "OSC1 WT position preserves fractional values");
     std::ifstream input(ORIGAMI_INIT_PATCH);std::ostringstream text;text<<input.rdbuf();check(bool(input),"read canonical Init");
-    Patch patch;std::string error;check(parsePatch(text.str(),patch,error),"parse Init");check(patch.parameters==defaultParameters(),"Init equals defaults");
+    Patch patch;std::string error;check(parsePatch(text.str(),patch,error),"parse Init");check(patch.parameters==canonicalInitState().parameters,"Init JSON equals canonical authored parameters");
     Patch decoded;check(parsePatch(serializePatch(patch),decoded,error),"JSON round trip");check(decoded.parameters==patch.parameters && decoded.name=="Init","exact float round trip");
     patch.name="MCT 雪 \"one\"\n";check(parsePatch(serializePatch(patch),decoded,error) && decoded.name==patch.name,"UTF-8 and escaping");
     const auto before=decoded.parameters;
@@ -77,6 +80,47 @@ void registryAndPatches() {
     std::string bad=text.str();bad.replace(bad.find("8000"),4,"1e999");check(!parsePatch(bad,decoded,error),"huge exponent rejected");
     bad=text.str();bad.insert(bad.find("\"osc.1.level\""),"\"osc.1.waveform\": 2,\n");check(!parsePatch(bad,decoded,error),"duplicate parameters rejected");
     check(engine.applyPatchState(patch.parameters),"apply patch state");auto invalid=patch.parameters;invalid[0]=std::numeric_limits<float>::quiet_NaN();check(!engine.applyPatchState(invalid) && engine.parameterState()==patch.parameters,"invalid state transactional");
+}
+void canonicalInitAudit() {
+    const auto init=canonicalInitState();
+    check(validInstrumentState(init),"canonical Init is valid");
+    check(init.oscillators[0].id==1 && init.oscillators[0].enabled && init.nextId==2,"Init stable single oscillator identity");
+    const auto& o=init.oscillators[0];
+    check(o.tableId==dsp::BuiltinWavetableId::BasicShapes && o.wtPosition==1.f/3.f && o.waveform==1,"Init unmixed canonical saw frame");
+    check(o.octave==0 && o.semitone==0 && o.fineCents==0 && o.unison==1 && o.detuneCents==0 && o.blend==.5f && o.pan==0 && o.level==1,"Init exact oscillator controls");
+    check(o.processCount==0 && o.routeCount==0 && oscBusSend(o,mainBusId)==1,"Init clean direct output");
+    for(std::size_t i=1;i<init.oscillators.size();++i) check(!init.oscillators[i].id && !init.oscillators[i].enabled,"no extra Init oscillators");
+    const auto v=[&](ParameterId id){return init.parameters[std::size_t(id)];};
+    check(v(ParameterId::Attack)==.01f && v(ParameterId::Decay)==.5f && v(ParameterId::Sustain)==1 && v(ParameterId::Release)==0,"Init ENV1 exact authored values");
+    check(init.modulation.env2.release==.25f && init.modulation.env3.sustain==.7f,"ENV2 and ENV3 retain low-level defaults");
+    for(const auto& f:init.modulation.synthFilters.filters) check(!f.id,"no Init Synth Filters");
+    for(const auto& r:init.modulation.routes) check(!r.id,"no Init modulation");
+    const auto bytes=encodeInstrumentState(init);InstrumentState decoded;check(decodeInstrumentState(bytes.data(),bytes.size(),decoded) && encodeInstrumentState(decoded)==encodeInstrumentState(init),"Init binary round trip");
+    check(toNormalized(ParameterId::Release,0)==0 && fromNormalized(ParameterId::Release,0)==0,"zero release mapping finite and exact");
+    for(float seconds:{.001f,.25f,1.f,20.f}) check(std::abs(fromNormalized(ParameterId::Release,toNormalized(ParameterId::Release,seconds))-seconds)<.00005f,"positive release physical value round trip");
+    for(int note:{36,60,84}) {
+        auto e=std::make_unique<OrigamiEngine>();check(e->restoreInstrumentState(init),"Init restore");prepare(*e,48000,2);e->noteOn(note,1);
+        std::array<float,256> l{},r{};float* buffers[]{l.data(),r.data()};double peak=0,power=0,mean=0;int count=0;
+        for(int block=0;block<188;++block) {check(e->process(buffers,2,256),"Init stereo render");if(block>93) for(int i=0;i<256;++i){check(std::isfinite(l[i]) && l[i]==r[i],"Init finite symmetric centered output");peak=std::max(peak,double(std::abs(l[i])));power+=l[i]*l[i];mean+=l[i];++count;}}
+        const double db=20*std::log10(peak);check(db>-11.2 && db<-10.2,"Init nominal peak target tolerance");check(std::abs(mean/count)<.001,"Init no DC regression");
+        std::cout<<"Init MIDI "<<note<<" peak="<<peak<<" dB="<<db<<" RMS="<<std::sqrt(power/count)<<" DC="<<mean/count<<'\n';
+        e->noteOff(note);e->process(buffers,2,256);check(e->activeVoiceCount()==0,"Init zero release completes in existing one-sample segment");
+    }
+    // Independent raw-table probe closes the transparent gain equation.
+    dsp::WavetableOscillator raw;double rawPeak=0,rawPower=0;int rawCount=0;
+    for(int sample=0;sample<48128;++sample) {const float x=raw.nextSimple(bank(),dsp::midiFrequency(60),48000,1.f/3.f);if(sample>=24064){rawPeak=std::max(rawPeak,double(std::abs(x)));rawPower+=x*x;++rawCount;}}
+    std::cout<<"Init gain stages MIDI60 raw="<<rawPeak<<" rawRMS="<<std::sqrt(rawPower/rawCount)<<" postENV/level="<<rawPeak<<" stereoPostRoute="<<rawPeak*.70710678<<" previousMaster0.2="<<rawPeak*.70710678*.2<<" calibratedMaster0.35="<<rawPeak*.70710678*.35<<'\n';
+    auto e=std::make_unique<OrigamiEngine>();e->restoreInstrumentState(init);prepare(*e);e->noteOn(60,1);auto reference=render(*e,48000,256);
+    for(std::size_t block:{1u,7u,127u,511u,1024u}) {e->reset();e->noteOn(60,1);check(render(*e,48000,block)==reference,"Init deterministic block partitions");}
+    for(unsigned unison:{1u,4u,8u,16u}) for(bool chord:{false,true}) {
+        auto s=init;s.oscillators[0].unison=unison;s.parameters[std::size_t(ParameterId::OscUnison)]=float(unison);s.oscillators[0].detuneCents=12;s.parameters[std::size_t(ParameterId::OscDetune)]=12;
+        check(e->restoreInstrumentState(s),"Init unison/chord restore");e->reset();e->noteOn(48,1);if(chord) for(int n:{55,60,64}) e->noteOn(n,1);
+        prepare(*e,48000,2);e->noteOn(48,1);if(chord)for(int n:{55,60,64})e->noteOn(n,1);
+        std::array<float,256> left{},right{};float* b[]{left.data(),right.data()};double peak=0;
+        for(int block=0;block<188;++block){e->process(b,2,256);for(float x:left){check(std::isfinite(x),"Init chord/unison finite");peak=std::max(peak,double(std::abs(x)));}}
+        std::cout<<"Init stereo headroom unison="<<unison<<" chord="<<chord<<" peak="<<peak<<'\n';
+        check(peak<1,"representative stereo Init chord/unison avoids clipping");
+    }
 }
 void envelopeTiming() {
     for(double rate:{44100.,48000.,96000.}) {
@@ -187,6 +231,7 @@ void signalBehavior() {
     engine.reset();engine.noteOn(69,1);const auto loud=energy(render(engine,5000));
     engine.reset();engine.noteOn(69,.5f);const auto quiet=energy(render(engine,5000));
     check(std::abs(quiet/loud-.25)<1e-5,"linear velocity amplitude");
+    {auto m=engine.instrumentState().modulation;m.filterEnabled=true;check(engine.setModulationState(m),"explicit low-pass fixture");}
     set(engine,ParameterId::Cutoff,20);engine.reset();engine.noteOn(100,1);const double low=energy(render(engine,24000));
     set(engine,ParameterId::Cutoff,20000);engine.reset();engine.noteOn(100,1);const double high=energy(render(engine,24000));
     check(low<high*.01,"low-pass attenuates high frequencies");
@@ -396,7 +441,10 @@ void spectralCacheConcurrentEviction() {
             const float output=oscillator.next(table,1.0,400,1.0f/3.0f,makePlan(key));
             bool valid=std::isfinite(output) && (std::abs(output-lookup(expected[key]))<=1.0e-6f || std::abs(output-lookup(dry))<=1.0e-6f);
             if(valid && std::abs(output-lookup(expected[key]))<=1.0e-6f) exactReads.fetch_add(1,std::memory_order_relaxed);
-            for(std::size_t back=1;!valid && back<=sample/8 && back<=512;++back)
+            // A busy compiler can legitimately hold a reader's last whole
+            // table for longer than 512 key changes. Check every seeded
+            // candidate; the safety property is that no slot is torn.
+            for(std::size_t back=1;!valid && back<=sample/8 && back<keys;++back)
                 valid=std::abs(output-lookup(expected[(key+keys-back)%keys]))<=1.0e-6f;
             if(!valid) failed.store(true,std::memory_order_relaxed);
         }
@@ -407,6 +455,87 @@ void spectralCacheConcurrentEviction() {
     check(exactReads.load()>0,"concurrent eviction still serves requested waveforms");
     // Requests own their source samples; table destruction is safe even if
     // the worker still has queued requests from this temporary generation.
+}
+
+void randomSpectralMorphAudit() {
+    using namespace mct::origami::dsp;
+    const auto table=Wavetable::builtIns();
+    const auto& source=table.frames[1].bands[7].samples;
+    for(const auto type:{OscProcessType::RandAmp,OscProcessType::RandSparse}) {
+        OscProcessPlan low{},high{};
+        low.count=high.count=1;
+        low.stages[0]={type,12.0f/32.0f,0x4242u};
+        high.stages[0]={type,13.0f/32.0f,0x4242u};
+        auto mid=low;mid.stages[0].amount=12.5f/32.0f;
+        std::array<float,2048> a{},b{};
+        renderProcessedFrame2048(source.data(),a.data(),low);
+        renderProcessedFrame2048(source.data(),b.data(),high);
+        constexpr double phase=0.137;
+        const double position=phase*2048.0;
+        const auto index=static_cast<std::size_t>(position);
+        const float fraction=static_cast<float>(position-double(index));
+        const auto read=[&](const auto& wave){return wave[index]+fraction*(wave[(index+1)%2048]-wave[index]);};
+        const float expected=0.5f*(read(a)+read(b));
+        WavetableOscillator osc;
+        std::array<SpectralReadHint,2> morphStorage{}; // a Voice provides this in its cold storage
+        osc.setMorphHints(morphStorage.data());
+        bool ready=false;
+        for(int attempt=0;attempt<500 && !ready;++attempt) {
+            osc.reset(phase);
+            const float actual=osc.next(table,93.75,48000,1.0f/3.0f,mid);
+            ready=std::abs(actual-expected)<1.0e-5f;
+            if(!ready) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        check(ready,"random spectral magnitude blends neighboring prepared frames");
+    }
+}
+
+// A moving random amount crossing a prepared key must stay on the blend of its
+// neighbours: the full-weight endpoint never fades back from the previous key.
+void randomSpectralMorphCrossingAudit() {
+    using namespace mct::origami::dsp;
+    const auto table=Wavetable::builtIns();
+    const auto& source=table.frames[1].bands.back().samples; // the band a near-0 Hz read uses (all harmonics)
+    for(const auto type:{OscProcessType::RandAmp,OscProcessType::RandSparse}) {
+        constexpr double phase=0.137,frequency=1.0e-4; // the read phase holds (5e-5 cycles of drift)
+        const auto planAt=[type](float amount){ OscProcessPlan plan{}; plan.count=1; plan.stages[0]={type,amount,0x4242u}; return plan; };
+        const double position=phase*2048.0;
+        const auto index=static_cast<std::size_t>(position);
+        const float fraction=static_cast<float>(position-double(index));
+        std::array<float,15> reference{};
+        for(int k=10;k<=14;++k) {
+            std::array<float,2048> frame{};
+            renderProcessedFrame2048(source.data(),frame.data(),planAt(float(k)/32.0f));
+            reference[std::size_t(k)]=frame[index]+fraction*(frame[(index+1)%2048]-frame[index]);
+        }
+        WavetableOscillator osc;
+        std::array<SpectralReadHint,2> morphStorage{};
+        osc.setMorphHints(morphStorage.data());
+        bool prepared=true; // every key of the sweep is cached before it is measured
+        for(int k=10;k<=14;++k) {
+            bool ready=false;
+            for(int attempt=0;attempt<500 && !ready;++attempt) {
+                osc.reset(phase);
+                ready=std::abs(osc.next(table,frequency,48000,1.0f/3.0f,planAt(float(k)/32.0f))-reference[std::size_t(k)])<1.0e-5f;
+                if(!ready) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            prepared=prepared && ready;
+        }
+        check(prepared,"random morph crossing: neighbouring keys prepared");
+        float maxStep=0.0f,maxDeviation=0.0f;
+        for(int k=10;k<14;++k) maxStep=std::max(maxStep,std::abs(reference[std::size_t(k+1)]-reference[std::size_t(k)]));
+        osc.reset(phase);
+        constexpr int samples=24000; // 10.5 -> 13.5 keys in 0.5 s: three crossings
+        for(int n=0;n<samples;++n) {
+            const float coordinate=10.5f+3.0f*float(n)/float(samples);
+            const float actual=osc.next(table,frequency,48000,1.0f/3.0f,planAt(coordinate/32.0f));
+            const auto lower=static_cast<std::size_t>(coordinate);
+            const float blend=coordinate-float(lower);
+            const float expected=reference[lower]+blend*(reference[lower+1]-reference[lower]);
+            maxDeviation=std::max(maxDeviation,std::abs(actual-expected));
+        }
+        check(maxStep>1.0e-3f && maxDeviation<0.2f*maxStep,"random morph crossing a key never steps back to the previous frame");
+    }
 }
 
 void oscillatorGenerationCoherenceAudit() {
@@ -1112,19 +1241,22 @@ void nestedModulationRealtimeAudit() {
 // sizes 32 / 256 / 1000, deterministically.
 void optimizedPathGoldenAudit() {
     const bool print=std::getenv("ORIGAMI_PRINT_GOLDEN")!=nullptr;
-    // Scenario 3 re-baselined deliberately by mct-origami-nested-modulation-
-    // manual-qa: a spectral key switch now crossfades over 2 ms instead of
-    // stepping (was 0x0186663dd655c3d1). The other five are unchanged.
+    // Scenario 3 uses interpolated random spectral frames; its old quantized
+    // hash was 0x004177b6dc1873d3 (and 0x8ab144d7b625d5a0 while a key crossing
+    // still faded the full-weight endpoint back from the previous key). The
+    // other paths retain their pinned single-lane hashes. Unison repair
+    // deliberately re-baselines scenarios 0 (8 lanes) and 5 (3 lanes):
+    // stereo ensembles, independent phases and compensated summing.
     static constexpr std::uint64_t expected[golden::scenarioCount]{
-        0x8b54461996998697ull,0xf2cb0320aab297acull,0x69eb600ae29a68dbull,
-        0x004177b6dc1873d3ull,0x47585a3f316d4135ull,0xa740b1d6675595c3ull};
+        0x053118a75389cdb9ull,0xf2cb0320aab297acull,0x69eb600ae29a68dbull,
+        0xf726293442577439ull,0x47585a3f316d4135ull,0xcf211d5863c3b2efull};
     for(int s=0;s<golden::scenarioCount;++s) {
         const auto a=golden::render(s,32),b=golden::render(s,256),c=golden::render(s,1000),again=golden::render(s,256);
         if(print) std::cout<<"GOLDEN "<<golden::scenarioName(s)<<" 0x"<<std::hex<<b.hash<<std::dec<<"\n";
         check(a.finite && b.finite && c.finite,"golden render stays finite");
         check(a.hash==b.hash && b.hash==c.hash,"optimised paths are block-size independent (32 / 256 / 1000)");
         check(again.hash==b.hash,"optimised paths render deterministically");
-        check(b.hash==expected[s],"optimised paths match the pre-optimisation golden render");
+        check(b.hash==expected[s],"paths match pinned single-lane or repaired-unison golden render");
     }
 }
 
@@ -1211,6 +1343,209 @@ void wavetableHandoffAudit() {
     check(!actual.wavetableHandoffPending(),"released slot accepts a new table");
     actual.collectRetiredWavetables();
 }
+void sourceInstanceRealtimeAudit() {
+    auto e=std::make_unique<OrigamiEngine>();check(e->prepare(48000,256,2),"instance RT prepare");
+    auto m=e->instrumentState().modulation;
+    std::array<ModSource,maxSourceInstances> sources{};
+    for(std::size_t i=0;i<maxSourceInstances;++i) {
+        const auto f=static_cast<SourceFamily>(i%7+1);sources[i]=addSourceInstance(m,f);
+        auto& a=m.instances[i];a.lfo.mode=i%2 ? LfoMode::Loop : LfoMode::Free;a.lfo.stereo=.7f;a.random.rateHz=40;
+        m.routes[i]={m.nextRouteId++,true,sources[i],{ModDestination::Level,1,0},.01f,false};
+    }
+    // A nested rate uses stable instance identity, including through Nodes.
+    m.routes[0].destination={ModDestination::LfoRate,0,std::uint32_t(sources[1])};
+    check(e->setModulationState(m),"full pool installed");e->reset();
+    std::array<float,256> left{},right{};float* out[]{left.data(),right.data()};
+    allocations.store(0);frees.store(0);guardAllocations.store(true);
+    bool okay=true;
+    for(int n=0;n<16;++n) okay &= e->noteOn(48+n,.6f);
+    for(int block=0;block<100;++block) okay &= e->process(out,2,256);
+    for(int n=0;n<16;++n) okay &= e->noteOff(48+n);
+    okay &= e->process(out,2,256);e->emergencyResetRuntime();
+    guardAllocations.store(false);
+    check(okay,"32-source pool renders, releases and resets under load");
+#ifndef ORIGAMI_SANITIZED
+    check(allocations.load()==0 && frees.load()==0,"full pool has no audio-thread allocation or free");
+#endif
+    for(float x:left) check(std::isfinite(x),"full pool output finite");
+    e->noteOn(60,.8f);e->process(out,2,256);
+    const auto& visual=e->runtimeVisualizationSnapshot();
+    for(std::size_t i=0;i<maxSourceInstances;++i) check(visual.instanceIds[i]==instanceIdOf(sources[i]),"telemetry retains instance identity");
+    const auto r1=modulationSourceSlot(sources[2],m),r2=modulationSourceSlot(sources[9],m);
+    check(visual.routeSources[r1]!=visual.routeSources[r2],"additional Random sources have independent streams");
+    check(removeSourceInstance(m,sources[2]),"live deletion accepted");const auto fresh=addSourceInstance(m,SourceFamily::Random);
+    check(fresh!=sources[2] && e->setModulationState(m),"live recreation uses a new identity");
+    allocations.store(0);frees.store(0);guardAllocations.store(true);okay=e->process(out,2,256);guardAllocations.store(false);
+    check(okay,"live source pool handoff renders");
+#ifndef ORIGAMI_SANITIZED
+    check(allocations.load()==0 && frees.load()==0,"pool mailbox adoption and recompilation allocate nothing");
+#endif
+}
+
+void correctiveSpectralPreview() {
+    std::array<float,2048> input{},left{},right{},middle{};
+    for(std::size_t i=0;i<input.size();++i) input[i]=2.0f*float(i)/float(input.size())-1.0f;
+    for(const auto type:{dsp::OscProcessType::RandAmp,dsp::OscProcessType::RandSparse}) {
+        dsp::OscProcessPlan plan;plan.count=1;plan.stages[0]={type,0,0xabcdefu};
+        for(int boundary=1;boundary<32;++boundary) {
+            const float key=float(boundary)/32;
+            plan.stages[0].amount=key-1e-5f;dsp::renderOscillatorPreview2048(input.data(),left.data(),plan);
+            plan.stages[0].amount=key+1e-5f;dsp::renderOscillatorPreview2048(input.data(),right.data(),plan);
+            float delta=0;for(std::size_t i=0;i<input.size();++i) delta=std::max(delta,std::abs(left[i]-right[i]));
+            check(delta<.002f,"random preview is continuous across every preparation boundary");
+        }
+        for(int key=0;key<32;++key) {
+            plan.stages[0].amount=float(key)/32;dsp::renderProcessedFrame2048(input.data(),left.data(),plan);
+            plan.stages[0].amount=float(key+1)/32;dsp::renderProcessedFrame2048(input.data(),right.data(),plan);
+            plan.stages[0].amount=(float(key)+.37f)/32;dsp::renderOscillatorPreview2048(input.data(),middle.data(),plan);
+            for(std::size_t i=0;i<input.size();++i) check(std::abs(middle[i]-(left[i]+.37f*(right[i]-left[i])))<2e-6f,"preview represents DSP endpoint interpolation exactly");
+        }
+    }
+    check(dsp::oscillatorPreviewPhase(383,384)<1.0f,"visible waveform terminal phase cannot wrap to first point");
+    const float last=2*dsp::oscillatorPreviewPhase(383,384)-1;
+    check(last>.99f,"saw viewport ends on final positive sample rather than artificial negative edge");
+}
+
+void oscillatorRouteMixerAudit() {
+    const auto fixture=std::string(__FILE__).substr(0,std::string(__FILE__).find_last_of('/'))+"/fixtures/";
+    std::ifstream patch(fixture+"synth-serial-v36.bin",std::ios::binary);std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(patch)),{});InstrumentState legacy;
+    check(!bytes.empty() && decodeInstrumentState(bytes.data(),bytes.size(),legacy),"actual v36 fixture migrates");
+    check(legacy.modulation.synthFilters.inputs[0].buses[0].filter && legacy.modulation.synthFilters.inputs[0].buses[0].level==1,"v36 single edge becomes unity typed send");
+    auto old=std::make_unique<OrigamiEngine>();check(old->prepare(48000,256,2) && old->restoreInstrumentState(legacy),"migrated fixture restores");old->noteOn(60,.7f);
+    std::ifstream reference(fixture+"synth-serial-v36.f32",std::ios::binary);std::array<float,256> l{},r{},expected{};float* output[]{l.data(),r.data()};
+    for(int block=0;block<16;++block) {check(old->process(output,2,256),"legacy audio renders");for(auto* channel:output) {reference.read(reinterpret_cast<char*>(expected.data()),sizeof(expected));check(bool(reference),"legacy reference exists");for(int n=0;n<256;++n) check(std::abs(channel[n]-expected[n])<1e-6f,"v36 audio matches pre-change engine");}}
+    const auto make=[] {auto e=std::make_unique<OrigamiEngine>();check(e->prepare(48000,256,2),"route fixture prepares");e->setMasterAfterFx(true);return e;};
+    for(bool chain:{false,true}) {
+        auto dry=make(),wet=make(),parallel=make();auto s=wet->instrumentState();const auto f=addSynthFilter(s.modulation);check(insertSynthFilter(s.modulation,s.oscillators,f,1),"wet route inserts");s.modulation.synthFilters.filters[0].values={1200,.2f,0,1,0};
+        if(chain) {const auto next=addSynthFilter(s.modulation);check(insertSynthFilterAfter(s.modulation,next,f),"serial chain inserts");s.modulation.synthFilters.filters[1].values.cutoff=2400;}
+        check(wet->restoreInstrumentState(s),"wet fixture restores");auto p=s;const auto bus=addBus(p.buses);auto routing=oscillatorOutputRouting(p.modulation,p.oscillators[0]);routing.busRoutes[0].level=.25f;routing.busRoutes[routing.busRouteCount++]={bus,.5f};
+        check(setOscillatorOutputRouting(p.modulation,routing) && parallel->restoreInstrumentState(p),"parallel fixture restores");
+        dry->noteOn(60,.2f);wet->noteOn(60,.2f);parallel->noteOn(60,.2f);
+        std::array<float,256> dl{},dr{},wl{},wr{},pl{},pr{},bl{},br{};float* d[]{dl.data(),dr.data()},*w[]{wl.data(),wr.data()},*o[]{pl.data(),pr.data()};std::array<float*,14> aux{};aux[0]=bl.data();aux[1]=br.data();
+        for(int block=0;block<16;++block) {check(dry->process(d,2,256) && wet->process(w,2,256) && parallel->beginHostBlock(2) && parallel->processSpan(o,2,256,aux.data()),"parallel buses render");parallel->endHostBlock();for(int n=0;n<256;++n) {check(std::abs(pl[n]-(.25f*dl[n]+wl[n]))<3e-6f && std::abs(pr[n]-(.25f*dr[n]+wr[n]))<3e-6f,"dry plus filtered sum is unnormalized");check(std::abs(bl[n]-.5f*dl[n])<3e-6f && std::abs(br[n]-.5f*dr[n])<3e-6f,"third bus gets independent half-level dry send");}}
+        // Prepared gain adoption is smooth and allocation-free during a held note.
+        auto mod=parallel->instrumentState().modulation;routing=oscillatorOutputRouting(mod,p.oscillators[0]);for(std::size_t n=0;n<routing.busRouteCount;++n) routing.busRoutes[n].level=0;
+        check(setOscillatorOutputRouting(mod,routing) && parallel->setModulationState(mod),"held gains publish");
+        allocations.store(0);frees.store(0);guardAllocations.store(true);const bool ok=parallel->process(o,2,256);parallel->emergencyResetRuntime();guardAllocations.store(false);
+        check(ok,"held gain adoption renders");
+#ifndef ORIGAMI_SANITIZED
+        check(!allocations.load() && !frees.load(),"gain adoption/render/Panic allocate and free zero objects");
+#endif
+    }
+    // Pure bus gain smoothing can be checked sample-for-sample against an unchanged held oscillator.
+    auto control=make(),smooth=make();control->noteOn(60,.2f);smooth->noteOn(60,.2f);std::array<float,256> a{},b{},ar{},br{};float* x[]{a.data(),ar.data()},*y[]{b.data(),br.data()};check(control->process(x,2,256) && smooth->process(y,2,256),"held smoothing fixtures warm");
+    auto s=smooth->instrumentState();auto routing=s.oscillators[0];routing.busRoutes[0].level=0;check(setOscillatorOutputRouting(s.modulation,routing) && smooth->setModulationState(s.modulation),"zero gain publishes");check(control->process(x,2,256) && smooth->process(y,2,256),"smoothed gain renders");for(int n=0;n<256;++n) check(std::abs(b[n]-a[n]*std::max(0.f,1-float(n+1)/240))<3e-6f,"bus gain follows continuous five millisecond ramp");
+}
+
+void synthCombStorageLifecycleAudit() {
+    auto engine=std::make_unique<OrigamiEngine>();check(engine->prepare(48000,256,2),"Comb pool prepares without a delay bank");check(engine->synthCombStorageBytes()==0,"zero Comb uses zero heap delay bytes");
+    auto state=engine->instrumentState();SynthFilterId previous=0;
+    for(int i=0;i<8;++i) {const auto id=addSynthFilter(state.modulation);auto& f=state.modulation.synthFilters.filters[i];f.type=dsp::FilterType::Comb;f.values={370,.85f,0,1,1,0};if(previous) insertSynthFilterAfter(state.modulation,id,previous);else insertSynthFilter(state.modulation,state.oscillators,id,1);previous=id;
+        check(engine->setModulationState(state.modulation),"Comb writer allocates each newly used slot before publication");check(engine->synthCombStorageBytes()==std::size_t(i+1)*307712,"Comb banks grow by exact bounded per-slot budget");}
+    std::array<float,256> left{},right{};float* output[]{left.data(),right.data()};allocations.store(0);frees.store(0);guardAllocations.store(true);
+    bool okay=true;for(int i=0;i<32;++i) {okay=engine->noteOn(48+i,.1f) && okay;okay=engine->process(output,2,256) && okay;}const auto tracked=engine->runtimeVisualizationSnapshot();const bool tracking=std::abs(tracked.synthFilters[0].cutoff-370.f*std::pow(2.f,19.f/12.f))<1.f;engine->allNotesOff();for(int i=0;i<32;++i) okay=engine->process(output,2,256) && okay;engine->emergencyResetRuntime();okay=engine->process(output,2,256) && okay;guardAllocations.store(false);
+    check(tracking,"Comb note keytracking reaches actual effective delay-frequency telemetry");check(okay && !engine->activeVoiceCount(),"maximum Comb bank voice steals, releases and Panic are deterministic");
+#ifndef ORIGAMI_SANITIZED
+    check(!allocations.load() && !frees.load(),"128 stereo Comb stages lifecycle allocates/frees nothing on audio");
+#endif
+    for(float sample:left) check(sample==0,"Comb Panic clears all tails exactly");
+    check(engine->synthCombStorageBytes()==2461696,"Panic retains bounded banks without freeing them");
+    for(int pass=0;pass<3;++pass) for(const auto& info:dsp::filterTypes) {
+        for(auto& f:state.modulation.synthFilters.filters) f.type=info.id;
+        check(engine->setModulationState(state.modulation),"rapid canonical type switches preserve topology and identities");allocations.store(0);frees.store(0);guardAllocations.store(true);engine->noteOn(60,.1f);const bool rendered=engine->process(output,2,256);guardAllocations.store(false);check(rendered,"rapid all-type adoption renders finite initialized state");
+#ifndef ORIGAMI_SANITIZED
+        check(!allocations.load() && !frees.load(),"type adoption never allocates or frees delay storage on audio");
+#endif
+        for(float value:left) check(std::isfinite(value) && std::abs(value)<8,"type switches do not explode");
+    }
+    for(auto& f:state.modulation.synthFilters.filters) f.type=dsp::FilterType::LowPass;
+    check(engine->setModulationState(state.modulation) && engine->prepare(48000,256,2) && engine->synthCombStorageBytes()==0,"stopped reprepare releases unused Comb banks");
+    std::vector<float> l(2404),r(2404);SynthFilterRuntime runtime;runtime.adopt(1,dsp::FilterType::Comb);runtime.comb[0].bind(l.data(),l.size());runtime.comb[1].bind(r.data(),r.size());runtime.combCoefficients=dsp::combDesign(48000,370,.9f);
+    for(int i=0;i<10000;++i) {runtime.process(i==0?.1f:0.f,{},0,1,false);check(runtime.process(0,{},0,1,true)==0,"stereo Comb histories stay independent");}
+    for(int n=0;n<100000;++n) runtime.process(0,{},0,1,false);check(runtime.quiet(),"Comb silence naturally drains the damped feedback tail");
+    runtime.comb[0].lowpass=std::numeric_limits<float>::quiet_NaN();check(std::isfinite(runtime.process(0,{},0,1,false)),"Comb invalid recursive state recovers to finite output");
+    runtime.adopt(2,dsp::FilterType::Comb);for(int i=0;i<3000;++i) check(runtime.process(0,{},0,1,false)==0,"new identity/retrigger cannot inherit a Comb tail");
+}
+
+void multimodeSynthLifecycleAudit() {
+    const auto make=[](const ModulationState& mod) {auto engine=std::make_unique<OrigamiEngine>();check(engine->prepare(48000,256,2) && engine->setModulationState(mod),"multimode engine prepares");engine->setMasterAfterFx(true);return engine;};
+    for(const auto& info:dsp::filterTypes) if(info.synth) {
+        auto fixture=std::make_unique<OrigamiEngine>();auto state=fixture->instrumentState();const auto id=addSynthFilter(state.modulation);check(insertSynthFilter(state.modulation,state.oscillators,id,1),"multimode route authors");auto& filter=state.modulation.synthFilters.filters[0];filter.type=info.id;filter.values={600,.2f,0,1,1,info.gain?6.f:0.f};
+        auto poly=make(state.modulation);std::array<std::unique_ptr<OrigamiEngine>,3> solo;std::array<std::array<float,256>,3> left{},right{};std::array<float,256> pl{},pr{};float* output[]{pl.data(),pr.data()};
+        for(int i=0;i<3;++i) {solo[i]=make(state.modulation);solo[i]->noteOn(60+i*4,.1f);poly->noteOn(60+i*4,.1f);}
+        for(int block=0;block<6;++block) {check(poly->process(output,2,256),"multimode poly renders");for(int i=0;i<3;++i){float* out[]{left[i].data(),right[i].data()};check(solo[i]->process(out,2,256),"multimode solo renders");}for(int n=0;n<256;++n) check(std::abs(pl[n]-left[0][n]-left[1][n]-left[2][n])<4e-6f && std::abs(pr[n]-right[0][n]-right[1][n]-right[2][n])<4e-6f,"every Synth type owns independent polyphonic state");}
+        const auto visual=poly->runtimeVisualizationSnapshot();check(visual.synthFilterIds[0]==id && std::abs(visual.synthFilters[0].resonance-.2f)<.001f && std::abs(visual.synthFilters[0].gain-filter.values.gain)<.001f,"every type publishes actual smoothed Q and Gain from the observed voice");
+        auto mod=state.modulation;const auto env=addSourceInstance(mod,SourceFamily::Envelope);const auto lfo=addSourceInstance(mod,SourceFamily::Lfo);mod.instances[sourceInstanceSlot(mod,lfo)].lfo.mode=LfoMode::Loop;mod.routes[0]={mod.nextRouteId++,true,env,{ModDestination::SynthCutoff,0,id},-.4f,false};mod.routes[1]={mod.nextRouteId++,true,lfo,{ModDestination::SynthResonance,0,id},.2f,false};check(poly->setModulationState(mod),"all types retain canonical modulation");for(int i=0;i<24;++i) poly->noteOn(48+i,.1f);
+        allocations.store(0);frees.store(0);guardAllocations.store(true);bool ok=true;for(int i=0;i<8;++i) ok=poly->process(output,2,256) && ok;
+        const auto effectiveVisual=poly->runtimeVisualizationSnapshot();const bool effectiveChanged=effectiveVisual.synthFilterIds[0]==id && std::abs(effectiveVisual.synthFilters[0].resonance-filter.values.resonance)>.001f;
+        poly->emergencyResetRuntime();guardAllocations.store(false);check(effectiveChanged,"every type telemetry reflects modulated per-voice Resonance instead of stale authored Q");check(ok && poly->activeVoiceCount()==0,"multimode adoption, voice steal and Panic complete");
+#ifndef ORIGAMI_SANITIZED
+        check(!allocations.load() && !frees.load(),"every type adoption/render/Panic has zero allocations and frees");
+#endif
+        mod.synthFilters.filters[0].type=info.id==dsp::FilterType::Comb?dsp::FilterType::LowPass:static_cast<dsp::FilterType>(int(info.id)+1);check(poly->setModulationState(mod),"held voices publish bounded type change");poly->noteOn(60,.1f);allocations.store(0);frees.store(0);guardAllocations.store(true);const bool changed=poly->process(output,2,256);guardAllocations.store(false);check(changed,"held type change adopts independent reset state");
+#ifndef ORIGAMI_SANITIZED
+        check(!allocations.load() && !frees.load(),"type switching has no callback allocation or free");
+#endif
+        mod.synthFilters.filters[0].type=info.id;check(poly->setModulationState(mod),"mono legato returns to audited type");poly->emergencyResetRuntime();
+        auto perf=poly->performanceState();perf.voiceMode=VoiceMode::Mono;perf.legato=true;check(poly->setPerformanceState(perf),"multimode mono mode");poly->noteOn(60,.1f);poly->process(output,2,256);poly->noteOn(64,.1f);check(poly->process(output,2,256) && poly->activeVoiceCount()==1,"every type supports mono legato retarget");for(float x:pl) check(std::isfinite(x),"multimode modulation remains finite");
+    }
+}
+
+void synthFilterRoutingAudit() {
+    const auto make=[](int oscillators) {
+        auto e=std::make_unique<OrigamiEngine>();check(e->prepare(48000,256,2),"Synth filter engine prepares");
+        for(int n=1;n<oscillators;++n) check(e->addOscillatorModule()!=0,"filter fixture adds oscillator");
+        auto state=e->instrumentState();for(auto& m:state.oscillators) if(m.id) m.enabled=m.id<=unsigned(oscillators);
+        state.parameters[std::size_t(ParameterId::Waveform)]=1;applyLegacyOscillatorParameters(state.oscillators[0],state.parameters);
+        check(e->restoreInstrumentState(state),"Synth filter fixture restores");e->setMasterAfterFx(true);return e;
+    };
+    auto dry=make(2),wet=make(2);auto state=wet->instrumentState();auto mod=state.modulation;
+    const auto f=addSynthFilter(mod);check(f && insertSynthFilter(mod,state.oscillators,f,1) && insertSynthFilter(mod,state.oscillators,f,2),"two oscillators share one filter identity");
+    mod.synthFilters.filters[0].values={950,.4f,12,.7f,0};check(wet->setModulationState(mod),"shared filter topology adopts");
+    dry->noteOn(60,.7f);wet->noteOn(60,.7f);
+    dsp::LowPassCoefficientTable table;table.prepare(48000);const auto c=table.make(950,.4f);dsp::LowPassFilter ref[2];
+    std::array<float,256> dl{},dr{},wl{},wr{};float* d[]{dl.data(),dr.data()},*w[]{wl.data(),wr.data()};double energy=0,difference=0;
+    const double gain=dsp::fastExp2Audio(12/6.020599913);
+    for(int block=0;block<24;++block) {check(dry->process(d,2,256) && wet->process(w,2,256),"shared filter renders");for(std::size_t n=0;n<256;++n) for(int ch=0;ch<2;++ch) {
+        const float input=2*(ch?dr[n]:dl[n]);const float driven=float(std::tanh(gain*input)/std::sqrt(gain));
+        const float expected=.5f*(input+.7f*(ref[ch].next(driven,c)-input));const float actual=ch?wr[n]:wl[n];
+        check(std::abs(expected-actual)<3e-6f,"shared filter executes once over the per-voice sum, with preserved normalization");energy+=actual*actual;difference+=std::abs(actual-(ch?dr[n]:dl[n]));}}
+    check(energy>1e-4 && difference>1,"filter changes audible output");
+    // New polyphonic sources resolve through the existing compiler and values.
+    const auto env=addSourceInstance(mod,SourceFamily::Envelope);const auto lfo=addSourceInstance(mod,SourceFamily::Lfo);
+    mod.routes[0]={mod.nextRouteId++,true,env,{ModDestination::SynthCutoff,0,f},-.4f,false};
+    mod.routes[1]={mod.nextRouteId++,true,lfo,{ModDestination::SynthResonance,0,f},.3f,false};
+    mod.instances[sourceInstanceSlot(mod,lfo)].lfo.mode=LfoMode::Loop;
+    const auto random=addSourceInstance(mod,SourceFamily::Random);mod.instances[sourceInstanceSlot(mod,random)].random.rateHz=40;mod.routes[2]={mod.nextRouteId++,true,random,{ModDestination::SynthDrive,0,f},.3f,true};
+    check(wet->setModulationState(mod),"ENV4 and LFO5 drive canonical filter destinations");
+    auto tail=f;for(std::size_t n=1;n<maxSynthFilters;++n) {const auto next=addSynthFilter(mod);check(insertSynthFilterAfter(mod,next,tail),"maximum serial filter topology");tail=next;}check(wet->setModulationState(mod),"maximum filter topology adopts");
+    for(int n=0;n<16;++n) wet->noteOn(48+n,.6f);
+    allocations.store(0);frees.store(0);guardAllocations.store(true);bool processed=true;for(int block=0;block<8;++block) processed=wet->process(w,2,256) && processed;const auto observedId=wet->runtimeVisualizationSnapshot().synthFilterIds[0];const auto observed=wet->runtimeVisualizationSnapshot().synthFilters[0];wet->emergencyResetRuntime();guardAllocations.store(false);const auto filterAllocations=allocations.load(),filterFrees=frees.load();
+    check(processed,"filter adoption and sixteen voices process under guard");
+    check(observedId==f && std::abs(observed.cutoff-950)>10 && std::abs(observed.resonance-.4f)>.001f,"observed ENV4/LFO5 filter modulation is effective per voice");
+    check(observed.drive>=0 && observed.drive<=24,"Random2 filter drive remains bounded");
+    auto performance=wet->performanceState();performance.voiceMode=VoiceMode::Mono;performance.legato=true;check(wet->setPerformanceState(performance),"Synth filters enter mono/legato");
+    allocations.store(0);frees.store(0);guardAllocations.store(true);wet->noteOn(60,.5f);wet->noteOn(64,.6f);processed=wet->process(w,2,256);wet->noteOff(64);processed=wet->process(w,2,256) && processed;guardAllocations.store(false);check(processed && wet->activeVoiceCount()==1,"filter lifecycle survives mono retarget and release");
+#ifndef ORIGAMI_SANITIZED
+    check(!allocations.load() && !frees.load(),"mono filter lifecycle has zero allocations/frees");
+#endif
+#ifndef ORIGAMI_SANITIZED
+    check(!filterAllocations && !filterFrees,"filter processing/adoption/reset has zero allocations/frees");
+#endif
+    auto reordered=mod;std::swap(reordered.synthFilters.filters[0],reordered.synthFilters.filters[1]);
+    check(wet->setModulationState(reordered) && wet->process(w,2,256),"reordered storage adopts stable filter identities");
+    const auto rebound=wet->runtimeVisualizationSnapshot();
+    check(rebound.synthFilterIds[1]==f && std::abs(rebound.synthFilters[1].resonance-.4f)>.001f,"unchanged route identities recompile when prepared runtime slots move");
+    // Chord output must equal the sum of independent note/filter lifetimes.
+    auto poly=make(1);auto m=poly->instrumentState().modulation;const auto pf=addSynthFilter(m);check(insertSynthFilter(m,poly->instrumentState().oscillators,pf,1),"poly filter inserts");m.synthFilters.filters[0].values={600,.2f,0,1,1};check(poly->setModulationState(m),"poly keytrack state");
+    std::array<std::unique_ptr<OrigamiEngine>,3> solo;std::array<std::array<float,256>,3> left{},right{};
+    for(int n=0;n<3;++n) {solo[n]=make(1);check(solo[n]->setModulationState(m),"independent filter fixture");solo[n]->noteOn(60+n*4,.3f);poly->noteOn(60+n*4,.3f);}
+    for(int block=0;block<16;++block) {check(poly->process(w,2,256),"poly renders");for(int n=0;n<3;++n) {float* out[]{left[n].data(),right[n].data()};check(solo[n]->process(out,2,256),"solo renders");}for(std::size_t n=0;n<256;++n) {check(std::abs(wl[n]-left[0][n]-left[1][n]-left[2][n])<4e-6f,"per-voice keytracked filter state is independent");}}
+    // Every supported sample rate/extreme must retain finite, bounded state.
+    for(double rate:{8000.,22050.,44100.,48000.,96000.,192000.,384000.}) {table.prepare(rate);for(float cutoff:{20.f,1000.f,20000.f}) for(float res:{0.f,1.f}) {dsp::LowPassFilter filter;const auto coeff=table.make(cutoff,res);for(int n=0;n<4096;++n) {const float sample=filter.next(n==0?1.f:0.f,coeff);check(std::isfinite(sample) && std::abs(sample)<8,"extreme Synth TPT remains finite and bounded");}}}
+}
+
+#include "UnisonAudit.h"
 
 int main() {
     // OrigamiEngine/Voice are intentionally large fixed-storage realtime
@@ -1218,6 +1553,10 @@ int main() {
     // test runner cannot overflow before it reaches its first diagnostic.
     // Production engine ownership already follows this pattern.
     try {
+        unison_audit::run();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison: "<<checks<<" checks\n";return 0;}
+        canonicalInitAudit();filter_response_audit::run(check);synthCombStorageLifecycleAudit();multimodeSynthLifecycleAudit();oscillatorRouteMixerAudit();synthFilterRoutingAudit();
+        correctiveSpectralPreview();
+        sourceInstanceRealtimeAudit();
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();
         std::cerr<<"oscillator control cache\n";oscillatorControlCacheEquivalence();
         std::cerr<<"simple playback + visualization policy\n";simplePlaybackAndVisualizationPolicy();
@@ -1233,6 +1572,8 @@ int main() {
         std::cerr<<"random spectral amount\n";randomSpectralAmountResponse();
         std::cerr<<"spectral playback\n";spectralCachePlayback();
         std::cerr<<"spectral concurrent eviction\n";spectralCacheConcurrentEviction();
+        std::cerr<<"random spectral morph\n";randomSpectralMorphAudit();
+        std::cerr<<"random spectral morph crossing\n";randomSpectralMorphCrossingAudit();
         std::cerr<<"realtime thread policy\n";realtimeThreadPolicyAudit();
         std::cerr<<"wavetable handoff\n";wavetableHandoffAudit();
         std::cerr<<"wavetable handoff concurrency\n";wavetableHandoffConcurrencyAudit();

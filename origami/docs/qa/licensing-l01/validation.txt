@@ -1,0 +1,42 @@
+L01 validation — 2026-10-09
+Baseline: 8b84f95da53d90830d47d7a8901a27cbf2481f1d
+
+Release: clean-first complete build succeeded; final source changes rebuilt successfully.
+Complete CTest: 12/12 passed, 136.96 seconds.
+PASS: 2779 state checks
+PASS: 2594683 checks
+PASS: V22.0 wavetable-bank foundation
+PASS: 3938 modulation foundation checks
+PASS: 653 FX graph/DSP/bus checks
+PASS: 3954183 spectral checks; RT allocations=0 deletes=0 C mallocs=0 C frees=0
+PASS: 74 quality checks
+PASS: 1644118 plugin/UI checks
+PASS: 98 content library checks
+PASS account 42 checks
+PASS EQ checks=373552 inspectedSamples=157011364
+B01 seed=0xb010cafe checks=2844658 samples=318781890 callbacks=392344 failures=0
+
+Focused Global + account/patch boundary: 193 checks passed (before storage-retry addition); final complete plugin suite also passed.
+Keychain: isolated temporary macOS Keychain, read/update/delete/corrupt JSON and cross-store flock passed.
+Firestore rules emulator: 9/9 passed including reserved product positive/negative creation controls.
+Desktop backend emulator: 3/3 passed, zero skipped; includes concurrent consumption and throttle checks.
+Web: configuration check and Vite build passed; existing large-chunk warning.
+Full Functions suite: 119 tests / 117 pass / 1 pre-existing music-distribution assertion failure / 1 emulator-only skip.
+Desktop emulator test executed separately with no skip.
+Unchanged baseline files: functions/src/music/musicDistribution.js and functions/test/musicDistribution.test.js.
+
+Security source audit: changed text scanned for private-key blocks, service-account credentials, literal JWTs and personal home paths; zero findings.
+Public Firebase API/client identifiers intentionally retained from existing configuration; no Admin secrets.
+Token/password references are interfaces, runtime fields, explanatory text or explicit invalid test fixtures.
+No account logging or actual credentials in added code. No generated binaries, Keychain files or runtime session data committed.
+Static realtime boundary: no account dependency in origami_core; no account state in processor, codec, Nodes or Matrix.
+Live Firebase login and signed-host ACL behavior not qualified; deployment and host acceptance remain required.
+ASan runtime/toolchain limitation unchanged; no ASan test claimed.
+
+Fresh Release wrappers: all three built from a new temporary build tree.
+JUCE/linker ad-hoc signatures were replaced on the generated test bundles after all resources were assembled.
+These are local ad-hoc test signatures, not distribution signatures or notarization.
+Standalone/MCT Origami.app: built; local ad-hoc signature verifies; no sanitizer dependencies/symbols.
+AU/MCT Origami.component: built; local ad-hoc signature verifies; no sanitizer dependencies/symbols.
+VST3/MCT Origami.vst3: built; local ad-hoc signature verifies; no sanitizer dependencies/symbols.
+EQ corrected fixture peak: 12.1969661713 (unchanged).

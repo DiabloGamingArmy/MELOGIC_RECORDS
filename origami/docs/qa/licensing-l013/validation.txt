@@ -1,0 +1,73 @@
+L01.3 validation — October 9–10, 2026
+Baseline: e91c83dc7a2dd1867eb601be8187ce02213dd12d
+
+Native build:
+cmake --build origami/build-multihost --target origami_plugin_tests origami_account_tests --parallel 4
+PASS both targets, including actual FirebaseBackend in test-only loopback configuration.
+
+ctest --test-dir origami/build-multihost --output-on-failure
+PASS 12/12, 154.32 seconds (state, foundation, wavetable bank, modulation,
+FX graph, spectral tune, spectral quality, plugin/UI, content, account,
+EQ headroom and DSP torture).
+
+Final targeted checks after diagnostic and fixture refinements:
+origami/build-multihost/origami_account_tests
+PASS 65 checks. Includes exact POST bytes, isolated macOS Keychain,
+shared instances, worker cancellation, authorization publication, and
+three-second response: legacy two-second timeout fails, repaired setting succeeds.
+ORIGAMI_ACTIVATION_ONLY=1 origami/build-multihost/origami_plugin_tests
+PASS 3384 checks: actual activation controls, pending continuation,
+editor cleanup, authorization UI/audio gate and patch boundary.
+
+Native/backend/Firestore cross-boundary contract:
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
+ORIGAMI_NATIVE_CONTRACT_BINARY="$PWD/origami/build-multihost/origami_plugin_tests" \
+node --test functions/test/nativeDesktopContract.test.js
+PASS 22 scenarios + parent = 23/23, 116.03 seconds; no skips.
+Actual JUCE HTTP requests, actual Service and ActivationPanel; production
+backend cores; Firestore emulator. Google exchange/lookup and secure storage
+are synthetic fixtures, explicitly not a production credential test.
+Delayed pending 4s; poll timeout observed at 30s (32.14s case duration);
+remaining cases and limitations are documented in REPORT.md.
+Targeted final lost-authorization fixture rerun: PASS 2/2 including parent.
+
+Emulator startup used the already cached Firestore 1.20.4 jar:
+java -jar "$HOME/.cache/firebase/emulators/cloud-firestore-emulator-v1.20.4.jar" \
+  --host 127.0.0.1 --port 8080 --project_id demo-melogic-wire-tests
+The installed Firebase CLI wanted an uncached older jar, so the cached
+runtime was started directly; no production database was used.
+
+Browser:
+node --test test/desktopAuthApproval.test.mjs
+PASS 4/4 (deferred approval, duplicate click, malformed result,
+expiration and confirmed cancellation).
+node --check functions/test/nativeDesktopContract.test.js
+PASS
+npm run build
+PASS WASM build/verification and Vite production build; existing large-chunk
+warning only. Generated unrelated WASM metadata timestamp restored.
+
+Shipping native:
+cmake --build origami/build-l012-release --target OrigamiPlugin_Standalone OrigamiPlugin_AU OrigamiPlugin_VST3 --parallel 4
+PASS all three tests-OFF Release wrappers; final source refresh rebuilt/relinked.
+VST3 packaging replaced its development ad-hoc signature as expected.
+Shipping Standalone symbol inspection: makeFirebaseBackend exists;
+makeFirebaseBackendForTesting absent.
+
+Production inspection:
+Five Functions ACTIVE; source archive comparison matches the production
+cores and wrappers. Sanitized evidence in deployment-evidence.txt.
+Read-only request latency and IAM inspections; no deployment, key consumption,
+account/entitlement mutation, permission changes or installed-plugin overwrite.
+
+Independent Service shutdown P0 remains OPEN. Deterministic lifetime tests
+passing is not evidence that the reported autorelease-teardown crash is fixed.
+
+Unchanged production core regressions, fresh local emulator fixtures:
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node --test \
+  functions/test/desktopAuth.test.js functions/test/origamiLicensing.test.js \
+  functions/test/adminLicensing.test.js
+PASS 15/15, 6.95 seconds; no skips. Existing tests assume fresh fixture
+projects; repeating without clearing them first encountered old revoked
+entitlements. Only the three localhost emulator fixture databases were reset
+before the final successful run. The new native contract uses unique accounts.

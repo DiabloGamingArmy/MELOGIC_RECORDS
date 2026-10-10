@@ -283,20 +283,31 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     phaseAngleLabel_.setText("FIXED PHASE",juce::dontSendNotification);
     phaseRandomRangeLabel_.setText("RANDOM RANGE",juce::dontSendNotification);
 
-    phaseRandom_.onClick=[this]{phaseStartMode_=PhaseStartMode::Random;refreshPhaseWorkspace();};
-    phaseFixed_.onClick=[this]{phaseStartMode_=PhaseStartMode::Fixed;refreshPhaseWorkspace();};
-    phaseFree_.onClick=[this]{phaseStartMode_=PhaseStartMode::Free;refreshPhaseWorkspace();};
+    phaseRandom_.onClick=[this]{phaseStartMode_=PhaseStartMode::Random;storePhaseSettings();refreshPhaseWorkspace();};
+    phaseFixed_.onClick=[this]{phaseStartMode_=PhaseStartMode::Fixed;storePhaseSettings();refreshPhaseWorkspace();};
+    phaseFree_.onClick=[this]{phaseStartMode_=PhaseStartMode::Free;storePhaseSettings();refreshPhaseWorkspace();};
+    phaseAngle_.onValueChange=[this]{storePhaseSettings();};
+    phaseRandomRange_.onValueChange=[this]{storePhaseSettings();};
+    phaseRetrigger_.onClick=[this]{storePhaseSettings();};
+    phasePerUnison_.onClick=[this]{storePhaseSettings();};
     refreshPhaseWorkspace();
 
+    addChildComponent(routeViewport_);routeViewport_.setViewedComponent(&routeContent_,false);routeViewport_.setScrollBarsShown(true,false);routeViewport_.setScrollBarThickness(4);
+    routeContent_.draw=[this](juce::Graphics& g) {for(std::size_t i=0;i<busRowCount_;++i) {
+        const auto row=busRowBounds_[i];if(row.isEmpty()) continue;const bool active=busLevels_[i].getValue()>0;
+        g.setColour(Palette::panel().darker(.18f));g.fillRect(row);g.setColour(Palette::borderSoft());g.drawRect(row,1);
+        g.setColour(active?signalSourceColour():Palette::muted());g.fillEllipse(float(row.getX()+4),float(row.getCentreY()-2),4,4);
+        text(g,juce::String(busLevels_[i].getValue(),3),busLevels_[i].getBounds().translated(-58,0).withWidth(54),Type::secondary,active?Palette::text():Palette::muted(),juce::Justification::centredRight);
+    }};
     for(std::size_t i=0;i<maxOscBusRoutes;++i) {
         auto& selector=busSelectors_[i];
-        addChildComponent(selector);
-        selector.setName("Bus route "+juce::String(int(i)+1));
+        routeContent_.addChildComponent(selector);
+        selector.setName("Output route "+juce::String(int(i)+1));
         selector.setMouseCursor(juce::MouseCursor::PointingHandCursor);
         selector.onClick=[this,i]{openBusMenu(i);};
         auto& level=busLevels_[i];
-        addChildComponent(level);
-        level.setName("Bus route level "+juce::String(int(i)+1));
+        routeContent_.addChildComponent(level);
+        level.setName("Output route level "+juce::String(int(i)+1));
         level.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         level.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
         level.setRotaryParameters(juce::MathConstants<float>::pi*1.20f,juce::MathConstants<float>::pi*2.80f,true);
@@ -307,16 +318,16 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         level.getProperties().set("mct.origami.knobScale",0.62);
         level.onValueChange=[this,i] {
             if(syncingBus_ || !moduleGetter_ || !moduleSetter_) return;
-            auto state=moduleGetter_(display_.id);
+            auto state=routingState();
             if(i>=state.busRouteCount) return;
             state.busRoutes[i].level=float(busLevels_[i].getValue());
-            moduleSetter_(display_.id,state);
-            repaint();
+            commitBusRouting(state);
+            routeContent_.repaint();repaint();
         };
         auto& removeButton=busRemoves_[i];
-        addChildComponent(removeButton);
+        routeContent_.addChildComponent(removeButton);
         removeButton.setButtonText("-");
-        removeButton.setName("Remove bus route "+juce::String(int(i)+1));
+        removeButton.setName("Remove output route "+juce::String(int(i)+1));
         removeButton.onClick=[this,i]{removeBusRoute(i);};
     }
     addChildComponent(busAdd_);
@@ -454,6 +465,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         blendSlider_.setName("OSC BLEND");
 
         unisonSlider_.setRange(1.0, 16.0, 1.0);
+        unisonSlider_.setNumDecimalPlacesToDisplay(0);
         detuneSlider_.setRange(0.0, 100.0, 0.1);
         blendSlider_.setRange(0.0,1.0,0.001);
         blendSlider_.setTooltip("Unison blend — centre oscillator to full detuned stack");
@@ -1018,6 +1030,12 @@ void OscillatorCard::syncFromModel() {
     if(moduleGetter_ && !process1Menu_.isPopupActive() && !process2Menu_.isPopupActive()) {
         const auto state=moduleGetter_(display_.id);
         if(state.id) {
+            phaseStartMode_=state.phaseMode;
+            if(!phaseAngle_.isMouseButtonDown()) phaseAngle_.setValue(state.phaseDegrees,juce::dontSendNotification);
+            if(!phaseRandomRange_.isMouseButtonDown()) phaseRandomRange_.setValue(state.randomPhaseDegrees,juce::dontSendNotification);
+            phaseRetrigger_.setToggleState(state.phaseRetrigger,juce::dontSendNotification);
+            phasePerUnison_.setToggleState(state.phasePerUnison,juce::dontSendNotification);
+            refreshPhaseWorkspace();
             if(!blendSlider_.isMouseButtonDown() && !blendSlider_.isEditingText())
                 blendSlider_.setValue(state.blend,juce::dontSendNotification);
             const juce::ScopedValueSetter<bool> guard(syncingProcess_,true);
@@ -1096,22 +1114,30 @@ void OscillatorCard::setDisplayOrdinal(unsigned ordinal) {
     setOrdinal(ordinal);
 }
 
+void OscillatorCard::storePhaseSettings() {
+    if(!moduleGetter_ || !moduleSetter_) return;
+    auto s=moduleGetter_(display_.id);if(!s.id) return;
+    s.phaseMode=phaseStartMode_;s.phaseDegrees=float(phaseAngle_.getValue());s.randomPhaseDegrees=float(phaseRandomRange_.getValue());
+    s.phaseRetrigger=phaseRetrigger_.getToggleState();s.phasePerUnison=phasePerUnison_.getToggleState();
+    moduleSetter_(display_.id,s);
+}
+
 void OscillatorCard::refreshPhaseWorkspace() {
-    phaseRandom_.setToggleState(phaseStartMode_==PhaseStartMode::Random,juce::dontSendNotification);
+    phaseRandom_.setToggleState(phaseStartMode_==PhaseStartMode::Random || phaseStartMode_==PhaseStartMode::Natural,juce::dontSendNotification);
     phaseFixed_.setToggleState(phaseStartMode_==PhaseStartMode::Fixed,juce::dontSendNotification);
     phaseFree_.setToggleState(phaseStartMode_==PhaseStartMode::Free,juce::dontSendNotification);
-    phaseSelector_.setButtonText(phaseStartMode_==PhaseStartMode::Random ? "RAND"
+    phaseSelector_.setButtonText(phaseStartMode_==PhaseStartMode::Natural ? "AUTO" : phaseStartMode_==PhaseStartMode::Random ? "RAND"
                                  : phaseStartMode_==PhaseStartMode::Fixed ? "FIXED" : "FREE");
     phaseAngle_.setEnabled(phaseStartMode_==PhaseStartMode::Fixed);
-    phaseRandomRange_.setEnabled(phaseStartMode_==PhaseStartMode::Random);
+    phaseRandomRange_.setEnabled(phaseStartMode_==PhaseStartMode::Random || phaseStartMode_==PhaseStartMode::Natural);
     phaseRetrigger_.setEnabled(phaseStartMode_!=PhaseStartMode::Free);
-    phasePerUnison_.setEnabled(phaseStartMode_==PhaseStartMode::Random);
+    phasePerUnison_.setEnabled(phaseStartMode_==PhaseStartMode::Random || phaseStartMode_==PhaseStartMode::Natural);
     repaint();
 }
 
 void OscillatorCard::refreshRoutingWorkspace() {
     if(!moduleGetter_) return;
-    const auto state=moduleGetter_(display_.id);
+    const auto state=routingState();
     const auto buses=snapshotGetter_ ? snapshotGetter_().buses : BusState{};
     const auto name=[&buses](BusId id) {
         const auto* bus=buses.find(id);
@@ -1120,64 +1146,57 @@ void OscillatorCard::refreshRoutingWorkspace() {
     const juce::ScopedValueSetter<bool> guard(syncingBus_,true);
     busRowCount_=std::min<std::size_t>(state.busRouteCount,maxOscBusRoutes);
     for(std::size_t i=0;i<busRowCount_;++i) {
-        busSelectors_[i].setButtonText(name(state.busRoutes[i].bus));
+        busSelectors_[i].setButtonText(state.busRoutes[i].filter ? "FILTER "+juce::String(state.busRoutes[i].bus) : name(state.busRoutes[i].bus));
         if(!busLevels_[i].isMouseButtonDown())
             busLevels_[i].setValue(state.busRoutes[i].level,juce::dontSendNotification);
-        // The only route cannot be removed: an oscillator always has a bus.
+        // Keep one authored destination; its level may be zero.
         busRemoves_[i].setEnabled(busRowCount_>1);
     }
     bool unrouted=false;
+    if(snapshotGetter_) for(const auto& f:snapshotGetter_().modulation.synthFilters.filters) if(f.id) unrouted|=std::none_of(state.busRoutes.begin(),state.busRoutes.begin()+busRowCount_,[&](const auto& r){return r.filter && r.bus==f.id;});
     for(std::size_t b=0;b<buses.count;++b)
         unrouted|=oscBusSend(state,buses.buses[b].id)==0.0f
             && std::none_of(state.busRoutes.begin(),state.busRoutes.begin()+std::ptrdiff_t(busRowCount_),
-                            [&](const OscBusRoute& r){return r.bus==buses.buses[b].id;});
+                            [&](const OscBusRoute& r){return !r.filter && r.bus==buses.buses[b].id;});
+    for(std::size_t i=0;i<busRowCount_;++i) {busSelectors_[i].setEnabled(true);busLevels_[i].setEnabled(true);}
     busAdd_.setEnabled(unrouted && busRowCount_<maxOscBusRoutes);
-    juce::String header=busRowCount_>0 ? name(state.busRoutes[0].bus) : juce::String("NO BUS");
+    juce::String header=busRowCount_>0 ? (state.busRoutes[0].filter ? "FILTER "+juce::String(state.busRoutes[0].bus) : name(state.busRoutes[0].bus)) : juce::String("NO BUS");
     if(busRowCount_>1) header+=" +"+juce::String(int(busRowCount_)-1);
     outputSelector_.setButtonText(header);
     repaint();
+
+
 }
 
 void OscillatorCard::openBusMenu(std::size_t row) {
-    if(!moduleGetter_ || !snapshotGetter_) return;
-    const auto state=moduleGetter_(display_.id);
-    if(row>=state.busRouteCount) return;
-    const auto buses=snapshotGetter_().buses;
-    std::vector<NativeChoiceItem> items;
-    for(std::size_t b=0;b<buses.count;++b) {
-        const auto id=buses.buses[b].id;
-        bool usedElsewhere=false;
-        for(std::size_t i=0;i<state.busRouteCount;++i) usedElsewhere|=i!=row && state.busRoutes[i].bus==id;
-        items.push_back({int(id),juce::String(buses.buses[b].label()),!usedElsewhere,"BUSES",state.busRoutes[row].bus==id});
-    }
-    auto safe=juce::Component::SafePointer<OscillatorCard>(this);
-    showNativeChoiceMenu(busSelectors_[row],"Output Bus",items,int(state.busRoutes[row].bus),[safe,row](int choice) {
-        if(safe==nullptr || choice<=0) return;
-        auto s=safe->moduleGetter_(safe->display_.id);
-        if(row>=s.busRouteCount) return;
-        if(setOscBusRoute(s,safe->snapshotGetter_().buses,row,BusId(choice),s.busRoutes[row].level)==BusRouteResult::Ok)
-            safe->moduleSetter_(safe->display_.id,s);
-        safe->refreshRoutingWorkspace();
-    });
+    if(!snapshotGetter_) return;const auto state=routingState();if(row>=state.busRouteCount) return;
+    const auto snapshot=snapshotGetter_();std::vector<NativeChoiceItem> items;std::vector<OscBusRoute> choices;
+    const auto append=[&](OscBusRoute r,const juce::String& label,const char* group) {bool used=false;for(std::size_t i=0;i<state.busRouteCount;++i) used|=i!=row && state.busRoutes[i].bus==r.bus && state.busRoutes[i].filter==r.filter;choices.push_back(r);items.push_back({int(choices.size()),label,!used,group});};
+    for(std::size_t b=0;b<snapshot.buses.count;++b) append({snapshot.buses.buses[b].id,0},snapshot.buses.buses[b].label(),"BUSES");
+    for(const auto& f:snapshot.modulation.synthFilters.filters) if(f.id) append({f.id,0,true},"FILTER "+juce::String(f.id),"PER-VOICE FILTERS");
+    showNativeChoiceMenu(busSelectors_[row],"Output Destination",items,0,[safe=juce::Component::SafePointer<OscillatorCard>(this),row,choices](int choice){if(!safe || choice<1 || std::size_t(choice)>choices.size()) return;auto s=safe->routingState();if(row>=s.busRouteCount) return;const auto level=s.busRoutes[row].level;s.busRoutes[row]=choices[std::size_t(choice-1)];s.busRoutes[row].level=level;safe->commitBusRouting(s);});
 }
-
+bool OscillatorCard::addOutputRoute(std::uint32_t destination,bool filter) {
+    if(!snapshotGetter_) return false;const auto snapshot=snapshotGetter_();auto state=routingState();
+    bool exists=false;if(filter) exists=synthFilterSlot(snapshot.modulation.synthFilters,destination)<maxSynthFilters;
+    else for(std::size_t b=0;b<snapshot.buses.count;++b) exists|=snapshot.buses.buses[b].id==destination;
+    if(!exists || state.busRouteCount>=maxOscBusRoutes) return false;
+    for(std::size_t r=0;r<state.busRouteCount;++r) if(state.busRoutes[r].bus==destination && state.busRoutes[r].filter==filter) return false;
+    state.busRoutes[state.busRouteCount++]={destination,0,filter};return commitBusRouting(state);
+}
 void OscillatorCard::addBusRoute() {
-    if(!moduleGetter_ || !moduleSetter_ || !snapshotGetter_) return;
-    auto state=moduleGetter_(display_.id);
-    const auto buses=snapshotGetter_().buses;
-    for(std::size_t b=0;b<buses.count;++b)
-        if(addOscBusRoute(state,buses,buses.buses[b].id,1.0f)==BusRouteResult::Ok) {
-            moduleSetter_(display_.id,state);
-            break;
-        }
-    refreshRoutingWorkspace();
-    resized();
+    if(!snapshotGetter_ || !synthRoutingSetter) return;const auto snapshot=snapshotGetter_();const auto state=routingState();if(state.busRouteCount>=maxOscBusRoutes) return;
+    std::vector<NativeChoiceItem> items;std::vector<OscBusRoute> choices;
+    const auto append=[&](OscBusRoute route,const juce::String& label,const char* group) {for(std::size_t r=0;r<state.busRouteCount;++r) if(state.busRoutes[r].bus==route.bus && state.busRoutes[r].filter==route.filter) return;choices.push_back(route);items.push_back({int(choices.size()),label,true,group});};
+    for(std::size_t b=0;b<snapshot.buses.count;++b) append({snapshot.buses.buses[b].id,0},snapshot.buses.buses[b].label(),"BUSES");
+    for(const auto& f:snapshot.modulation.synthFilters.filters) if(f.id) append({f.id,0,true},"FILTER "+juce::String(f.id),"PER-VOICE FILTERS");
+    showNativeChoiceMenu(busAdd_,"Add Output Route",items,0,[safe=juce::Component::SafePointer<OscillatorCard>(this),choices](int choice){if(!safe || choice<1 || std::size_t(choice)>choices.size()) return;const auto route=choices[std::size_t(choice-1)];safe->addOutputRoute(route.bus,route.filter);});
 }
 
 void OscillatorCard::removeBusRoute(std::size_t row) {
     if(!moduleGetter_ || !moduleSetter_) return;
-    auto state=moduleGetter_(display_.id);
-    if(removeOscBusRoute(state,row)==BusRouteResult::Ok) moduleSetter_(display_.id,state);
+    auto state=routingState();
+    if(removeOscBusRoute(state,row)==BusRouteResult::Ok) commitBusRouting(state);
     refreshRoutingWorkspace();
     resized();
 }
@@ -1278,7 +1297,7 @@ void OscillatorCard::resized() {
             busLevels_[i].setVisible(visible);
             busRemoves_[i].setVisible(visible);
         }
-        busAdd_.setVisible(routingPage);
+        busAdd_.setVisible(routingPage);routeViewport_.setVisible(routingPage);
 
         if(phasePage) {
             auto page=workspaceBounds_.reduced(12,10);
@@ -1313,25 +1332,27 @@ void OscillatorCard::resized() {
         } else if(routingPage) {
             refreshRoutingWorkspace();
             auto page=workspaceBounds_.reduced(12,10);
-            page.removeFromTop(46); // title + OUTPUT BUSES section label
+            page.removeFromTop(46); // title + section label
+            auto footer=page.removeFromBottom(66);busAdd_.setBounds(footer.removeFromTop(30).withSizeKeepingCentre(160,30));
+            routeViewport_.setBounds(page);page={0,0,juce::jmax(1,page.getWidth()-4),juce::jmax(page.getHeight(),int(busRowCount_)*48)};
+            routeContent_.setSize(page.getWidth(),page.getHeight());
             for(std::size_t i=0;i<maxOscBusRoutes;++i) {
                 if(i>=busRowCount_) { busRowBounds_[i]={}; continue; }
                 auto row=page.removeFromTop(48).reduced(0,3);
                 busRowBounds_[i]=row;
-                row.reduce(8,0);
+                row.reduce(12,0);
                 busRemoves_[i].setBounds(row.removeFromRight(28).withSizeKeepingCentre(28,26));
                 row.removeFromRight(8);
                 busLevels_[i].setBounds(row.removeFromRight(40).withSizeKeepingCentre(40,40));
                 row.removeFromRight(58); // painted level value
                 busSelectors_[i].setBounds(row.withSizeKeepingCentre(row.getWidth(),28));
             }
-            page.removeFromTop(8);
-            busAdd_.setBounds(page.removeFromTop(30).withSizeKeepingCentre(160,30));
             refreshRoutingWorkspace();
         }
         return;
     }
 
+    routeViewport_.setVisible(false);
     for(auto* component:std::initializer_list<juce::Component*>{
         &phaseRandom_,&phaseFixed_,&phaseFree_,&phaseAngle_,&phaseRandomRange_,
         &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_,&busAdd_}) {
@@ -1523,21 +1544,11 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
             section.removeFromTop(106);
             text(g,"BEHAVIOR",section.removeFromTop(13),Type::label,Palette::muted(),juce::Justification::centredLeft);
         } else {
-            text(g,"OUTPUT BUSES  /  POST OSC CHAIN + FILTER",section.removeFromTop(15),Type::label,Palette::muted(),juce::Justification::centredLeft);
-            for(std::size_t i=0;i<busRowCount_;++i) {
-                const auto row=busRowBounds_[i];
-                if(row.isEmpty()) continue;
-                g.setColour(Palette::panel().darker(0.18f));
-                g.fillRect(row);
-                g.setColour(Palette::borderSoft());
-                g.drawRect(row,1);
-                text(g,juce::String(busLevels_[i].getValue(),3),busLevels_[i].getBounds().translated(-58,0).withWidth(54),
-                     Type::secondary,Palette::secondary(),juce::Justification::centredRight);
-            }
+            text(g,"OUTPUT ROUTES  /  LEVEL",section.removeFromTop(15),Type::label,Palette::muted(),juce::Justification::centredLeft);
             auto note=section.withTop(busAdd_.getBottom()+8).withHeight(30);
             g.setColour(Palette::muted().withAlpha(.75f));
             g.setFont(juce::FontOptions(Type::label));
-            g.drawFittedText("MAIN is the permanent output bus. Add buses in NODES > BUSES; each has its own node graph.",
+            g.drawFittedText("Parallel sends sum at their authored levels. Add filters in SYNTH; buses in NODES > BUSES.",
                              note,juce::Justification::centredLeft,2,1.0f);
         }
         return;
@@ -1685,12 +1696,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 const float modulated=juce::jlimit(minimum,1.0f,
                     process.amount+
                     modulationUiAllRoutesValue(ModDestination::ProcessAmount,display_.id,process.id)*span);
-                // Match the spectral worker's bounded amount key so the
-                // preview and audible oscillator select the same prepared data.
-                const float steps=dsp::oscProcessIsSpectral(process.type)
-                    ? dsp::spectralAmountSteps : 64.0f;
-                const float visualAmount=std::round(modulated*steps)/steps;
-                visualPlan.stages[visualPlan.count++]={process.type,visualAmount,process.seed};
+                visualPlan.stages[visualPlan.count++]={process.type,modulated,process.seed};
             }
         }
 
@@ -1710,40 +1716,30 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         };
 
         if(spectralPreview) {
-            const int wtKey=juce::roundToInt(physical*128.0f);
+            const float wtKey=position;
             const bool stale=!spectralPreviewValid_ ||
-                spectralPreviewWtKey_!=wtKey || spectralPreviewTable_!=table.get() ||
+                spectralPreviewPosition_!=wtKey || spectralPreviewTable_!=table.get() ||
                 !samePlan(spectralPreviewPlan_,visualPlan);
 
             if(stale) {
-                if(spectralPreviewValid_)
-                    spectralPreviewPrevious_=spectralPreviewCache_;
-                std::array<float,previewSize> previewSource{};
-                const float visualFrame=static_cast<float>(wtKey)/(128.0f*3.0f)*float(frameCount-1);
-                const int va=juce::jlimit(0,frameCount-1,int(std::floor(visualFrame)));
-                const int vb=juce::jmin(frameCount-1,va+1);
-                const float vblend=visualFrame-float(va);
-                for(std::size_t sampleIndex=0;sampleIndex<previewSize;++sampleIndex) {
-                    const float phase=static_cast<float>(sampleIndex)/static_cast<float>(previewSize);
-                    const float ya=shape(va,phase),yb=shape(vb,phase);
-                    previewSource[sampleIndex]=ya+(yb-ya)*vblend;
+                // Process each canonical frame before WT interpolation, as DSP does.
+                std::array<float,previewSize> previewSource{},secondFrame{};
+                for(std::size_t i=0;i<previewSize;++i) {
+                    const float phase=float(i)/float(previewSize);
+                    previewSource[i]=shape(a,phase); secondFrame[i]=shape(next,phase);
                 }
-                dsp::renderProcessedFrame2048(
-                    previewSource.data(),spectralPreviewCache_.data(),visualPlan);
+                dsp::renderOscillatorPreview2048(previewSource.data(),spectralPreviewCache_.data(),visualPlan);
+                dsp::renderOscillatorPreview2048(secondFrame.data(),previewSource.data(),visualPlan);
+                for(std::size_t i=0;i<previewSize;++i)
+                    spectralPreviewCache_[i]+=blend*(previewSource[i]-spectralPreviewCache_[i]);
 
-                spectralPreviewWtKey_=wtKey;
+                spectralPreviewPosition_=wtKey;
                 spectralPreviewTable_=table.get();
                 spectralPreviewPlan_=visualPlan;
-                if(!spectralPreviewValid_)
-                    spectralPreviewPrevious_=spectralPreviewCache_;
                 spectralPreviewValid_=true;
-                spectralPreviewMorph_=0.0f;
-            } else if(spectralPreviewMorph_<1.0f) {
-                spectralPreviewMorph_=juce::jmin(1.0f,spectralPreviewMorph_+0.22f);
             }
         } else {
             spectralPreviewValid_=false;
-            spectralPreviewMorph_=1.0f;
             spectralPreviewPlan_={};
         }
 
@@ -1756,11 +1752,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 const float fraction=pos-static_cast<float>(static_cast<std::size_t>(pos));
                 const float current=spectralPreviewCache_[i]+
                     fraction*(spectralPreviewCache_[j]-spectralPreviewCache_[i]);
-                const float previous=spectralPreviewPrevious_[i]+
-                    fraction*(spectralPreviewPrevious_[j]-spectralPreviewPrevious_[i]);
-                const float t=spectralPreviewMorph_*spectralPreviewMorph_*
-                    (3.0f-2.0f*spectralPreviewMorph_);
-                return previous+(current-previous)*t;
+                return current;
             }
             double phase=static_cast<double>(sourcePhase);
             for(std::size_t i=0;i<visualPlan.count;++i) {
@@ -1774,10 +1766,10 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
         constexpr int points=384;
         std::array<juce::Point<float>,points> plot{};
-        juce::Path outline;
+        auto& outline=viewportStroke_;outline.clear();
 
         for(int i=0;i<points;++i) {
-            const float sourcePhase=float(i)/float(points-1);
+            const float sourcePhase=dsp::oscillatorPreviewPhase(std::size_t(i),points);
 
             // Preview is a bounded viewport. Even experimental/spectral
             // processes must not draw beyond its physical frame.
@@ -1822,6 +1814,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 }
 
 void OscillatorCard::paintOverChildren(juce::Graphics& g) {
+    if(synthDropOver_) {g.setColour(Palette::background().withAlpha(.75f));g.fillRect(contentBounds());g.setColour(signalSourceColour());g.drawRect(contentBounds().reduced(2),2);text(g,synthDropAllowed_?"EXCLUSIVE FILTER ROUTE":"CANNOT ROUTE / DESTINATION CAPACITY",contentBounds(),Type::label,Palette::text(),juce::Justification::centred);return;}
     const auto& telemetry=modulationUiTelemetry();
 
     const auto drawRotary=[&](juce::Slider& slider,ModDestination destination,std::uint32_t itemId=0) {
@@ -1949,6 +1942,31 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
             drawRotary(chainAmounts_[i],ModDestination::RouteAmount,item.id);
     }
     g.restoreState();
+}
+
+OscillatorModuleState OscillatorCard::routingState() const {
+    auto state=moduleGetter_?moduleGetter_(display_.id):OscillatorModuleState{};
+    if(snapshotGetter_) state=oscillatorOutputRouting(snapshotGetter_().modulation,state);
+    return state;
+}
+bool OscillatorCard::commitBusRouting(const OscillatorModuleState& state) {
+    if(snapshotGetter_ && synthRoutingSetter) {auto mod=snapshotGetter_().modulation;if(!setOscillatorOutputRouting(mod,state) || !synthRoutingSetter(mod)) return false;refreshRoutingWorkspace();resized();return true;}
+    return moduleSetter_ && moduleSetter_(display_.id,state);
+}
+bool OscillatorCard::dropSynthFilter(SynthFilterId id) {
+    if(!snapshotGetter_ || !synthRoutingSetter) return false;const auto state=snapshotGetter_();auto mod=state.modulation;
+    if(!insertSynthFilter(mod,state.oscillators,id,display_.id) || !synthRoutingSetter(mod)) return false;syncFromModel();return true;
+}
+bool OscillatorCard::isInterestedInDragSource(const SourceDetails& d) {
+    if(!snapshotGetter_ || !synthRoutingSetter || !d.description.toString().startsWith("MCT_SYNTH_FILTER:")) return false;
+    const auto id=std::uint32_t(d.description.toString().fromFirstOccurrenceOf(":",false,false).getIntValue());const auto state=snapshotGetter_();return synthFilterSlot(state.modulation.synthFilters,id)<maxSynthFilters;
+}
+void OscillatorCard::itemDragEnter(const SourceDetails& d) {synthDropOver_=isInterestedInDragSource(d);synthDropAllowed_=false;if(synthDropOver_) {const auto state=snapshotGetter_();auto mod=state.modulation;const auto id=std::uint32_t(d.description.toString().fromFirstOccurrenceOf(":",false,false).getIntValue());synthDropAllowed_=insertSynthFilter(mod,state.oscillators,id,display_.id);}repaint();}
+void OscillatorCard::itemDragExit(const SourceDetails&) {synthDropOver_=false;repaint();}
+void OscillatorCard::itemDropped(const SourceDetails& d) {synthDropOver_=false;if(isInterestedInDragSource(d)) dropSynthFilter(std::uint32_t(d.description.toString().fromFirstOccurrenceOf(":",false,false).getIntValue()));repaint();}
+void OscillatorCard::mouseDrag(const juce::MouseEvent& e) {
+    if(e.originalComponent!=this || !headerLayout().title.contains(e.getMouseDownPosition()) || e.getDistanceFromDragStart()<7) return;
+    if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) if(!container->isDragAndDropActive()) container->startDragging("MCT_SYNTH_OSC:"+juce::String(display_.id),this);
 }
 
 OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
@@ -2118,6 +2136,7 @@ void OscillatorRack::createCard(unsigned moduleId) {
             return snapshotGetter_ ? snapshotGetter_() : mct::origami::InstrumentState{};
         });
 
+    card->synthRoutingSetter=synthRoutingSetter_;
     card->onWavetableEditorRequested=[safe](unsigned id) {
         if(safe!=nullptr && safe->onWavetableEditorRequested)
             safe->onWavetableEditorRequested(id);

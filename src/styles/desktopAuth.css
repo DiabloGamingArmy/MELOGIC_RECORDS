@@ -1,0 +1,19 @@
+:root { color-scheme: dark; font-family: Arial, sans-serif; color: #eee; background: #090a0c; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+main { width: min(480px, calc(100% - 64px)); border-top: 1px solid #393b40; padding: 30px 0; }
+.brand { font-size: 12px; letter-spacing: .18em; color: #999ca4; }
+h1 { font-size: 26px; font-weight: 500; margin: 30px 0 24px; }
+p { line-height: 1.6; overflow-wrap: anywhere; }
+.notice { color: #989ba2; font-size: 13px; margin: 26px 0; }
+#identity span { display: block; }
+#account-name { font-weight: 600; }
+#account-email { color: #b6b8bf; font-size: 14px; }
+[hidden] { display: none !important; }
+#success-icon svg { width: 36px; height: 36px; fill: none; stroke: #b6b8bf; stroke-width: 1.5; margin-top: 24px; }
+#completed h1 { margin-top: 20px; }
+#status { color: #989ba2; font-size: 13px; }
+button { border: 1px solid #55585e; border-radius: 0; padding: 13px 16px; background: #17191d; color: #eee; cursor: pointer; margin: 0 10px 24px 0; font-size: 11px; letter-spacing: .06em; }
+button:first-child { border-color: #9d373e; }
+button:hover { background: #25272c; }
+button:disabled { opacity: .4; cursor: default; }
+button:focus-visible { outline: 2px solid #b6b8bf; outline-offset: 3px; }

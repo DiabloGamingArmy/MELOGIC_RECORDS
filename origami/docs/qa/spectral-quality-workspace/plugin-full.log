@@ -1,0 +1,58 @@
+PASS Spectral Tune plugin/UI audit
+Init final processor peak=0.287903 dB=-10.8151 RMS=0.142194
+Audio card drive quick=3 total=4 visual=1
+Audio card compressor quick=3 total=26 visual=10
+Audio card limiter quick=3 total=3 visual=7
+Audio card filter quick=3 total=8 visual=8
+Audio card equalizer quick=3 total=40 visual=9
+Audio card chorus quick=3 total=5 visual=4
+Audio card flanger quick=3 total=6 visual=4
+Audio card phaser quick=3 total=7 visual=11
+Audio card spatial quick=3 total=6 visual=12
+Audio card delay quick=3 total=6 visual=2
+Audio card reverb quick=3 total=6 visual=3
+Audio card diffuse quick=3 total=3 visual=6
+Audio card gain quick=1 total=2 visual=13
+Audio card stereo quick=2 total=3 visual=13
+[N07 ui] timer sync unchanged 0.00354 us | model change + rebuild 582.596 us | hidden model change 28.4458 us | graph paint 100% 255.804 us, 50% 952.112 us, 40% 1302.76 us
+[menu] AUDIO >  (0 items)
+[menu]     EFFECTS >  (0 items)
+[menu]         DYNAMICS >  (2 items)
+[menu]         FILTER / EQ >  (2 items)
+[menu]         DISTORTION >  (1 items)
+[menu]         MODULATION >  (3 items)
+[menu]         SPECTRAL >  (1 items)
+[menu]         SPATIAL >  (1 items)
+[menu]         TIME >  (3 items)
+[menu]         UTILITY >  (2 items)
+[menu]     ROUTING >  (2 items)
+[menu] CONTROL >  (0 items)
+[menu]     MODULATION SOURCES >  (22 items)
+[menu]     MATH >  (5 items)
+[menu]     SHAPING >  (6 items)
+[menu]     UTILITY >  (3 items)
+[menu]     UTILITIES >  (1 items)
+[menu] EVENTS >  (0 items)
+[menu]     NOTE / GATE / TRIGGER >  (5 items)
+[menu]     TRANSPORT >  (1 items)
+[menu]     TARGETS >  (1 items)
+[menu] LOGIC / GENERATIVE >  (0 items)
+[menu]     CONVERSION >  (3 items)
+[menu]     LOGIC >  (6 items)
+[menu]     STATEFUL >  (5 items)
+[menu]     SEQUENCING >  (6 items)
+[menu]     GENERATIVE >  (3 items)
+[menu] cable-drop root EVENT
+[content] preset load during held notes: max sample step 0.0369981 (the held notes' own max step 0.0599174)
+[content] 10000 records: cached index 49.6045 ms, browser open 3.41125 ms, search keystroke 0.88525 ms, clear search + full paint 8.73608 ms
+[qa] MAIN IN peaks hard-left: L 0.145682 R 0.0260573
+[qa] MAIN IN peaks hard-right: L 0 R 0.126595
+[Origami P0 timing] oscillators=1 avgMs=0.0336094 medianMs=0.0338333 worstMs=0.0369167 activeModules=1
+[Origami P0 topology] oscillators=1 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=2 avgMs=0.0412799 medianMs=0.0411667 worstMs=0.0468333 activeModules=2
+[Origami P0 topology] oscillators=2 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=3 avgMs=0.0511042 medianMs=0.0505833 worstMs=0.0540833 activeModules=3
+[Origami P0 topology] oscillators=3 freq=439.453 rms=0.069983 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=4 avgMs=0.0594909 medianMs=0.058625 worstMs=0.0692917 activeModules=4
+[Origami P0 topology] oscillators=4 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+PASS: 1635910 plugin/UI checks

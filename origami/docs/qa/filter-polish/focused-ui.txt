@@ -1,0 +1,41 @@
+[N07 ui] timer sync unchanged 0.003335 us | model change + rebuild 556.018 us | hidden model change 27.2417 us | graph paint 100% 255.525 us, 50% 941.083 us, 40% 1361.98 us
+[menu] AUDIO >  (0 items)
+[menu]     EFFECTS >  (0 items)
+[menu]         DYNAMICS >  (2 items)
+[menu]         FILTER / EQ >  (2 items)
+[menu]         DISTORTION >  (1 items)
+[menu]         MODULATION >  (3 items)
+[menu]         SPATIAL >  (1 items)
+[menu]         TIME >  (3 items)
+[menu]         UTILITY >  (2 items)
+[menu]     ROUTING >  (2 items)
+[menu] CONTROL >  (0 items)
+[menu]     MODULATION SOURCES >  (22 items)
+[menu]     MATH >  (5 items)
+[menu]     SHAPING >  (6 items)
+[menu]     UTILITY >  (3 items)
+[menu]     UTILITIES >  (1 items)
+[menu] EVENTS >  (0 items)
+[menu]     NOTE / GATE / TRIGGER >  (5 items)
+[menu]     TRANSPORT >  (1 items)
+[menu]     TARGETS >  (1 items)
+[menu] LOGIC / GENERATIVE >  (0 items)
+[menu]     CONVERSION >  (3 items)
+[menu]     LOGIC >  (6 items)
+[menu]     STATEFUL >  (5 items)
+[menu]     SEQUENCING >  (6 items)
+[menu]     GENERATIVE >  (3 items)
+[menu] cable-drop root EVENT
+[content] preset load during held notes: max sample step 0.0369981 (the held notes' own max step 0.0599174)
+[content] 10000 records: cached index 52.9638 ms, browser open 4.46363 ms, search keystroke 0.995458 ms, clear search + full paint 29.2583 ms
+[qa] MAIN IN peaks hard-left: L 0.145682 R 0.0260573
+[qa] MAIN IN peaks hard-right: L 0 R 0.126595
+[Origami P0 timing] oscillators=1 avgMs=0.0341445 medianMs=0.0343542 worstMs=0.0360833 activeModules=1
+[Origami P0 topology] oscillators=1 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=2 avgMs=0.0429388 medianMs=0.0427708 worstMs=0.0469583 activeModules=2
+[Origami P0 topology] oscillators=2 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=3 avgMs=0.0528581 medianMs=0.0521042 worstMs=0.058 activeModules=3
+[Origami P0 topology] oscillators=3 freq=439.453 rms=0.069983 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+[Origami P0 timing] oscillators=4 avgMs=0.0626328 medianMs=0.0621667 worstMs=0.0698333 activeModules=4
+[Origami P0 topology] oscillators=4 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+PASS: 1608978 plugin/UI checks

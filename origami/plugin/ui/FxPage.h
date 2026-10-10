@@ -11,6 +11,7 @@
 #include "core/nodes/ControlGraph.h"
 #include "NativeChoiceMenu.h"
 #include "core/fx/FxGraph.h"
+#include "core/fx/FxRenderer.h"
 #include "core/fx/FxWorkspace.h"
 #include <array>
 #include <functional>
@@ -46,6 +47,27 @@ struct FxModuleMenu {
     static std::optional<fx::FxModuleSpec> decode(int id);
 };
 
+// Internal audio-card proportions; event/control cards do not use this policy.
+struct AudioCardLayout {
+    juce::Rectangle<int> viewport,labels,controls;
+    static AudioCardLayout forBody(juce::Rectangle<int> body,int count,int diameter,int textHeight) noexcept {
+        auto labels=body.removeFromBottom(textHeight);
+        diameter=std::min(diameter,labels.getWidth()/std::max(1,count));
+        auto controls=body.removeFromBottom(diameter);
+        return {body,labels,controls};
+    }
+    static AudioCardLayout forBounds(juce::Rectangle<int> bounds,int count) noexcept {
+        // Preserve 46 px knobs and the original low labels; consume footer padding.
+        return forBody(bounds.withTrimmedTop(40).withTrimmedLeft(12).withTrimmedRight(12),count,46,22);
+    }
+    juce::Rectangle<int> knob(int index,int count) const noexcept {
+        const int x0=controls.getX()+controls.getWidth()*index/std::max(1,count);
+        const int x1=controls.getX()+controls.getWidth()*(index+1)/std::max(1,count);
+        return juce::Rectangle<int>(x0,controls.getY(),x1-x0,controls.getHeight())
+            .withSizeKeepingCentre(controls.getHeight(),controls.getHeight());
+    }
+};
+
 class FxNodeComponent final : public juce::Component {
 public:
     FxNodeComponent(FxPage&,fx::FxNodeId);
@@ -53,6 +75,7 @@ public:
     fx::FxNodeId id() const noexcept { return id_; }
     void update(const fx::FxNode&,bool selected);
     void setMeter(float left,float right);
+    void setTelemetry(const fx::FxRenderer::NodeTelemetrySnapshot&);
     void updateDetail();
     void mouseEnter(const juce::MouseEvent&) override;
     void mouseExit(const juce::MouseEvent&) override;
@@ -70,15 +93,21 @@ public:
     void mouseUp(const juce::MouseEvent&) override;
 private:
     void showMenu();
+    AudioCardLayout cardLayout() const noexcept;
+    void chooseSpectral(fx::FxParameterId,juce::TextButton&);
+    std::array<juce::TextButton,12> notes_;
+    juce::TextButton root_,scale_,all_{"ALL"},clear_{"CLEAR"},invert_{"INV"};
     float hitRadius() const noexcept;
     FxPage& page_;
     fx::FxNodeId id_;
     fx::FxNode node_;
     juce::Image previewImage_;
     bool previewDirty_=true;
+    double previewRate_=0;
     bool selected_=false,hovered_=false;
     std::optional<std::pair<bool,std::uint8_t>> hoveredPort_;
     float meterLeft_=0.0f,meterRight_=0.0f;
+    fx::FxRenderer::NodeTelemetrySnapshot telemetry_{};
     juce::TextButton power_{"PWR"},menu_{"..."},remove_{"X"};
     juce::TextButton accessory_{"+ ADD MODULE"}; // MASTER OUT only: moves with the node
     std::vector<std::unique_ptr<juce::Slider>> quick_;
@@ -456,10 +485,15 @@ struct FxPageHost {
     // entering a bus's graph (its IN node) since the last read.
     std::function<std::pair<float,float>(BusId)> inputPeaks;
     std::function<fx::FxRenderer::NodeTelemetrySnapshot(BusId,fx::FxNodeId)> nodeTelemetry;
+    std::function<void(BusId,bool)> nodeTelemetryEnabled;
+    std::function<void(bool,const char*)> documentTransaction;
+    std::function<bool()> canUndoDocument,canRedoDocument;
+    std::function<void()> undoDocument,redoDocument;
 };
 
 class FxPage final : public juce::Component, private juce::Timer {
 public:
+    double responseSampleRate() const {const auto v=bindings_.visualization?bindings_.visualization():RuntimeVisualizationSnapshot{};return v.sampleRate>0?v.sampleRate:48000.;}
     using PeakSource=std::function<std::pair<float,float>()>;
     using HostBindings=FxPageHost;
     FxPage(fx::FxWorkspace&,ModulationBindings,FxPageHost host=FxPageHost{});
@@ -490,8 +524,8 @@ public:
     std::uint32_t canvasPaintCount() const noexcept;
 
     // Interaction API (node components, canvas, toolbar, sidebar, inspector, tests).
-    fx::FxGraphDocument& document() noexcept { return *document_; }
-    const fx::FxGraph& graph() const noexcept { return document_->graph(); }
+    fx::FxGraphDocument& document() noexcept { refresh(); return *document_; }
+    const fx::FxGraph& graph() const noexcept { const auto* d=workspace_.find(bus_); return (d ? d : workspace_.find(mainBusId))->graph(); }
     fx::FxWorkspace& workspace() noexcept { return workspace_; }
     // Bus selection: the graph workspace shows the selected bus's graph.
     // Every bus keeps processing regardless of which one is shown.
@@ -501,7 +535,7 @@ public:
     void requestDeleteBus(BusId);
     bool deleteBus(BusId);
     juce::String busName(BusId) const;
-    fx::FxNodeId addSynthFilterCopy(fx::FxPoint centre);
+    fx::FxNodeId addSynthFilterCopy(fx::FxPoint centre,SynthFilterId source=0);
     fx::FxNodeId selectedNode() const noexcept { return selected_; }
     void selectNode(fx::FxNodeId);
     bool deleteNode(fx::FxNodeId);
@@ -550,8 +584,10 @@ public:
     FxSidebar& sidebar() noexcept { return sidebar_; }
     float graphZoom() const noexcept { return view_.zoom(); }
     juce::String inspectorHeadline() const;
-    juce::String parameterTabName() const;
-    void selectParameterTab(int);
+    juce::Viewport& inspectorViewport() noexcept;
+    void refreshInspectorTelemetry();
+    bool canUndo() const noexcept {if(host_.canUndoDocument)return host_.canUndoDocument();const auto* d=workspace_.find(bus_); return d && (d->canUndo() || (lastWorkspaceGeneration_==workspace_.generation() && !controlUndo_.empty()));}
+    bool canRedo() const noexcept {if(host_.canRedoDocument)return host_.canRedoDocument();const auto* d=workspace_.find(bus_); return d && (d->canRedo() || (lastWorkspaceGeneration_==workspace_.generation() && !controlRedo_.empty()));}
     std::size_t modulationRowCount() const;
     std::pair<float,float> meterLevels() const noexcept { return {meterLeft_,meterRight_}; }
     // The IN node meters (displayed L / R) and one telemetry tick (tests).
@@ -680,7 +716,12 @@ public:
     juce::Slider* controlSequenceControl(std::size_t index) noexcept; // N06 SEQUENCER inspector
 
 private:
-    class SelectedPanel;
+    class HistoryEdit {
+    public:
+        explicit HistoryEdit(FxPage& p,const char* name):page_(p){if(page_.host_.documentTransaction)page_.host_.documentTransaction(true,name);}
+        ~HistoryEdit(){if(page_.host_.documentTransaction)page_.host_.documentTransaction(false,"");}
+    private: FxPage& page_;
+    };
     class ParametersPanel;
     class ModuleParametersPanel;
     class FxMacrosPanel;
@@ -744,16 +785,15 @@ private:
     std::function<void()> pendingConfirm_;
     juce::String confirmTitle_,confirmBody_,confirmAction_;
     fx::FxNodeId selected_=fx::invalidFxNodeId;
-    std::uint64_t lastRevision_=0;
+    std::uint64_t lastRevision_=0,lastWorkspaceGeneration_=0;
     float meterLeft_=0.0f,meterRight_=0.0f;
 
-    std::array<juce::TextButton,5> modes_;
-    juce::TextButton undo_{"UNDO"},redo_{"REDO"},clear_{"CLEAR"},templates_{"TEMPLATES"},add_{"+ ADD MODULE"};
+    juce::TextButton routing_;
+    juce::TextButton clear_{"CLEAR"},templates_{"TEMPLATES"},add_{"+ ADD MODULE"};
     juce::TextButton zoomOut_{"-"},zoomReset_{"100%"},zoomIn_{"+"},zoomFit_{"FIT"};
     FxSidebar sidebar_;
     FxCanvas canvas_;
     FxGraphView view_;
-    std::unique_ptr<SelectedPanel> selectedPanel_;
     std::unique_ptr<ParametersPanel> parametersPanel_;
     std::unique_ptr<ModuleParametersPanel> modulePanel_;
     std::unique_ptr<FxMacrosPanel> macrosPanel_;

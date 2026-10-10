@@ -1,0 +1,35 @@
+[PEAK response] 360 Synth/Nodes probe pairs; worst Synth error 1.10186e-06 dB
+[Comb response] 432 measured probes, worst error 1.58216e-05 dB
+[filter response] 6656 independent Synth probes; worst meaningful dB error 0.00577907216882; worst absolute magnitude error 1.41515030094e-06
+dynamic topology
+oscillator control cache
+simple playback + visualization policy
+clean sine simple path P0
+performance visualization sources
+voice observation
+visualization cadence
+performance source curves
+QoS voice admission
+audio-rate fast math
+oscillator generation
+spectral preparation
+random spectral amount
+spectral playback
+spectral concurrent eviction
+random spectral morph
+random spectral morph crossing
+realtime thread policy
+wavetable handoff
+wavetable handoff concurrency
+optimised-path golden renders
+spectral transitions
+manual-edit dezipper
+nested modulation realtime
+registry and patches
+envelope timing
+pitch and blocks
+voices and realtime
+performance modes
+signal behavior
+oscillator and filter
+PASS: 1403265 checks

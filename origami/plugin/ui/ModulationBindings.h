@@ -52,6 +52,7 @@ inline juce::String macroLabel(const ModulationState& state,std::size_t id) {
 // Any direct route source's label ("LFO 2", "MOD WHEEL", a macro's name).
 inline juce::String modulationSourceLabel(const ModulationState& state,ModSource s) {
     using S=ModSource;
+    if(const auto* a=findSourceInstance(state,s)) return juce::String(sourceFamilyName(a->family))+" "+juce::String(a->number);
     if(const auto id=macroIdOf(s)) return macroLabel(state,id);
     switch(s) {
         case S::Env1:return "ENV 1"; case S::Env2:return "ENV 2"; case S::Env3:return "ENV 3";

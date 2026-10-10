@@ -1,0 +1,105 @@
+PASS matrix (4.06763 s)
+  scaling 1 voices x 1 OSC x 16 unison = 16 lanes: median=0.679833 p99=0.704792 ms/2048 (48k deadline=42.667ms)
+  scaling 8 voices x 1 OSC x 16 unison = 128 lanes: median=3.69875 p99=3.98817 ms/2048 (48k deadline=42.667ms)
+  scaling 16 voices x 1 OSC x 16 unison = 256 lanes: median=7.16583 p99=7.287 ms/2048 (48k deadline=42.667ms)
+  scaling 1 voices x 4 OSC x 16 unison = 64 lanes: median=1.82363 p99=1.86308 ms/2048 (48k deadline=42.667ms)
+  scaling 8 voices x 4 OSC x 16 unison = 512 lanes: median=12.7299 p99=18.4125 ms/2048 (48k deadline=42.667ms)
+  scaling 16 voices x 4 OSC x 16 unison = 1024 lanes: median=24.8493 p99=25.0417 ms/2048 (48k deadline=42.667ms)
+  scaling 1 voices x 16 OSC x 16 unison = 256 lanes: median=6.43163 p99=6.54612 ms/2048 (48k deadline=42.667ms)
+  scaling 8 voices x 16 OSC x 16 unison = 2048 lanes: median=48.1328 p99=49.7791 ms/2048 (48k deadline=42.667ms)
+  scaling 16 voices x 16 OSC x 16 unison = 4096 lanes: median=95.7678 p99=96.2881 ms/2048 (48k deadline=42.667ms)
+PASS oscillator (17.8574 s)
+PASS filters (0.0387321 s)
+  drive @ 44100 peak=7.82046 settings=5
+  compressor @ 44100 peak=96.4951 settings=9
+  limiter @ 44100 peak=0.995938 settings=5
+  filter @ 44100 peak=9.45345 settings=14
+  equalizer @ 44100 peak=9.18368 settings=69
+  chorus @ 44100 peak=7.98881 settings=5
+  flanger @ 44100 peak=7.79254 settings=5
+  phaser @ 44100 peak=9.11185 settings=11
+  spatial @ 44100 peak=9.91154 settings=8
+  delay @ 44100 peak=7.90173 settings=7
+  reverb @ 44100 peak=7.8551 settings=5
+  diffuse @ 44100 peak=12.3219 settings=5
+  gain @ 44100 peak=126.039 settings=7
+  stereo @ 44100 peak=8 settings=7
+  spectralTune @ 44100 peak=10.1603 settings=4126
+  drive @ 48000 peak=7.81787 settings=5
+  compressor @ 48000 peak=95.5263 settings=9
+  limiter @ 48000 peak=0.993242 settings=5
+  filter @ 48000 peak=9.6044 settings=14
+  equalizer @ 48000 peak=12.197 settings=69
+  chorus @ 48000 peak=7.97833 settings=5
+  flanger @ 48000 peak=7.77346 settings=5
+  phaser @ 48000 peak=9.10383 settings=11
+  spatial @ 48000 peak=10.4924 settings=8
+  delay @ 48000 peak=7.90242 settings=7
+  reverb @ 48000 peak=7.84249 settings=5
+  diffuse @ 48000 peak=13.2914 settings=5
+  gain @ 48000 peak=125.66 settings=7
+  stereo @ 48000 peak=8 settings=7
+  spectralTune @ 48000 peak=9.52308 settings=4126
+  drive @ 88200 peak=7.39335 settings=5
+  compressor @ 88200 peak=92.9137 settings=9
+  limiter @ 88200 peak=0.991385 settings=5
+  filter @ 88200 peak=9.02251 settings=14
+  equalizer @ 88200 peak=8.30161 settings=69
+  chorus @ 88200 peak=7.98761 settings=5
+  flanger @ 88200 peak=7.24845 settings=5
+  phaser @ 88200 peak=9.05476 settings=11
+  spatial @ 88200 peak=8.87814 settings=8
+  delay @ 88200 peak=7.75997 settings=7
+  reverb @ 88200 peak=7.61505 settings=5
+  diffuse @ 88200 peak=9.84539 settings=5
+  gain @ 88200 peak=117.113 settings=7
+  stereo @ 88200 peak=8 settings=7
+  spectralTune @ 88200 peak=10.0456 settings=4126
+  drive @ 96000 peak=7.26886 settings=5
+  compressor @ 96000 peak=92.9461 settings=9
+  limiter @ 96000 peak=0.989874 settings=5
+  filter @ 96000 peak=8.79444 settings=14
+  equalizer @ 96000 peak=8.3315 settings=69
+  chorus @ 96000 peak=7.98749 settings=5
+  flanger @ 96000 peak=7.1445 settings=5
+  phaser @ 96000 peak=8.41525 settings=11
+  spatial @ 96000 peak=9.20928 settings=8
+  delay @ 96000 peak=7.72261 settings=7
+  reverb @ 96000 peak=7.55932 settings=5
+  diffuse @ 96000 peak=9.30583 settings=5
+  gain @ 96000 peak=114.849 settings=7
+  stereo @ 96000 peak=11.6022 settings=7
+  spectralTune @ 96000 peak=9.08071 settings=4126
+  drive @ 192000 peak=6.05638 settings=5
+  compressor @ 192000 peak=91.8695 settings=9
+  limiter @ 192000 peak=0.966051 settings=5
+  filter @ 192000 peak=8.89599 settings=14
+  equalizer @ 192000 peak=8.27546 settings=69
+  chorus @ 192000 peak=7.99042 settings=5
+  flanger @ 192000 peak=6.46991 settings=5
+  phaser @ 192000 peak=8.83823 settings=11
+  spatial @ 192000 peak=8.59903 settings=8
+  delay @ 192000 peak=7.24163 settings=7
+  reverb @ 192000 peak=7.07349 settings=5
+  diffuse @ 192000 peak=9.08595 settings=5
+  gain @ 192000 peak=87.2568 settings=7
+  stereo @ 192000 peak=8 settings=7
+  spectralTune @ 192000 peak=10.5618 settings=4126
+PASS effects (29.3754 s)
+PASS midi (2.54242 s)
+PASS arpStop (4.61588 s)
+PASS modulation (1.34627 s)
+PASS master (0.0101905 s)
+PASS eqMaster (0.0994608 s)
+  tail delay peak=0.308594 final=2.53639e-08
+  tail reverb peak=0.0106548 final=3.07357e-17
+  tail flanger peak=0.469868 final=0
+  tail phaser peak=0.414331 final=0
+  tail filter peak=0.0866025 final=6.56741e-38
+PASS tails (0.695334 s)
+PASS states (0.764118 s)
+PASS routing (0.144335 s)
+PASS lifecycle (0.892057 s)
+  five minutes / 14400000 frames; peak=0.034508 rms=0.00643595 resident warm/end bytes=57884672/49414144
+PASS long (91.0994 s)
+B01 seed=0xb010cafe checks=2438180 samples=318781890 callbacks=392344 failures=0

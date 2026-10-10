@@ -6,6 +6,13 @@
 #include <functional>
 #include <vector>
 namespace mct::origami::ui {
+// Optional document owner: asynchronous menu choices are one conceptual edit.
+struct DocumentActionHost {
+    virtual ~DocumentActionHost()=default;
+    virtual void beginDocumentAction()=0;
+    virtual void endDocumentAction()=0;
+    virtual bool replayDocumentAction(bool redo)=0;
+};
 struct NativeChoiceItem {
     int id=0;
     juce::String text;

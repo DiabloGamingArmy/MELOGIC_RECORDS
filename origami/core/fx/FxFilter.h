@@ -3,6 +3,8 @@
 #include <cmath>
 #include <complex>
 #include <cstdint>
+#include "../dsp/FilterTypes.h"
+#include "../dsp/FilterResponse.h"
 
 // One state-variable filter primitive (Simper/Cytomic TPT SVF) shared by the
 // FILTER, EQUALIZER, PHASER and multiband COMPRESSOR DSP and by the UI's
@@ -12,9 +14,7 @@
 // s = j*tan(pi f/fs)/g that is H(s) = m0 + (m1*s + m2)/(s^2 + k s + 1).
 namespace mct::origami::fx {
 
-enum class SvfShape : std::uint8_t {
-    LowPass=0, HighPass=1, BandPass=2, Notch=3, Bell=4, AllPass=5, LowShelf=6, HighShelf=7
-};
+using SvfShape=dsp::FilterType;
 
 struct SvfCoefficients {
     double g=0.1,k=1.4142135623730951,m0=0.0,m1=0.0,m2=1.0;
@@ -30,6 +30,7 @@ inline SvfCoefficients svfDesign(SvfShape shape,double frequency,double q,double
     c.g=std::tan(pi*fc/sampleRate);
     c.k=1.0/q;
     switch(shape) {
+    case SvfShape::Comb: // FilterFx dispatches its independent comb runtime
     case SvfShape::LowPass: c.m0=0; c.m1=0; c.m2=1; break;
     case SvfShape::HighPass: c.m0=1; c.m1=-c.k; c.m2=-1; break;
     case SvfShape::BandPass: c.m0=0; c.m1=c.k; c.m2=0; break; // unity peak gain
@@ -47,12 +48,7 @@ inline SvfCoefficients svfDesign(SvfShape shape,double frequency,double q,double
 }
 
 inline double svfMagnitude(const SvfCoefficients& c,double frequency,double sampleRate) noexcept {
-    constexpr double pi=3.14159265358979323846;
-    const double f=std::fmin(std::fmax(frequency,1.0),sampleRate*0.4999);
-    const double omega=std::tan(pi*f/sampleRate)/c.g;
-    const std::complex<double> s(0.0,omega);
-    const auto h=c.m0+(c.m1*s+c.m2)/(s*s+c.k*s+1.0);
-    return std::abs(h);
+    return std::abs(dsp::svfTransfer(c.g,c.k,c.m0,c.m1,c.m2,frequency,sampleRate));
 }
 
 struct SvfState {

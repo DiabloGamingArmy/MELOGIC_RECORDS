@@ -1,0 +1,58 @@
+{
+  "permissions": [
+    "productReview",
+    "listingEdit",
+    "userRead",
+    "userModerate",
+    "orderSupport",
+    "roleManage",
+    "auditRead",
+    "settingsManage",
+    "emailSend",
+    "licensesManage"
+  ],
+  "roles": {
+    "owner": "*",
+    "admin": [
+      "productReview",
+      "listingEdit",
+      "userRead",
+      "userModerate",
+      "orderSupport",
+      "auditRead",
+      "settingsManage",
+      "emailSend",
+      "licensesManage"
+    ],
+    "marketplaceReviewer": [
+      "productReview"
+    ],
+    "listingEditor": [
+      "listingEdit"
+    ],
+    "support": [
+      "userRead",
+      "orderSupport",
+      "emailSend"
+    ],
+    "auditor": [
+      "auditRead"
+    ]
+  },
+  "aliases": {
+    "owner": "owner",
+    "admin": "admin",
+    "administrator": "admin",
+    "marketplacereviewer": "marketplaceReviewer",
+    "marketplace_reviewer": "marketplaceReviewer",
+    "marketplace-reviewer": "marketplaceReviewer",
+    "reviewer": "marketplaceReviewer",
+    "listingeditor": "listingEditor",
+    "listing_editor": "listingEditor",
+    "listing-editor": "listingEditor",
+    "support": "support",
+    "auditor": "auditor",
+    "remove": "remove",
+    "none": "remove"
+  }
+}

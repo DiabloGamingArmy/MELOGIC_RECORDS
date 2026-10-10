@@ -22,6 +22,8 @@ FxWorkspace::FxWorkspace() { reset(); }
 
 FxGraphDocument& FxWorkspace::add(FxBusId bus,FxGraph graph) {
     auto doc=std::make_unique<FxGraphDocument>(std::move(graph));
+    doc->onEditBegin=[this]{if(onEditBegin)onEditBegin();};
+    doc->onEditEnd=[this]{if(onEditEnd)onEditEnd();};
     doc->onChanged=[this]{ if(onChanged) onChanged(); };
     documents_.emplace_back(bus,std::move(doc));
     return *documents_.back().second;
@@ -31,6 +33,7 @@ void FxWorkspace::reset() {
     documents_.clear();
     globals_={};
     add(fxMainBusId,makeDefaultFxGraph(fxMainBusId));
+    generation_.fetch_add(1,std::memory_order_release);
 }
 
 FxGraphDocument& FxWorkspace::document(FxBusId bus) {
@@ -55,6 +58,7 @@ bool FxWorkspace::removeBus(FxBusId bus) {
     const auto before=documents_.size();
     documents_.erase(std::remove_if(documents_.begin(),documents_.end(),[bus](const auto& e){return e.first==bus;}),documents_.end());
     if(documents_.size()==before) return false;
+    generation_.fetch_add(1,std::memory_order_release);
     if(onChanged) onChanged();
     return true;
 }
@@ -68,8 +72,10 @@ std::vector<FxBusId> FxWorkspace::buses() const {
 void FxWorkspace::setGlobals(const FxGlobalSettings& settings) {
     FxGraph probe; // reuse FxGraph's validated clamping
     probe.setGlobals(settings);
+    if(onEditBegin)onEditBegin();
     globals_=probe.globals();
     if(onChanged) onChanged();
+    if(onEditEnd)onEditEnd();
 }
 
 std::vector<std::uint8_t> FxWorkspace::encode() const {
@@ -118,6 +124,7 @@ bool FxWorkspace::decode(const void* data,std::size_t size) {
     documents_.clear();
     globals_=probe.globals();
     for(auto& [bus,graph]:graphs) add(bus,std::move(graph));
+    generation_.fetch_add(1,std::memory_order_release);
     if(onChanged) onChanged();
     return true;
 }
@@ -127,6 +134,7 @@ void FxWorkspace::adoptLegacyMainGraph(FxGraph graph) {
     globals_=graph.globals();
     graph.setGlobals(FxGlobalSettings{});
     add(fxMainBusId,std::move(graph));
+    generation_.fetch_add(1,std::memory_order_release);
     if(onChanged) onChanged();
 }
 

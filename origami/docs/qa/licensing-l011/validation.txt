@@ -1,0 +1,50 @@
+L01.1 validation — 2026-10-09
+Baseline: 783d2baeef3b1b296a02904dc891826905bd4c8d; clean tree.
+Baseline Release wrappers build passed; relevant CTest 4/4 passed in 43.64 seconds.
+
+Clean-first complete Release build passed; final changes rebuilt and validated.
+Final complete CTest: 12/12 passed in 135.75 seconds.
+PASS: 2779 state checks
+PASS: 2594683 checks
+PASS: V22.0 wavetable-bank foundation
+PASS: 3938 modulation foundation checks
+PASS: 653 FX graph/DSP/bus checks
+PASS: 3954183 spectral checks; RT allocations=0 deletes=0 C mallocs=0 C frees=0
+PASS: 74 quality checks
+PASS: 1647404 plugin/UI checks
+PASS: 98 content library checks
+PASS account 61 checks
+LEGACY FINAL peak=52983838.7595 CORRECTED peak=12.1969661713
+PASS EQ checks=373552 inspectedSamples=157011364
+B01 seed=0xb010cafe checks=2844658 samples=318781890 callbacks=392344 failures=0
+
+Focused authorization UI/audio capture run: 3285 checks passed; screenshots at 960/1440/1920.
+Native account: 61 checks; includes isolated Keychain and actual loopback request-byte validation.
+Rules emulator: 9/9 passed. Desktop authentication + license backend emulator: 9/9 passed (includes 4 redemption subtests), zero skips.
+Full Functions suite: 121 tests / 118 pass / 1 pre-existing musicDistribution assertion failure / 2 emulator-only skips.
+Both emulator-only suites executed separately above without skips.
+Existing musicDistribution source/test unchanged from baseline; no unrelated assertion was weakened.
+Web configuration check and Vite build passed (existing large-chunk warning).
+
+Controlled native begin probe (no real account):
+probe stage=begin_login HTTP=404 kind=4
+Live native transport probe uses an intentionally invalid non-secret token, never a real user credential:
+legacy HTTP=403 reached_invalid_custom_token=0 api_identifier_rejected=1
+repaired HTTP=400 reached_invalid_custom_token=1 api_identifier_rejected=0
+Production GET checks: beginDesktopLogin HTTP 404 and /auth/desktop HTTP 404; not deployed.
+Root-fix deployment and real browser/Firebase session completion remain pending explicit production approval and qualification.
+
+Shipping artifact audit (fresh tests-OFF build):
+Standalone/MCT Origami.app: fresh Release build; local ad-hoc signature verifies; no sanitizer runtimes or test authorization/installer symbols; no credential/private-key fixture strings.
+AU/MCT Origami.component: fresh Release build; local ad-hoc signature verifies; no sanitizer runtimes or test authorization/installer symbols; no credential/private-key fixture strings.
+VST3/MCT Origami.vst3: fresh Release build; local ad-hoc signature verifies; no sanitizer runtimes or test authorization/installer symbols; no credential/private-key fixture strings.
+Local ad-hoc signatures only; no distribution signing/notarization claimed.
+
+Source security audit: 23 changed text files scanned; zero private-key/service-account/JWT/personal-path findings.
+No shipping test provider, in-memory installer, fixture credentials or sanitizer symbols.
+Production diagnostic logging: fixed stage and HTTP status only, compiled only under JUCE_DEBUG.
+Account identity/refresh/access tokens and raw keys remain outside all patch/preset/history state.
+processBlock: one lock-free bool load and existing bounded runtime reset/clear; no worker/service lock or IO.
+No production deployment, production key issuance or entitlement grant performed.
+No interactive Standalone/Logic/VST3 account claim; automated format-facing fixtures only.
+ASAN UNAVAILABLE — TOOLCHAIN/RUNTIME, unchanged; not investigated again.

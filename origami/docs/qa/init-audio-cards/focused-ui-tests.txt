@@ -1,0 +1,16 @@
+Init final processor peak=0.287903 dB=-10.8151 RMS=0.142194
+Audio card drive quick=3 total=4 visual=1
+Audio card compressor quick=3 total=26 visual=10
+Audio card limiter quick=3 total=3 visual=7
+Audio card filter quick=3 total=8 visual=8
+Audio card equalizer quick=3 total=40 visual=9
+Audio card chorus quick=3 total=5 visual=4
+Audio card flanger quick=3 total=6 visual=4
+Audio card phaser quick=3 total=7 visual=11
+Audio card spatial quick=3 total=6 visual=12
+Audio card delay quick=3 total=6 visual=2
+Audio card reverb quick=3 total=6 visual=3
+Audio card diffuse quick=3 total=3 visual=6
+Audio card gain quick=1 total=2 visual=13
+Audio card stereo quick=2 total=3 visual=13
+PASS focused Init/audio: 24441 checks

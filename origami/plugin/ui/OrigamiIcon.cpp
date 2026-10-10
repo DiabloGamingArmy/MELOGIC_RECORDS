@@ -35,10 +35,20 @@ Resource resource(IconId id) noexcept {
         case IconId::SnapGrid:          return {"snap_grid_svg",BinaryData::snap_grid_svg,BinaryData::snap_grid_svgSize};
         case IconId::DirectionForward:  return {"direction_forward_svg",BinaryData::direction_forward_svg,BinaryData::direction_forward_svgSize};
         case IconId::DirectionBackward: return {"direction_backward_svg",BinaryData::direction_backward_svg,BinaryData::direction_backward_svgSize};
-        case IconId::Count: break;
+        case IconId::PresetPrevious:case IconId::PresetNext:case IconId::Undo:case IconId::Redo:case IconId::Count: break;
     }
     return {"",nullptr,0};
 }
+}
+
+juce::Path pulldownChevron() {
+    juce::Path p;p.startNewSubPath(-3.f,-1.5f);p.lineTo(0.f,1.5f);p.lineTo(3.f,-1.5f);return p;
+}
+void drawPulldownChevron(juce::Graphics& g,juce::Point<float> centre,juce::Colour colour) {
+    g.setColour(colour);g.strokePath(pulldownChevron(),juce::PathStrokeType(1.2f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded),juce::AffineTransform::translation(centre.x,centre.y));
+}
+OrigamiIcon OrigamiIcon::fromPath(juce::Path path) {
+    OrigamiIcon result;result.bounds_=path.getBounds();result.layers_.push_back({std::move(path),1.f});return result;
 }
 
 OrigamiIcon OrigamiIcon::fromSvg(const void* data,std::size_t size) {
@@ -81,8 +91,24 @@ const OrigamiIcon& icon(IconId id) {
     const auto index=static_cast<std::size_t>(id);
     if(index>=cache.size()) return none;
     if(!loaded[index]) {
-        const auto r=resource(id);
-        cache[index]=OrigamiIcon::fromSvg(r.data,static_cast<std::size_t>(juce::jmax(0,r.size)));
+        if(id==IconId::PresetPrevious || id==IconId::PresetNext || id==IconId::Undo || id==IconId::Redo) {
+            juce::Path centreline,filled;
+            if(id==IconId::PresetPrevious || id==IconId::PresetNext) {
+                centreline=pulldownChevron();
+                centreline.applyTransform(juce::AffineTransform::rotation((id==IconId::PresetPrevious ? 1.f : -1.f)*juce::MathConstants<float>::halfPi));
+            } else {
+                centreline.startNewSubPath(8.f,20.f);
+                centreline.cubicTo(21.f,24.f,25.f,6.f,14.f,4.f);
+                centreline.cubicTo(9.f,3.f,4.f,5.f,4.f,9.f);
+                centreline.startNewSubPath(4.f,3.f);centreline.lineTo(4.f,9.f);centreline.lineTo(10.f,9.f);
+                if(id==IconId::Redo)centreline.applyTransform(juce::AffineTransform::scale(-1.f,1.f));
+            }
+            juce::PathStrokeType(1.2f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded).createStrokedPath(filled,centreline);
+            cache[index]=OrigamiIcon::fromPath(std::move(filled));
+        } else {
+            const auto r=resource(id);
+            cache[index]=OrigamiIcon::fromSvg(r.data,static_cast<std::size_t>(juce::jmax(0,r.size)));
+        }
         loaded[index]=true;
     }
     return cache[index];

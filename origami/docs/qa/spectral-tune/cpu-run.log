@@ -1,0 +1,4 @@
+Command: origami/build-multihost/origami_spectral_tests --benchmark origami/docs/qa/spectral-tune/cpu.csv
+Exit status: 0 (October 8, 2026).
+128 rows; complete renderer, live spectrum telemetry enabled, tonal/broadband fixtures.
+Exit 0 also confirms the benchmark's realtime C++/C allocation/deletion guards stayed at zero.

@@ -1,0 +1,19 @@
+motion smooth=0 carrier=0.131293 coherence=0.806567
+motion smooth=80 carrier=0.131293 coherence=0.806567
+motion smooth=500 carrier=0.131293 coherence=0.806567
+boundary jitter carrier=0.14525
+shift source=330 shift=7 target=494.441 amplitude=0.149718
+shift source=330 shift=12 target=660 amplitude=0.148947
+shift source=330 shift=19 target=988.883 amplitude=0.148477
+shift source=330 shift=24 target=1320 amplitude=0.146912
+shift source=3000 shift=7 target=4494.92 amplitude=0.147269
+shift source=3000 shift=12 target=6000 amplitude=0.149997
+shift source=3000 shift=19 target=8989.84 amplitude=0.145621
+shift source=3000 shift=24 target=12000 amplitude=0.149993
+shift source=7500 shift=7 target=11237.3 amplitude=0.14556
+shift source=7500 shift=12 target=15000 amplitude=0.149999
+shift source=7500 shift=19 target=22474.6 amplitude=0.148943
+shift source=11500 shift=7 target=17230.5 amplitude=0.145493
+shift source=11500 shift=12 target=23000 amplitude=0.146062
+Nyquist rejection RMS=5.25439e-09 original amplitude=7.43291e-06
+PASS: 74 quality checks

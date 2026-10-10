@@ -62,6 +62,7 @@ const grantAdminProducts = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asyn
   if (!targetUser) throw new HttpsError('not-found', 'Target user account was not found.')
 
   const productSnaps = await Promise.all(productIds.map((productId) => db().collection('products').doc(productId).get()))
+  if (productSnaps.some(s => s.data()?.licensing?.enabled || s.id === 'origami')) throw new HttpsError('failed-precondition', 'Use Manage Products for licensable product editions.')
   const missingProductIds = productIds.filter((productId, index) => !productSnaps[index].exists)
   if (missingProductIds.length) {
     throw new HttpsError('not-found', `Products not found: ${missingProductIds.join(', ')}`)

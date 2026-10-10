@@ -351,12 +351,13 @@ double LfoControlStrip::currentBpm() const {
     return std::isfinite(bpm) && bpm>0.0 ? bpm : 120.0;
 }
 
-void LfoControlStrip::setLfo(std::size_t index,const LfoSettings& lfo) {
+void LfoControlStrip::setLfo(std::size_t index,const LfoSettings& lfo,std::uint32_t sourceItem) {
+    sourceItem_=sourceItem ? sourceItem : std::uint32_t(index+1);
     index_=index; lfo_=lfo;
     // mct-origami-nested-modulation-manual-qa: the RATE knob is the canonical
     // LFO RATE destination of the shown LFO (drop a source here, knob menu).
     rate_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::LfoRate));
-    rate_.getProperties().set("mct.mod.itemId",static_cast<int>(index+1));
+    rate_.getProperties().set("mct.mod.itemId",static_cast<int>(sourceItem_));
     for(auto m:{LfoMode::Loop,LfoMode::Envelope,LfoMode::Free})
         modeButton(m).setToggleState(lfo.mode==m,juce::dontSendNotification);
     customPath_.setToggleState(lfo.pointCount>=2,juce::dontSendNotification);
@@ -464,11 +465,11 @@ float LfoControlStrip::rateKnobProportion(float hz) {
     return static_cast<float>(juce::jlimit(0.0,1.0,rate_.valueToProportionOfLength(juce::jlimit(rate_.getMinimum(),rate_.getMaximum(),value))));
 }
 bool LfoControlStrip::rateModulated() const noexcept {
-    return modulationUiHasAnyRoute(ModDestination::LfoRate,0,static_cast<std::uint32_t>(index_+1));
+    return modulationUiHasAnyRoute(ModDestination::LfoRate,0,sourceItem_);
 }
 void LfoControlStrip::paintOverChildren(juce::Graphics& g) {
     if(page()!=Page::Tools || !rate_.isShowing() || !rateModulated()) return;
-    const auto id=static_cast<std::uint32_t>(index_+1);
+    const auto id=sourceItem_;
     const float base=lfoRateToNormalized(lfo_.rateHz);
     const auto range=knobModulationRange(base,ModDestination::LfoRate,0,id);
     const float lo=rateKnobProportion(lfoRateFromNormalized(range.lo)),hi=rateKnobProportion(lfoRateFromNormalized(range.hi));

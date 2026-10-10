@@ -1,0 +1,69 @@
+L01.4 — validation, October 9–10, 2026
+Baseline a49afc85b1ffc1281185a2d020d977034289b0be
+
+Native tests:
+cmake --build origami/build-multihost --target origami_plugin_tests origami_account_tests --parallel 4
+PASS
+ctest --test-dir origami/build-multihost --output-on-failure
+PASS 12/12, 171.82 seconds. Includes complete plugin/UI suite, account,
+state/content, modulation, FX/spectral, EQ headroom and B01 DSP torture.
+ORIGAMI_ACTIVATION_ONLY=1 ORIGAMI_WELCOME_REPORT=/tmp/l014-qa/native \
+  origami/build-multihost/origami_plugin_tests
+PASS final 3631 checks after final assertion additions; actual controls,
+trusted synthetic Service handoff, welcome/audio/history/patch/hover isolation.
+All eight requested visual states captured and inspected.
+
+Browser actual-document DOM tests:
+node --test test/desktopAuthApproval.test.mjs
+PASS 17/17, no skips. Actual HTML and JavaScript with deferred SDK fixtures.
+
+Backend and cross-boundary:
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
+ORIGAMI_NATIVE_CONTRACT_BINARY="$PWD/origami/build-multihost/origami_plugin_tests" \
+node --test functions/test/nativeDesktopContract.test.js
+PASS all 22 native HTTP/backend/Firestore scenarios (23 tests with parent).
+The initial combined run also identified an incorrect new test assumption:
+a previously approved request had already expired when a contradictory action
+was asserted. The assertion was moved before expiry; no production semantics
+or existing security assertion was weakened. Fresh emulator fixtures were used
+for the final core run below.
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node --test \
+  functions/test/desktopAuth.test.js functions/test/adminLicensing.test.js \
+  functions/test/origamiLicensing.test.js
+PASS final 15/15, 6.88 seconds, no skips. New contradictory consent and expiry
+checks included. Only localhost emulator fixture databases were reset.
+
+Website:
+npm run build
+PASS WASM verification and Vite production build. Existing large-chunk warnings.
+Final source build refreshed after the equivalent fallback-format cleanup.
+The pre-existing generated WASM metadata timestamp was restored, not staged.
+
+Clean Release:
+cmake -S origami -B origami/build-l014-release -DCMAKE_BUILD_TYPE=Release \
+  -DJUCE_DIR=/Users/ginobarnes/Downloads/JUCE -DORIGAMI_BUILD_PLUGIN=ON \
+  -DORIGAMI_BUILD_TESTS=OFF
+cmake --build origami/build-l014-release --target \
+  OrigamiPlugin_Standalone OrigamiPlugin_AU OrigamiPlugin_VST3 --parallel 4
+PASS Standalone, AU, VST3 from newly configured tree. Development ad-hoc
+VST3 packaging/signature replacement completed. Shipping symbol inspection:
+production Firebase factory present, test-only loopback factory absent.
+
+Visuals:
+Actual desktop-auth HTML/CSS/JS served from a temporary loopback fixture,
+with Synthetic Account / fixture@example.invalid and fake confirmed callable.
+Captured consent, connected and declined in Codex in-app browser.
+Actual JUCE editor captures: gated, authorized Welcome, after Continue,
+first normal frame pointer outside Panic and first frame pointer inside Panic.
+No personal account/real key/token data included. Temporary browser closed.
+
+Security/RT:
+No production auth/entitlement/key mutation or deployment. No installed plugin
+was overwritten. No callback/DSP source changed. Authorized audio rendered
+under Welcome with zero guarded allocations/frees. Existing closed gate and
+B01/EQ checks pass. Independent account-Service shutdown P0 remains open.
+
+Diff/secrets review:
+No private keys, real credentials, tokens or production identifiers added.
+Synthetic fixtures only. No project/preset/history schema changes.
+Build directories and pre-existing WASM metadata change excluded.

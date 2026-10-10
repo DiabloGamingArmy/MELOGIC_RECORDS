@@ -18,15 +18,35 @@ namespace mct::origami::ui {
 // derive darker/exposure-reduced shades from this rather than hard-coding
 // separate reds throughout the UI.
 //
-// Change this one variable to recolour the complete signal-visual system.
-inline juce::Colour gSignalSourceColour = juce::Colour(0xffff0000);
+// Declarative, bounded appearance data. Theme changes belong to the message
+// thread; DSP never reads these values. Branding is deliberately absent.
+struct ThemeDefinition {
+    juce::Colour signal{0xffff0000};
+    juce::Colour background{0xff090909};
+    juce::Colour panel{0xff111111};
+    juce::Colour keyboard{0xffcdd5d9};   // white keys
+    juce::Colour pressedKey{0xffff0000}; // a pressed key (shaded like the signal surfaces)
+};
+inline ThemeDefinition gTheme{};
+inline bool validTheme(const ThemeDefinition& t) noexcept {
+    const auto brightness=[](juce::Colour c) noexcept {
+        return (0.2126f*c.getFloatRed()+0.7152f*c.getFloatGreen()+0.0722f*c.getFloatBlue());
+    };
+    return t.signal.isOpaque() && t.background.isOpaque() && t.panel.isOpaque() &&
+           t.keyboard.isOpaque() && t.pressedKey.isOpaque() &&
+           brightness(t.background)<0.18f && brightness(t.panel)<0.25f &&
+           brightness(t.signal)>0.20f && brightness(t.keyboard)>0.55f;
+}
+inline void setDeclarativeTheme(const ThemeDefinition& requested) noexcept {
+    gTheme=validTheme(requested) ? requested : ThemeDefinition{};
+}
 
 inline juce::Colour signalSourceColour() noexcept {
-    return gSignalSourceColour;
+    return gTheme.signal;
 }
 
 inline juce::Colour signalShade(float exposure=0.32f,float alpha=1.0f) noexcept {
-    return gSignalSourceColour
+    return gTheme.signal
         .withMultipliedBrightness(juce::jlimit(0.0f,1.0f,exposure))
         .withAlpha(juce::jlimit(0.0f,1.0f,alpha));
 }
@@ -34,7 +54,7 @@ inline juce::Colour signalShade(float exposure=0.32f,float alpha=1.0f) noexcept 
 // Flat signal-surface colour derived from the one global source colour.
 //
 // IMPORTANT: This intentionally has NO spatial gradient. The source red stays
-// full-bright in gSignalSourceColour; each destination simply renders a darker,
+// full-bright in the theme signal token; each destination renders a darker,
 // translucent exposure of that exact colour across its complete filled region.
 inline juce::Colour signalSurfaceColour(float exposure=0.32f,
                                         float alpha=0.16f) noexcept {
@@ -52,8 +72,8 @@ inline void paintSignalSurface(juce::Graphics& g,
 }
 
 struct Palette {
-    static juce::Colour background()   { return juce::Colour(0xff090909); }
-    static juce::Colour panel()        { return juce::Colour(0xff111111); }
+    static juce::Colour background()   { return gTheme.background; }
+    static juce::Colour panel()        { return gTheme.panel; }
     // V34.5 oscillator-only hierarchy: neutral greys, zero saturation.
     static juce::Colour oscillatorRack() { return juce::Colour(0xff151515); }
     static juce::Colour oscillatorCard() { return juce::Colour(0xff1a1a1a); }
@@ -90,7 +110,7 @@ inline void well(juce::Graphics& g, juce::Rectangle<int> bounds) {
     g.setColour(Palette::borderSoft()); g.drawRoundedRectangle(box,2.5f,1.0f);
 }
 // Shared visual contract: one magnitude arc outside the body, one pointer.
-inline void paintKnob(juce::Graphics& g,juce::Rectangle<float> circle,float position,float start,float end) {
+inline void paintKnob(juce::Graphics& g,juce::Rectangle<float> circle,float position,float start,float end,float trackAlpha=0) {
     const float diameter=circle.getWidth();
     const auto c=circle.getCentre();
     const float angle=start+juce::jlimit(0.0f,1.0f,position)*(end-start);
@@ -98,6 +118,7 @@ inline void paintKnob(juce::Graphics& g,juce::Rectangle<float> circle,float posi
     const auto inner=circle.reduced(diameter*.15f);
     g.setColour(Palette::background().withAlpha(.45f));g.fillEllipse(inner);
     g.setColour(Palette::borderSoft().brighter(.08f));g.drawEllipse(inner,.8f);
+    if(trackAlpha>0) {juce::Path track;track.addCentredArc(c.x,c.y,diameter*.54f,diameter*.54f,0,start,end,true);g.setColour(Palette::borderStrong().withAlpha(trackAlpha));g.strokePath(track,juce::PathStrokeType(1.2f));}
     juce::Path active;
     active.addCentredArc(c.x,c.y,diameter*.54f,diameter*.54f,0,start,angle,true);
     g.setColour(Palette::accent().withAlpha(.90f));g.strokePath(active,juce::PathStrokeType(2.1f));

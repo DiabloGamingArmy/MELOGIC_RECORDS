@@ -59,6 +59,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
+        desktopAuth: resolve(__dirname, 'desktop-auth.html'),
         music: resolve(__dirname, 'music.html'),
         products: resolve(__dirname, 'products.html'),
         community: resolve(__dirname, 'community.html'),

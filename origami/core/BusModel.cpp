@@ -39,7 +39,7 @@ BusId addBus(BusState& s) {
 BusRouteResult addOscBusRoute(OscillatorModuleState& m,const BusState& buses,BusId bus,float level) noexcept {
     if(buses.find(bus)==nullptr) return BusRouteResult::UnknownBus;
     if(!std::isfinite(level)) return BusRouteResult::InvalidLevel;
-    for(std::size_t i=0;i<m.busRouteCount;++i) if(m.busRoutes[i].bus==bus) return BusRouteResult::Duplicate;
+    for(std::size_t i=0;i<m.busRouteCount;++i) if(!m.busRoutes[i].filter && m.busRoutes[i].bus==bus) return BusRouteResult::Duplicate;
     if(m.busRouteCount>=maxOscBusRoutes) return BusRouteResult::Capacity;
     m.busRoutes[m.busRouteCount++]={bus,std::clamp(level,0.0f,1.0f)};
     return BusRouteResult::Ok;
@@ -58,7 +58,7 @@ BusRouteResult setOscBusRoute(OscillatorModuleState& m,const BusState& buses,std
     if(buses.find(bus)==nullptr) return BusRouteResult::UnknownBus;
     if(!std::isfinite(level)) return BusRouteResult::InvalidLevel;
     for(std::size_t i=0;i<m.busRouteCount;++i)
-        if(i!=index && m.busRoutes[i].bus==bus) return BusRouteResult::Duplicate;
+        if(i!=index && !m.busRoutes[i].filter && m.busRoutes[i].bus==bus) return BusRouteResult::Duplicate;
     m.busRoutes[index]={bus,std::clamp(level,0.0f,1.0f)};
     return BusRouteResult::Ok;
 }
@@ -67,7 +67,7 @@ bool validOscBusRoutes(const OscillatorModuleState& m,const BusState& buses) noe
     if(m.busRouteCount<1 || m.busRouteCount>maxOscBusRoutes) return false;
     for(std::size_t i=0;i<m.busRouteCount;++i) {
         const auto& r=m.busRoutes[i];
-        if(buses.find(r.bus)==nullptr || !std::isfinite(r.level) || r.level<0.0f || r.level>1.0f) return false;
+        if(r.filter || buses.find(r.bus)==nullptr || !std::isfinite(r.level) || r.level<0.0f || r.level>1.0f) return false;
         for(std::size_t j=0;j<i;++j) if(m.busRoutes[j].bus==r.bus) return false;
     }
     return true;

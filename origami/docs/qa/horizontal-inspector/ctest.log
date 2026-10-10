@@ -1,0 +1,242 @@
+UpdateCTestConfiguration  from :/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/DartConfiguration.tcl
+Test project /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 1
+    Start 1: origami_state
+
+1: Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_state_tests
+1: Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+1: Test timeout computed to be: 10000000
+1: PASS: 2779 state checks
+1/9 Test #1: origami_state .......................   Passed    0.30 sec
+test 2
+    Start 2: origami_foundation
+
+2: Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_tests
+2: Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+2: Test timeout computed to be: 10000000
+2: Init MIDI 36 peak=0.290701 dB=-10.7311 RMS=0.142949 DC=-0.000584966
+2: Init MIDI 60 peak=0.287903 dB=-10.8151 RMS=0.142194 DC=-0.000158859
+2: Init MIDI 84 peak=0.277077 dB=-11.148 RMS=0.14027 DC=1.36254e-05
+2: Init gain stages MIDI60 raw=1.1633 rawRMS=0.574552 postENV/level=1.1633 stereoPostRoute=0.822579 previousMaster0.2=0.164516 calibratedMaster0.35=0.287903
+2: Init stereo headroom unison=0 chord=0 peak=0.289777
+2: Init stereo headroom unison=0 chord=1 peak=0.991154
+2: Init stereo headroom unison=4 chord=0 peak=0.243956
+2: Init stereo headroom unison=4 chord=1 peak=0.917063
+2: Init stereo headroom unison=8 chord=0 peak=0.243541
+2: Init stereo headroom unison=8 chord=1 peak=0.921376
+2: Init stereo headroom unison=16 chord=0 peak=0.24258
+2: Init stereo headroom unison=16 chord=1 peak=0.920371
+2: [PEAK response] 360 Synth/Nodes probe pairs; worst Synth error 1.10186e-06 dB
+2: [Comb response] 432 measured probes, worst error 1.58216e-05 dB
+2: [filter response] 6656 independent Synth probes; worst meaningful dB error 0.00577907216882; worst absolute magnitude error 1.41515030094e-06
+2: dynamic topology
+2: oscillator control cache
+2: simple playback + visualization policy
+2: clean sine simple path P0
+2: performance visualization sources
+2: voice observation
+2: visualization cadence
+2: performance source curves
+2: QoS voice admission
+2: audio-rate fast math
+2: oscillator generation
+2: spectral preparation
+2: random spectral amount
+2: spectral playback
+2: spectral concurrent eviction
+2: random spectral morph
+2: random spectral morph crossing
+2: realtime thread policy
+2: wavetable handoff
+2: wavetable handoff concurrency
+2: optimised-path golden renders
+2: spectral transitions
+2: manual-edit dezipper
+2: nested modulation realtime
+2: registry and patches
+2: envelope timing
+2: pitch and blocks
+2: voices and realtime
+2: performance modes
+2: signal behavior
+2: oscillator and filter
+2: PASS: 1916735 checks
+2/9 Test #2: origami_foundation ..................   Passed   10.15 sec
+test 3
+    Start 3: origami_wavetable_bank_foundation
+
+3: Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_wavetable_bank_tests
+3: Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+3: Test timeout computed to be: 10000000
+3: PASS: V22.0 wavetable-bank foundation
+3/9 Test #3: origami_wavetable_bank_foundation ...   Passed    0.25 sec
+test 4
+    Start 4: origami_modulation_core
+
+4: Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_modulation_tests
+4: Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+4: Test timeout computed to be: 10000000
+4: PASS: 3938 modulation foundation checks
+4/9 Test #4: origami_modulation_core .............   Passed    1.88 sec
+test 5
+    Start 5: origami_fx_graph
+
+5: Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_fx_tests
+5: Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+5: Test timeout computed to be: 10000000
+5: [N07 stress] 32-node x16 voices / empty x16 voices CPU ratio 4.18548
+5: PASS: 653 FX graph/DSP/bus checks
+5/9 Test #5: origami_fx_graph ....................   Passed    1.99 sec
+test 6
+    Start 6: origami_spectral_tune
+
+6: Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_spectral_tests
+6: Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+6: Test timeout computed to be: 10000000
+6: neutral rate=44100 fixture=0 RMS error=1.29674e-08 peak error=5.96046e-08 latency=2046 bytes=386776
+6: neutral rate=44100 fixture=1 RMS error=1.12293e-08 peak error=4.47035e-08 latency=2046 bytes=386776
+6: neutral rate=44100 fixture=2 RMS error=1.93889e-09 peak error=1.78814e-07 latency=2046 bytes=386776
+6: neutral rate=44100 fixture=3 RMS error=1.1845e-08 peak error=4.47035e-08 latency=2046 bytes=386776
+6: neutral rate=44100 fixture=4 RMS error=1.69228e-08 peak error=8.9407e-08 latency=2046 bytes=386776
+6: neutral rate=44100 fixture=5 RMS error=1.55286e-08 peak error=5.96046e-08 latency=2046 bytes=386776
+6: neutral rate=48000 fixture=0 RMS error=1.25572e-08 peak error=5.96046e-08 latency=2046 bytes=386776
+6: neutral rate=48000 fixture=1 RMS error=1.10996e-08 peak error=5.96046e-08 latency=2046 bytes=386776
+6: neutral rate=48000 fixture=2 RMS error=1.84148e-09 peak error=1.78814e-07 latency=2046 bytes=386776
+6: neutral rate=48000 fixture=3 RMS error=1.18831e-08 peak error=4.47035e-08 latency=2046 bytes=386776
+6: neutral rate=48000 fixture=4 RMS error=1.70053e-08 peak error=8.9407e-08 latency=2046 bytes=386776
+6: neutral rate=48000 fixture=5 RMS error=1.53198e-08 peak error=5.96046e-08 latency=2046 bytes=386776
+6: neutral rate=96000 fixture=0 RMS error=1.42174e-08 peak error=5.96046e-08 latency=4094 bytes=771800
+6: neutral rate=96000 fixture=1 RMS error=1.23816e-08 peak error=5.96046e-08 latency=4094 bytes=771800
+6: neutral rate=96000 fixture=2 RMS error=3.3629e-10 peak error=1.76024e-08 latency=4094 bytes=771800
+6: neutral rate=96000 fixture=3 RMS error=1.30348e-08 peak error=5.96046e-08 latency=4094 bytes=771800
+6: neutral rate=96000 fixture=4 RMS error=1.81623e-08 peak error=1.19209e-07 latency=4094 bytes=771800
+6: neutral rate=96000 fixture=5 RMS error=1.66969e-08 peak error=8.9407e-08 latency=4094 bytes=771800
+6: neutral rate=192000 fixture=0 RMS error=1.7762e-08 peak error=8.9407e-08 latency=8190 bytes=1541848
+6: neutral rate=192000 fixture=1 RMS error=1.44553e-08 peak error=7.45058e-08 latency=8190 bytes=1541848
+6: neutral rate=192000 fixture=2 RMS error=6.54856e-10 peak error=1.19209e-07 latency=8190 bytes=1541848
+6: neutral rate=192000 fixture=3 RMS error=1.56147e-08 peak error=8.9407e-08 latency=8190 bytes=1541848
+6: neutral rate=192000 fixture=4 RMS error=2.45665e-08 peak error=1.49012e-07 latency=8190 bytes=1541848
+6: neutral rate=192000 fixture=5 RMS error=2.33793e-08 peak error=1.3411e-07 latency=8190 bytes=1541848
+6: region low=0.200086 mid target=0.14722 mid source=0.00294705 high=0.12002
+6: neutral transition clearMask=0 max sample jump=0.00732997 settled error=6.40091e-08
+6: neutral transition clearMask=1 max sample jump=0.00732997 settled error=6.40091e-08
+6: bypass mode=2 max sample jump=0.0114566
+6: bypass mode=1 max sample jump=0.0114566
+6: bypass mode=3 max sample jump=0.0114566
+6: PASS: 3954183 spectral checks; RT allocations=0 deletes=0 C mallocs=0 C frees=0
+6/9 Test #6: origami_spectral_tune ...............   Passed    0.67 sec
+test 7
+    Start 7: origami_spectral_quality
+
+7: Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_spectral_quality_tests
+7: Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+7: Test timeout computed to be: 10000000
+7: motion smooth=0 carrier=0.131293 coherence=0.806567
+7: motion smooth=80 carrier=0.131293 coherence=0.806567
+7: motion smooth=500 carrier=0.131293 coherence=0.806567
+7: boundary jitter carrier=0.14525
+7: shift source=330 shift=7 target=494.441 amplitude=0.149718
+7: shift source=330 shift=12 target=660 amplitude=0.148947
+7: shift source=330 shift=19 target=988.883 amplitude=0.148477
+7: shift source=330 shift=24 target=1320 amplitude=0.146912
+7: shift source=3000 shift=7 target=4494.92 amplitude=0.147269
+7: shift source=3000 shift=12 target=6000 amplitude=0.149997
+7: shift source=3000 shift=19 target=8989.84 amplitude=0.145621
+7: shift source=3000 shift=24 target=12000 amplitude=0.149993
+7: shift source=7500 shift=7 target=11237.3 amplitude=0.14556
+7: shift source=7500 shift=12 target=15000 amplitude=0.149999
+7: shift source=7500 shift=19 target=22474.6 amplitude=0.148943
+7: shift source=11500 shift=7 target=17230.5 amplitude=0.145493
+7: shift source=11500 shift=12 target=23000 amplitude=0.146062
+7: Nyquist rejection RMS=5.25439e-09 original amplitude=7.43291e-06
+7: PASS: 74 quality checks
+7/9 Test #7: origami_spectral_quality ............   Passed    1.40 sec
+test 8
+    Start 8: origami_plugin_ui
+
+8: Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_plugin_tests
+8: Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+8: Test timeout computed to be: 10000000
+8: PASS Spectral Tune plugin/UI audit
+8: Init final processor peak=0.287903 dB=-10.8151 RMS=0.142194
+8: Audio card drive quick=3 total=4 visual=1
+8: Audio card compressor quick=3 total=26 visual=10
+8: Audio card limiter quick=3 total=3 visual=7
+8: Audio card filter quick=3 total=8 visual=8
+8: Audio card equalizer quick=3 total=40 visual=9
+8: Audio card chorus quick=3 total=5 visual=4
+8: Audio card flanger quick=3 total=6 visual=4
+8: Audio card phaser quick=3 total=7 visual=11
+8: Audio card spatial quick=3 total=6 visual=12
+8: Audio card delay quick=3 total=6 visual=2
+8: Audio card reverb quick=3 total=6 visual=3
+8: Audio card diffuse quick=3 total=3 visual=6
+8: Audio card gain quick=1 total=2 visual=13
+8: Audio card stereo quick=2 total=3 visual=13
+8: [N07 ui] timer sync unchanged 0.00333 us | model change + rebuild 591.483 us | hidden model change 28.3694 us | graph paint 100% 282.046 us, 50% 1011.83 us, 40% 1352.42 us
+8: [menu] AUDIO >  (0 items)
+8: [menu]     EFFECTS >  (0 items)
+8: [menu]         DYNAMICS >  (2 items)
+8: [menu]         FILTER / EQ >  (2 items)
+8: [menu]         DISTORTION >  (1 items)
+8: [menu]         MODULATION >  (3 items)
+8: [menu]         SPECTRAL >  (1 items)
+8: [menu]         SPATIAL >  (1 items)
+8: [menu]         TIME >  (3 items)
+8: [menu]         UTILITY >  (2 items)
+8: [menu]     ROUTING >  (2 items)
+8: [menu] CONTROL >  (0 items)
+8: [menu]     MODULATION SOURCES >  (22 items)
+8: [menu]     MATH >  (5 items)
+8: [menu]     SHAPING >  (6 items)
+8: [menu]     UTILITY >  (3 items)
+8: [menu]     UTILITIES >  (1 items)
+8: [menu] EVENTS >  (0 items)
+8: [menu]     NOTE / GATE / TRIGGER >  (5 items)
+8: [menu]     TRANSPORT >  (1 items)
+8: [menu]     TARGETS >  (1 items)
+8: [menu] LOGIC / GENERATIVE >  (0 items)
+8: [menu]     CONVERSION >  (3 items)
+8: [menu]     LOGIC >  (6 items)
+8: [menu]     STATEFUL >  (5 items)
+8: [menu]     SEQUENCING >  (6 items)
+8: [menu]     GENERATIVE >  (3 items)
+8: [menu] cable-drop root EVENT
+8: [content] preset load during held notes: max sample step 0.0369981 (the held notes' own max step 0.0599174)
+8: [content] 10000 records: cached index 49.092 ms, browser open 3.46608 ms, search keystroke 0.797417 ms, clear search + full paint 8.64721 ms
+8: [qa] MAIN IN peaks hard-left: L 0.145682 R 0.0260573
+8: [qa] MAIN IN peaks hard-right: L 0 R 0.126595
+8: [Origami P0 timing] oscillators=1 avgMs=0.0357253 medianMs=0.0352917 worstMs=0.039875 activeModules=1
+8: [Origami P0 topology] oscillators=1 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+8: [Origami P0 timing] oscillators=2 avgMs=0.0433971 medianMs=0.0431875 worstMs=0.048125 activeModules=2
+8: [Origami P0 topology] oscillators=2 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+8: [Origami P0 timing] oscillators=3 avgMs=0.0532695 medianMs=0.0525625 worstMs=0.0617917 activeModules=3
+8: [Origami P0 topology] oscillators=3 freq=439.453 rms=0.069983 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+8: [Origami P0 timing] oscillators=4 avgMs=0.0634792 medianMs=0.0625417 worstMs=0.0699167 activeModules=4
+8: [Origami P0 topology] oscillators=4 freq=439.453 rms=0.0699829 dc=-6.56589e-05 residual=0.000938212 maxDelta=0.00285075
+8: PASS: 1636261 plugin/UI checks
+8/9 Test #8: origami_plugin_ui ...................   Passed   44.83 sec
+test 9
+    Start 9: origami_content
+
+9: Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_content_tests
+9: Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+9: Test timeout computed to be: 10000000
+9: [content scale] 100 records: sort(name) 0.045125 ms, search "metallic" 0.024375 ms (28), search "met" 0.023208 ms, filter 0.007208 ms (25), sort(date) 0.02375 ms, facets 0.057834 ms, index ~52 KB
+9: [content scale] 1000 records: sort(name) 0.36275 ms, search "metallic" 0.246209 ms (300), search "met" 0.226458 ms, filter 0.078083 ms (211), sort(date) 0.115 ms, facets 0.34925 ms, index ~487 KB
+9: [content scale] 10000 records: sort(name) 4.32558 ms, search "metallic" 2.716 ms (2931), search "met" 2.42554 ms, filter 1.15037 ms (2040), sort(date) 1.03375 ms, facets 3.3265 ms, index ~5882 KB
+9: [content scale] cached index of 10000 records loaded in 43.9927 ms
+9: [content scale] rescan of a folder whose files are gone: 3.322 ms
+9: [content scale] 1000 preset files: cold scan 51.2149 ms, rescan with index 31.5642 ms
+9: PASS: 98 content library checks
+9/9 Test #9: origami_content .....................   Passed    1.88 sec
+
+100% tests passed out of 9
+
+Total Test time (real) =  63.37 sec

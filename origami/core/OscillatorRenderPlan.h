@@ -2,6 +2,7 @@
 #pragma once
 #include "OscillatorModule.h"
 #include "BusModel.h"
+#include "SynthFilter.h"
 
 namespace mct::origami {
 using OscillatorProcessPlans=std::array<dsp::OscProcessPlan,16>;
@@ -16,6 +17,32 @@ struct BusSlotMap {
 // Compiled at a host-block boundary and shared by all voices. Only amounts
 // change at audio rate; IDs, enabled flags, types and ordering are topology.
 struct OscillatorRenderPlan {
+    SynthFilterPlan synthFilters{};
+    std::uint32_t routeRamp=0;
+    void adoptSynthFilters(const SynthFilterPlan& plan,bool snap=false,std::uint32_t samples=240) noexcept {
+        const auto oldFilters=synthFilters.filterIds;const auto oldBuses=synthFilters.busIds;
+        synthFilters=plan;++generation;bool changed=false;
+        for(std::size_t m=0;m<modules.size();++m) if(ids[m] && ids[m]==plan.oscillatorIds[m]) {
+            auto& module=modules[m];module.auxSends=false;
+            for(std::size_t f=0;f<8;++f) {if(oldFilters[f]!=plan.filterIds[f]) module.filterSend[f]=0;
+                changed|=module.filterSend[f]!=plan.filterSends[m][f];if(snap) module.filterSend[f]=plan.filterSends[m][f];}
+            for(std::size_t b=0;b<8;++b) {if(oldBuses[b]!=plan.busIds[b]) module.busSend[b]=0;
+                changed|=module.busSend[b]!=plan.directSends[m][b];if(snap) module.busSend[b]=plan.directSends[m][b];
+                if(b) module.auxSends|=module.busSend[b]!=0 || plan.directSends[m][b]!=0;}
+            module.mainBusSend=module.busSend[0];
+        }
+        routeRamp=snap?0:changed?samples:routeRamp;
+        auxActive=false;for(std::size_t a=0;a<activeCount;++a) auxActive|=modules[active[a]].auxSends;
+        for(std::size_t f=0;f<plan.count;++f) for(std::size_t b=1;b<plan.busCount;++b) auxActive|=plan.stages[f].sends[b]!=0;
+    }
+    void advanceRoutes() noexcept {
+        if(!routeRamp) return;const float alpha=1.0f/float(routeRamp--);
+        for(std::size_t a=0;a<activeCount;++a) {const auto m=active[a];auto& module=modules[m];
+            for(std::size_t b=0;b<8;++b) module.busSend[b]+=(synthFilters.directSends[m][b]-module.busSend[b])*alpha;
+            for(std::size_t f=0;f<8;++f) module.filterSend[f]+=(synthFilters.filterSends[m][f]-module.filterSend[f])*alpha;
+            module.mainBusSend=module.busSend[0];
+        }
+    }
     struct Route {
         int source=-1;
         std::uint8_t amountSlot=0;
@@ -30,6 +57,7 @@ struct OscillatorRenderPlan {
         // Post-filter sends per render slot (slot 0 = MAIN).
         float mainBusSend=1.0f;
         std::array<float,maxRenderBuses> busSend{};
+        std::array<float,8> filterSend{};
         bool auxSends=false;
         dsp::OscProcessPlan processTemplate{};
     };
@@ -39,6 +67,7 @@ struct OscillatorRenderPlan {
     std::size_t activeCount=0;
     std::uint64_t generation=0;
     std::size_t busCount=1;
+    bool unisonStereo=false;
     bool auxActive=false; // any oscillator sends to a user bus
 
     void processPlan(std::size_t m,const OscillatorModuleState& source,dsp::OscProcessPlan& out) const noexcept {
@@ -52,15 +81,18 @@ struct OscillatorRenderPlan {
     }
 
     void compile(const std::array<OscillatorModuleState,16>& state,const BusSlotMap& slots=BusSlotMap{}) noexcept {
-        activeCount=0;
+        activeCount=0;unisonStereo=false;
         busCount=std::clamp<std::size_t>(slots.count,1,maxRenderBuses);
         auxActive=false;
+        const auto oldIds=ids;
         for(std::size_t m=0;m<state.size();++m) ids[m]=state[m].id;
         for(std::size_t m=0;m<state.size();++m) {
-            const auto& source=state[m];auto& plan=modules[m];plan={};
+            const auto& source=state[m];auto& plan=modules[m];const auto oldBus=plan.busSend,oldFilter=plan.filterSend;plan={};
             if(!source.id || !source.enabled) continue;
+            unisonStereo|=source.unison>1;
             active[activeCount++]=static_cast<std::uint8_t>(m);
             for(std::size_t b=0;b<busCount;++b) plan.busSend[b]=oscBusSend(source,slots.ids[b]);
+            if(oldIds[m]==source.id) {plan.busSend=oldBus;plan.filterSend=oldFilter;}
             plan.mainBusSend=plan.busSend[0];
             for(std::size_t b=1;b<busCount;++b) plan.auxSends=plan.auxSends || plan.busSend[b]!=0.0f;
             auxActive=auxActive || plan.auxSends;

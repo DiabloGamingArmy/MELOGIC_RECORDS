@@ -190,6 +190,7 @@ public:
     void setPosition(const ControlNodeKey&,float x,float y);
     void setPlaced(const ControlNodeKey&,bool placed);
     bool remove(const ControlNodeKey&);
+    void pruneSynthFilterDestinations(const ModulationState&) noexcept;
     void clear() { entries_.clear(); }
     bool operator==(const ControlLayout& o) const noexcept;
     // Versioned codec ("MCVL" v1): keys + positions + placed flag only.

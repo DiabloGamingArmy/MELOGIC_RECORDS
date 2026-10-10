@@ -1,0 +1,405 @@
+{
+  "cycles": [
+    {
+      "cycle": 1,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 6.333,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 2,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.751,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 3,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 1.201,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 4,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.71,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 5,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 5.685,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 6,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.732,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 7,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.778,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 8,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 1.192,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 9,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.707,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 10,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 5.68,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 11,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.72,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 12,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.805,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 13,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 1.196,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 14,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.705,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 15,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 5.712,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 16,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.769,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 17,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.787,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 18,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 1.19,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 19,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.392,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 20,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 5.68,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 21,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.718,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 22,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.709,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 23,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 0.897,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 24,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.377,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 25,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 5.367,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 26,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.693,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 27,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.699,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 28,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 0.877,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 29,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.681,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 30,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 5.695,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 31,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.801,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 32,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.796,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 33,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 1.203,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 34,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.696,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 35,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 5.727,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 36,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.865,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 37,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.844,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 38,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 1.212,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 39,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.738,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 40,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 5.743,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 41,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.86,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 42,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.905,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 43,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 1.237,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 44,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.728,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 45,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 7.498,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 46,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.85,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 47,
+      "quit_after_ms": 100,
+      "exit": 0,
+      "seconds": 0.87,
+      "shutdown_completed": true,
+      "authorized": false
+    },
+    {
+      "cycle": 48,
+      "quit_after_ms": 500,
+      "exit": 0,
+      "seconds": 1.228,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 49,
+      "quit_after_ms": 3000,
+      "exit": 0,
+      "seconds": 3.719,
+      "shutdown_completed": true,
+      "authorized": true
+    },
+    {
+      "cycle": 50,
+      "quit_after_ms": 5000,
+      "exit": 0,
+      "seconds": 5.724,
+      "shutdown_completed": true,
+      "authorized": true
+    }
+  ],
+  "new_crash_reports": 0
+}

@@ -19,7 +19,11 @@
 // mct-origami-playable-keyboard-audio-v23.1
 #pragma once
 #include <JuceHeader.h>
+#include "DocumentHistory.h"
+#include "FinalOutput.h"
 #include <functional>
+#include <melogic/account/AccountService.h>
+#include <melogic/update/UpdateService.h>
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
 #include "core/fx/FxGraph.h"
@@ -57,14 +61,21 @@ private:
     std::function<juce::String(unsigned)> nameOf_;
 };
 
-class OrigamiAudioProcessor final : public juce::AudioProcessor {
+class OrigamiAudioProcessor final : public juce::AudioProcessor, public juce::ChangeBroadcaster {
 public:
-    OrigamiAudioProcessor();
+    // Dependency injection is used by test targets; shipping wrappers call the
+    // default constructor and receive the canonical service's read-only flag.
+    explicit OrigamiAudioProcessor(std::shared_ptr<const std::atomic<bool>> authorization = {});
+    bool isAuthorized() const noexcept {return authorization_->load(std::memory_order_acquire);}
+
     ~OrigamiAudioProcessor() override = default;
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
     bool isBusesLayoutSupported(const BusesLayout&) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    // Thread-safe, coalescing emergency request. The audio callback owns the reset.
+    void requestPanic() noexcept { panicRequested_.store(true,std::memory_order_release); }
+    std::uint64_t panicCount() const noexcept { return panicCount_.load(std::memory_order_acquire); }
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     const juce::String getName() const override { return JucePlugin_Name; }
@@ -79,6 +90,38 @@ public:
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
+
+    // No ParameterId/ModAddress: host automation only, never internal modulation.
+    float getUiFinalOutput();
+    bool setUiFinalOutput(float normalized);
+    void beginFinalOutputGesture();
+    void endFinalOutputGesture();
+    bool nextHistoryIsFinalOutput(bool redo) const;
+    juce::AudioParameterFloat* finalOutputParameter() const noexcept {return finalOutputParameter_;}
+    mct::origami::FinalOutputMeters finalOutputMeters() const noexcept {return finalOutputStage_.meters();}
+
+    // One user document history; host automation/restores and live MIDI are excluded.
+    void beginUiTransaction(const juce::String& name="Edit");
+    void beginUiTransaction(const char* name);
+    void endUiTransaction();
+    bool canUndoUi() const;
+    bool canRedoUi() const;
+    bool undoUi();
+    bool redoUi();
+    void clearUiHistory();
+    void markUiSaved();
+    bool uiAtSavedState() const;
+    std::size_t uiHistorySize() const;
+    std::size_t uiHistoryBytes() const;
+    void setUiHistoryContext(int page,unsigned bus=1);
+    std::pair<int,unsigned> uiHistoryContext() const;
+    class UiEdit final {
+    public:
+        UiEdit(OrigamiAudioProcessor& p,const char* name):p_(p){p_.beginUiTransaction(name);}
+        ~UiEdit(){p_.endUiTransaction();}
+        UiEdit(const UiEdit&)=delete;
+    private: OrigamiAudioProcessor& p_;
+    };
 
     // mct-origami-functional-osc-controls-v15
     bool setUiParameter(mct::origami::ParameterId,float) noexcept;
@@ -182,6 +225,7 @@ public:
     mct::origami::fx::FxRenderer::NodeTelemetrySnapshot consumeUiFxNodeTelemetry(mct::origami::fx::FxBusId bus,mct::origami::fx::FxNodeId node) noexcept {
         return fxEnvironment_.consumeNodeTelemetry(bus,node);
     }
+    void setUiFxNodeTelemetryEnabled(mct::origami::fx::FxBusId bus,bool enabled) noexcept { fxEnvironment_.setNodeTelemetryEnabled(bus,enabled); }
     std::uint64_t getFxCompileCount() const noexcept { return fxEnvironment_.compileCount(); }
     mct::origami::fx::FxViewState& getUiFxViewState() noexcept { return fxViewState_; }
     // mct-origami-nodes-n03-control: NODES CONTROL-layer view metadata
@@ -217,6 +261,11 @@ public:
     AudioContinuityDiagnostics getAudioContinuityDiagnostics() const noexcept;
     void resetAudioContinuityDiagnostics() noexcept;
 private:
+    std::shared_ptr<melogic::account::Service> account_;
+    std::shared_ptr<melogic::update::Service> updates_; // lifetime lease only; never accessed by audio/state code
+    std::shared_ptr<const std::atomic<bool>> authorization_;
+    bool authorizationWasOpen_=false,unauthorizedObserved_=false;
+    static_assert(std::atomic<bool>::is_always_lock_free);
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     // DAW macro parameters (owned by juce::AudioProcessor) by macro id - 1.
     std::array<OrigamiMacroParameter*,mct::origami::maxMacros> macroParameters_{};
@@ -285,8 +334,13 @@ private:
     mct::origami::InstrumentState uiInstrumentState_{};
     std::atomic<std::uint64_t> uiOscillatorRevision_{1};
     std::atomic<std::uint64_t> uiModelRevision_{1};
-    void bumpUiModelRevision() noexcept { uiModelRevision_.fetch_add(1,std::memory_order_release); }
+    void bumpUiModelRevision() noexcept {
+        uiModelRevision_.fetch_add(1,std::memory_order_release);
+        // Edits after a queued restore must win at the next audio boundary.
+        if(restorePending_.load(std::memory_order_acquire) && (!history_ || !history_->active()))restoreMailbox_.publish(uiInstrumentState_);
+    }
     mct::origami::LatestStateMailbox<mct::origami::InstrumentState> restoreMailbox_;
+    std::atomic<bool> restorePending_{false};
 
     // Patch 14/19: non-blocking UI -> audio state transfer.
     mct::origami::PerformanceState uiPerformanceState_{};
@@ -294,6 +348,8 @@ private:
     mct::origami::ArpeggiatorState uiArpState_{};
     mct::origami::LatestStateMailbox<mct::origami::ArpeggiatorState> arpMailbox_;
     std::atomic<bool> pendingClearArpLatch_{false};
+    std::atomic<bool> panicRequested_{false};
+    std::atomic<std::uint64_t> panicCount_{0};
     // Audio-thread-owned runtime state.
     mct::origami::ArpeggiatorState arpState_{};
     double sampleRate_=44100.0;
@@ -350,8 +406,32 @@ private:
     std::map<mct::origami::OscillatorModuleId,UiWavetableSource> wavetableSources_; // under stateLock_
     UiPresetIdentity currentPreset_{mct::origami::content::ContentLibrary::initPresetId,"INIT"}; // under stateLock_
     juce::MemoryBlock initState_;
+    struct HistorySnapshot {
+        std::array<std::uint64_t,mct::origami::maxMacros> automationRevision{};
+        std::uint64_t outputAutomationRevision=0;
+        juce::MemoryBlock state; // canonical state with content payload factored out
+        UiPresetIdentity preset;
+        std::map<mct::origami::OscillatorModuleId,UiWavetableSource> sources;
+        bool same(const HistorySnapshot&) const;
+        std::size_t cost() const;
+    };
+    using History=mct::origami::DocumentHistory<HistorySnapshot>;
+    std::unique_ptr<History> history_;
+    mutable std::atomic<bool> historyHostReset_{false};
+    std::array<std::uint64_t,mct::origami::maxMacros> macroAutomationRevision_{}; // stateLock_
+    void reconcileHistoryHostReset() const;
+    HistorySnapshot captureHistory();
+    bool publishUiModulation(const mct::origami::ModulationState&) noexcept;
+    bool restoreHistory(const HistorySnapshot&);
+    void writeStateInformation(juce::MemoryBlock&,bool includeWavetables);
+
+    juce::AudioParameterFloat* finalOutputParameter_=nullptr;
+    mct::origami::FinalOutputStage finalOutputStage_;
+    float uiFinalOutput_=mct::origami::FinalOutputGain::unity; // stateLock_
+    std::uint64_t outputAutomationRevision_=0; // stateLock_
     bool restoreState(const void*,int);
-    std::vector<std::uint8_t> encodeContentTrailer() const;
+    std::vector<std::uint8_t> encodeContentTrailer(bool includeWavetables=true) const;
+    static std::vector<std::uint8_t> encodeHistoryContent(const UiPresetIdentity&,const std::map<mct::origami::OscillatorModuleId,UiWavetableSource>&);
     // Audio thread: a restore that arrives while the output is sounding is
     // applied one block later, after a short fade-out of that block.
     mct::origami::InstrumentState deferredRestore_{};

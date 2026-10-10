@@ -301,7 +301,8 @@ public:
     float readOrRequest(const Wavetable& table,std::size_t frame,std::size_t band,
                         const OscProcessPlan& sourcePlan,
                         std::size_t index,std::size_t nextIndex,float fraction,
-                        double fallbackPhase,SpectralReadHint& hint,std::uint16_t fadeLength) noexcept {
+                        double fallbackPhase,SpectralReadHint& hint,std::uint16_t fadeLength,
+                        bool* missed=nullptr) noexcept {
         // A stable chain needs neither re-quantization nor re-hashing per sample.
         // Revision validation under the pin handles eviction and table reuse.
         const bool sameContext=hint.revision && hint.table==&table && hint.generation==table.generation &&
@@ -385,6 +386,8 @@ public:
                 unpin(slot);
             }
         }
+        // `missed`: the caller has another prepared frame to read instead.
+        if(missed!=nullptr) { *missed=true; return 0.0f; }
         fallbackReads_.fetch_add(1,std::memory_order_relaxed);
         const auto& source=table.frames[frame].bands[band].samples;
         for(std::size_t p=0;p<std::min<std::size_t>(sourcePlan.count,maxOscProcessStages);++p)
@@ -565,6 +568,7 @@ void WavetableOscillator::reset(double phase) noexcept {
     // Spectral hints carry transition state (held table, crossfade): a reset
     // oscillator starts from a fresh lookup, so renders are deterministic.
     spectralHints_={};
+    if(morphHints_!=nullptr) morphHints_[0]=morphHints_[1]=SpectralReadHint{};
 }
 
 const char* oscProcessName(OscProcessType type) noexcept {
@@ -812,6 +816,28 @@ void renderProcessedFrame2048(const float* input,float* output,
         output[i]=static_cast<float>(std::clamp(bins[i].real()*normalise,-0.985,0.985));
 }
 
+void renderOscillatorPreview2048(const float* input,float* output,const OscProcessPlan& plan) noexcept {
+    auto anchor=plan;
+    std::size_t random=maxOscProcessStages;
+    float lower=0,blend=0;
+    for(std::size_t i=0;i<anchor.count;++i) {
+        if(random==maxOscProcessStages && oscProcessUsesSeed(plan.stages[i].type)) {
+            random=i;
+            const float x=std::clamp(plan.stages[i].amount,0.0f,1.0f)*spectralAmountSteps;
+            lower=std::floor(x); blend=x-lower;
+        }
+        anchor.stages[i].amount=quantizedStageAmount(anchor.stages[i].type,anchor.stages[i].amount);
+    }
+    if(random==maxOscProcessStages) { renderProcessedFrame2048(input,output,anchor); return; }
+    anchor.stages[random].amount=lower/spectralAmountSteps;
+    renderProcessedFrame2048(input,output,anchor);
+    if(blend==0) return;
+    std::array<float,spectralSize> upper{};
+    anchor.stages[random].amount=(lower+1)/spectralAmountSteps;
+    renderProcessedFrame2048(input,upper.data(),anchor);
+    for(std::size_t i=0;i<spectralSize;++i) output[i]+=blend*(upper[i]-output[i]);
+}
+
 void renderProcessedFrame2048(const float* input,float* output,
                               OscProcessType process1,float amount1,std::uint32_t seed1,
                               OscProcessType process2,float amount2,std::uint32_t seed2) noexcept {
@@ -909,16 +935,49 @@ void WavetableOscillator::preparePitch(const Wavetable& table,double frequency,d
 // One read of the current phase: frame interpolation, phase warps / spectral
 // table, PM offset and PSK skew. Stateless apart from the spectral read hints,
 // so a second read at the same phase (stereo RIGHT) is exact.
+namespace {
+// Wave 1 random spectral morph: blend the two adjacent prepared frames of a
+// moving RANDOM AMP / SPARSE amount (each endpoint a deterministic 1/32
+// random frame; the compiler builds both off the audio thread; each keeps its
+// own held / crossfade hint). Out of line: the common read stays small.
+// Hints are assigned by key parity (even keys: `evenHint`, odd: `oddHint`), so
+// when the amount crosses a key the shared endpoint keeps its hint and table:
+// only the endpoint at ~zero weight changes table (and crossfades). Lower /
+// upper hints would instead fade the full-weight endpoint back from the
+// previous key: the very step the morph removes. An amount on a key reads
+// that key inline through its parity hint (no fade from a stale key at rest).
+// While one endpoint is not prepared (being built, or evicted) the morph reads
+// the other endpoint alone: never a blend toward the dry fallback.
+__attribute__((noinline)) float readRandomMorph(const Wavetable& table,std::size_t frame,std::size_t band,const OscProcessPlan& plan,
+        std::size_t stage,float lower,float blend,std::size_t index,std::size_t nextIndex,float fraction,double readPhase,
+        SpectralReadHint& evenHint,SpectralReadHint& oddHint,std::uint16_t fade) noexcept {
+    const bool lowerOdd=(static_cast<int>(lower)&1)!=0;
+    auto& lowerHint=lowerOdd ? oddHint : evenHint;
+    auto& upperHint=lowerOdd ? evenHint : oddHint;
+    auto anchor=plan;
+    bool upperMissed=false,lowerMissed=false;
+    anchor.stages[stage].amount=(lower+1.0f)/spectralAmountSteps;
+    const float b=spectralCompiler().readOrRequest(table,frame,band,anchor,index,nextIndex,fraction,readPhase,upperHint,fade,&upperMissed);
+    anchor.stages[stage].amount=lower/spectralAmountSteps;
+    if(upperMissed) // only the lower endpoint can sound (it may itself fall back)
+        return spectralCompiler().readOrRequest(table,frame,band,anchor,index,nextIndex,fraction,readPhase,lowerHint,fade);
+    const float a=spectralCompiler().readOrRequest(table,frame,band,anchor,index,nextIndex,fraction,readPhase,lowerHint,fade,&lowerMissed);
+    return lowerMissed ? b : a+blend*(b-a);
+}
+}
 // Always inlined: the static-pitch simple read must stay a leaf function
 // (an out-of-line call costs a stack frame on every oscillator read).
 template<bool Simple>
 inline __attribute__((always_inline)) float WavetableOscillator::readAt(const Wavetable& table,float position,const OscProcessPlan& plan,
-                                  double phaseOffsetCycles,double phaseSkew,std::array<SpectralReadHint,2>& hints,
+                                  double phaseOffsetCycles,double phaseSkew,SpectralReadHint* hints,SpectralReadHint* morph,
                                   double phase,std::size_t bandIndex,double sampleRate) noexcept {
     const float framePosition=std::clamp(position,0.f,1.f)*static_cast<float>(table.frames.size()-1);
     const auto first=static_cast<std::size_t>(framePosition),second=std::min(first+1,table.frames.size()-1);
     double readPhase=phase;
     bool spectral=false;
+    std::size_t morphStage=maxOscProcessStages; // a random stage between two keys
+    float morphLower=0.0f,morphBlend=0.0f;
+    SpectralReadHint* keyHints=hints; // a plain read's hints (a random stage on an odd key: `morph`)
     if constexpr(!Simple) {
         readPhase=phase+(std::isfinite(phaseOffsetCycles)?phaseOffsetCycles:0.0);readPhase-=std::floor(readPhase);
         if(std::isfinite(phaseSkew)&&std::abs(phaseSkew)>1.0e-12){
@@ -927,6 +986,16 @@ inline __attribute__((always_inline)) float WavetableOscillator::readAt(const Wa
         const auto count=std::min<std::size_t>(plan.count,maxOscProcessStages);
         spectral=table.tableLength==spectralSize;
         if(spectral){bool found=false;for(std::size_t i=0;i<count;++i)found|=oscProcessIsSpectral(plan.stages[i].type);spectral=found;}
+        // Once per sample (not per frame read): the first random stage's
+        // position between its two prepared keys (it reads morphed).
+        if(spectral && morph!=nullptr)
+            for(std::size_t i=0;i<count;++i) if(randomSpectralVariant(plan.stages[i].type)) {
+                const float coordinate=std::clamp(plan.stages[i].amount,0.0f,1.0f)*spectralAmountSteps;
+                morphLower=std::floor(coordinate); morphBlend=coordinate-morphLower;
+                if(morphBlend>1.0e-6f && morphLower<spectralAmountSteps) morphStage=i;
+                else if((static_cast<int>(std::lround(coordinate))&1)!=0) keyHints=morph;
+                break;
+            }
         // Spectral tables already include phase processes. Evaluate those only
         // on a cache miss; the normal prepared read needs just interpolation.
         if(!spectral) for(std::size_t i=0;i<count;++i)
@@ -945,9 +1014,16 @@ inline __attribute__((always_inline)) float WavetableOscillator::readAt(const Wa
     // simple read inlines completely (a leaf function).
     auto read=[&](std::size_t frame,std::size_t hintIndex) __attribute__((always_inline)) -> float {
         if constexpr(!Simple) {
-            if(spectral) return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,hints[hintIndex],
-                                                                 static_cast<std::uint16_t>(std::clamp(sampleRate*spectralTransitionSeconds,1.0,4096.0)));
-        } else { (void)hintIndex; (void)hints; (void)sampleRate; }
+            if(spectral) {
+                const auto fade=static_cast<std::uint16_t>(std::clamp(sampleRate*spectralTransitionSeconds,1.0,4096.0));
+                // A random amount morphs prepared frames (out of line); the
+                // odd keys' hint lives in `morph` (caller-owned, cold).
+                if(morphStage<maxOscProcessStages)
+                    return readRandomMorph(table,frame,bandIndex,plan,morphStage,morphLower,morphBlend,index,nextIndex,fraction,readPhase,
+                                           hints[hintIndex],morph[hintIndex],fade);
+                return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,keyHints[hintIndex],fade);
+            }
+        } else { (void)hintIndex; (void)hints; (void)morph; (void)sampleRate; (void)morphStage; (void)morphLower; (void)morphBlend; (void)keyHints; }
         const auto& samples=table.frames[frame].bands[bandIndex].samples;
         return samples[index]+fraction*(samples[nextIndex]-samples[index]);};
     const float frameFraction=framePosition-static_cast<float>(first);
@@ -963,7 +1039,7 @@ float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,doub
     if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
     preparePitch(table,frequency,sampleRate);
     const double increment=increment_;
-    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_,phase_,bandIndex_,sampleRate);
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_.data(),morphHints_,phase_,bandIndex_,sampleRate);
     phase_+=increment;if(phase_>=1)phase_-=1;
     return frequency>=sampleRate*.5?0:output;
 }
@@ -972,11 +1048,11 @@ template<bool Simple>
 float WavetableOscillator::nextStereoImpl(const Wavetable& table,double frequency,double sampleRate,
         float position,const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew,
         float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
-        std::array<SpectralReadHint,2>& rightHints,float& right,double frequencyRight) noexcept {
+        std::array<SpectralReadHint,4>& rightHints,float& right,double frequencyRight) noexcept {
     if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position)) { right=0.0f; return 0; }
     preparePitch(table,frequency,sampleRate);
     const double increment=increment_;
-    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_,phase_,bandIndex_,sampleRate);
+    const float output=readAt<Simple>(table,position,plan,phaseOffsetCycles,phaseSkew,spectralHints_.data(),morphHints_,phase_,bandIndex_,sampleRate);
     const float rightPosition=std::isfinite(positionRight)?positionRight:position;
     float outputRight=0.0f;
     bool rightAboveNyquist=frequency>=sampleRate*.5;
@@ -989,12 +1065,12 @@ float WavetableOscillator::nextStereoImpl(const Wavetable& table,double frequenc
         std::size_t band=bandIndex_<bands.size() ? bandIndex_ : 0;
         while(band>0 && bands[band].maximumHarmonic>available) --band;
         while(band+1<bands.size() && bands[band+1].maximumHarmonic<=available) ++band;
-        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints,phaseRight_,band,sampleRate);
+        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints.data(),rightHints.data()+2,phaseRight_,band,sampleRate);
         phaseRight_+=std::clamp(frequencyRight/sampleRate,0.0,.499);if(phaseRight_>=1)phaseRight_-=1;
         rightAboveNyquist=frequencyRight>=sampleRate*.5;
     } else {
         rightPhaseLive_=false;
-        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints,phase_,bandIndex_,sampleRate);
+        outputRight=readAt<Simple>(table,rightPosition,planRight,phaseOffsetRight,phaseSkewRight,rightHints.data(),rightHints.data()+2,phase_,bandIndex_,sampleRate);
     }
     phase_+=increment;if(phase_>=1)phase_-=1;
     const bool aboveNyquist=frequency>=sampleRate*.5;
@@ -1004,12 +1080,12 @@ float WavetableOscillator::nextStereoImpl(const Wavetable& table,double frequenc
 float WavetableOscillator::nextStereo(const Wavetable& table,double frequency,double sampleRate,
         float position,const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew,
         float positionRight,const OscProcessPlan& planRight,double phaseOffsetRight,double phaseSkewRight,
-        std::array<SpectralReadHint,2>& rightHints,float& right,double frequencyRight) noexcept {
+        std::array<SpectralReadHint,4>& rightHints,float& right,double frequencyRight) noexcept {
     return nextStereoImpl<false>(table,frequency,sampleRate,position,plan,phaseOffsetCycles,phaseSkew,
                                  positionRight,planRight,phaseOffsetRight,phaseSkewRight,rightHints,right,frequencyRight);
 }
 float WavetableOscillator::nextStereoSimple(const Wavetable& table,double frequency,double sampleRate,
-        float position,float positionRight,std::array<SpectralReadHint,2>& rightHints,float& right) noexcept {
+        float position,float positionRight,std::array<SpectralReadHint,4>& rightHints,float& right) noexcept {
     static constexpr OscProcessPlan empty{};
     return nextStereoImpl<true>(table,frequency,sampleRate,position,empty,0.0,0.0,positionRight,empty,0.0,0.0,rightHints,right,0.0);
 }

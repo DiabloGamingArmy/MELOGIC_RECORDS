@@ -21,6 +21,12 @@ std::vector<ModulationDestinationEntry> modulationDestinationCatalog(const Instr
         add("Filter",{ModDestination::Resonance,0},"RESONANCE");
     }
 
+    for(const auto& f:state.modulation.synthFilters.filters) if(f.id) {
+        const auto group="SYNTH FILTER "+juce::String(f.id);
+        const char* names[]{"CUTOFF","RESONANCE","DRIVE","MIX","KEYTRACK"};
+        for(std::uint32_t i=0;i<5;++i) add(group,{static_cast<ModDestination>(401+i),0,f.id},names[i]);
+    }
+
     struct OscDestinationSpec { ModDestination destination; const char* label; };
     static constexpr OscDestinationSpec oscillatorDestinations[] {
         {ModDestination::WtPosition,"WT POS"},
@@ -65,6 +71,7 @@ std::vector<ModulationDestinationEntry> modulationDestinationCatalog(const Instr
     const std::size_t plain=out.size();
     for(std::size_t i=0;i<4;++i)
         if(mod.lfoActiveMask&(1u<<i)) add(nestedDestinationGroup,lfoRateAddress(i),"LFO "+juce::String(int(i+1))+" RATE",i==0);
+    for(const auto& a:mod.instances) if(a.id && a.family==SourceFamily::Lfo) add(nestedDestinationGroup,{ModDestination::LfoRate,0,static_cast<std::uint32_t>(instanceSource(a.id))},modulationSourceLabel(mod,instanceSource(a.id))+" RATE");
     for(const auto macro:activeMacroSources(mod)) add(nestedDestinationGroup,macroValueAddress(macroIdOf(macro)),macroLabel(mod,macroIdOf(macro)));
     bool first=true;
     const std::vector<ModulationDestinationEntry> known(out.begin(),out.begin()+std::ptrdiff_t(plain));
@@ -82,7 +89,7 @@ juce::String modulationDestinationLabel(const std::vector<ModulationDestinationE
 
 juce::String modulationAddressLabel(const std::vector<ModulationDestinationEntry>& catalog,const ModulationState& mod,const ModAddress& address,int depth) {
     switch(address.parameter) {
-        case ModDestination::LfoRate: return "LFO "+juce::String(int(address.itemId))+" RATE";
+        case ModDestination::LfoRate: if(isInstanceSource(static_cast<ModSource>(address.itemId))) return modulationSourceLabel(mod,static_cast<ModSource>(address.itemId))+" RATE"; return "LFO "+juce::String(int(address.itemId))+" RATE";
         case ModDestination::MacroValue: return macroLabel(mod,address.itemId);
         case ModDestination::RouteDepth: {
             for(const auto& r:mod.routes)

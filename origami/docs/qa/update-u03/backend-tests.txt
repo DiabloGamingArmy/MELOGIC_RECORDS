@@ -1,0 +1,51 @@
+▶ A01 full licensing lifecycle and transaction safety
+  ✔ generate → existing redeem → authorize → revoke → unauthorized → grant → authorize (212.046834ms)
+  ✔ invalid product/edition/expiration, absent target and bounds (22.047167ms)
+  ✔ batch entropy/uniqueness, masked listing and no plaintext in database/audit (92.153833ms)
+  ✔ two users, one capacity; same user retry; revocation race serializes (5278.076459ms)
+  ✔ expired/revoked/wrong product/edition keys and disabled product reject (98.829625ms)
+✔ A01 full licensing lifecycle and transaction safety (6258.414833ms)
+✔ A01 each privileged operation rejects normal, removed, disabled and stale administrators (2.316958ms)
+✔ S256 challenge uses the RFC 7636 vector (0.785333ms)
+✔ desktop grants reject malformed requests before IO (0.731ms)
+✔ Firestore transactions bind proof, UID, expiry and one-time issuance (3837.900666ms)
+✔ deployed callable handlers resolve owner/admin roles without migrated booleans; full licensing UI operations (1175.203042ms)
+✔ canonical artifact metadata rejects incomplete, traversal, hash, generation and size spoofing (0.701042ms)
+✔ authorized response is bounded, ten minutes, exact generation; issuance never hashes on caller request (1.999625ms)
+✔ identity, eligibility, publication and artifact revalidated; all caller authority fields rejected (0.990958ms)
+✔ missing exact object/generation and metadata mismatch fail closed without URL/error leakage (0.494417ms)
+✔ replacement generation cannot substitute: retained original serves original or deletion fails closed (1.73ms)
+✔ trusted publication independently hashes exact bytes; wrong digest rejected and adapter required (1.609042ms)
+✔ eligibility changes during issuance block new URL; already issued bearer survives until expiry (0.304292ms)
+✔ Storage emulator denies direct release read/write for anonymous, beta and owner clients (358.298125ms)
+✔ real installed GCS V4 signer binds exact generation in signed URL (86.503958ms)
+✔ license input is opaque, bounded and trimmed without changing identity (1.220167ms)
+▶ L01.1 entitlement and redemption transactions
+  ✔ authentication alone does not authorize; no anonymous key grant (442.136791ms)
+  ✔ invalid, wrong product/edition, expired, revoked, corrupt capacity fail closed (213.633334ms)
+  ✔ concurrent redemption admits one UID; retry idempotent; no raw key stored (3538.008125ms)
+  ✔ expiry, wrong product and absent edition close authorization (15.330459ms)
+✔ L01.1 entitlement and redemption transactions (4212.202875ms)
+✔ strict SemVer, bounded identities and spoofing input rejected (0.82525ms)
+✔ selection, policy, response allowlist and build-only ordering (2.472708ms)
+✔ oversized active catalog fails closed (0.390291ms)
+✔ malformed catalog rows ignored (0.427917ms)
+✔ publication enforces immutable identity and monotonic build allocation (0.683125ms)
+[2026-10-10T05:30:16.567Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x6d1fedb5 error. Code: 7 Message: 7 PERMISSION_DENIED:
+false for 'create' @ L1493, false for 'create' @ L2658, false for 'update' @ L1493, false for 'update' @ L2658
+[2026-10-10T05:30:16.600Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x6d1fedb7 error. Code: 7 Message: 7 PERMISSION_DENIED:
+false for 'create' @ L1493, false for 'create' @ L2658, false for 'update' @ L1493, false for 'update' @ L2658
+[2026-10-10T05:30:16.623Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x6d1fedb9 error. Code: 7 Message: 7 PERMISSION_DENIED:
+false for 'create' @ L1493, false for 'create' @ L2658, false for 'update' @ L1493, false for 'update' @ L2658
+✔ Firestore emulator enforces release privacy and denies client publication (1733.536375ms)
+✔ release selection uses real Firestore and canonical entitlement (3352.975708ms)
+✔ callable identity checks revocation and cannot be spoofed (0.587292ms)
+✔ release build configuration rejects accidental public identity (115.022709ms)
+ℹ tests 35
+ℹ suites 0
+ℹ pass 35
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6383.665667

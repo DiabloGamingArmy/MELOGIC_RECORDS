@@ -1,3 +1,4 @@
+const { assertMarketplaceProduct } = require('../licensing/entitlements')
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 
@@ -270,6 +271,7 @@ exports.saveProductManifest = onCall(
       : null
     if (!manifest) throw new HttpsError('invalid-argument', 'manifest is required.')
 
+    assertMarketplaceProduct(productId)
     const productRef = db.collection('products').doc(productId)
     let product = null
     let currentOperation = 'read-parent-product'
@@ -280,6 +282,7 @@ exports.saveProductManifest = onCall(
       const productSnap = await productRef.get()
       if (!productSnap.exists) throw new HttpsError('not-found', 'Product not found.')
       product = productSnap.data() || {}
+      assertMarketplaceProduct(productId, product)
       if (product.artistId !== uid) {
         throw new HttpsError('permission-denied', 'This product does not belong to the signed-in account.', {
           operationName: currentOperation,

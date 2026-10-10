@@ -1,0 +1,394 @@
+[  1%] Building VST3 manifest helper for OrigamiPlugin
+[  6%] Built target OrigamiAssets
+[  7%] Built target origami_spectral_heap_probe
+[ 15%] Built target origami_core
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/vst3_helpers/OrigamiPlugin
+[ 17%] Built target origami_nodes_bench
+[ 19%] Built target origami_dsp_profile
+[ 19%] Built target origami_wavetable_bank_tests
+[ 19%] Built target origami_patch
+make[3]: warning: jobserver unavailable: using -j1.  Add `+' to parent make rule.
+[ 20%] Built target origami_render
+[ 20%] Built target origami_state_tests
+[ 21%] Built target origami_tests
+[ 22%] Built target origami_modulation_tests
+[ 23%] Built target origami_fx_tests
+[ 24%] Built target origami_spectral_tests
+[100%] Built target vst3_helper
+[ 24%] Built target OrigamiPlugin_vst3_helper
+[ 24%] Building CXX object CMakeFiles/OrigamiPlugin.dir/plugin/ui/FxPage.cpp.o
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.h:7:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:6:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/InstrumentState.h:6:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:16:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/../SynthFilter.h:96:105: warning: implicit conversion changes signedness: 'int' to 'std::size_t' (aka 'unsigned long') [-Wsign-conversion]
+   96 |     void bindComb(float* data,std::size_t length) noexcept {for(int c=0;c<2;++c) comb[c].bind(data?data+c*length:nullptr,length);}
+      |                                                                                                         ^~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/../SynthFilter.h:110:20: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+  110 |         if(driveKey!=drive) {driveKey=drive;driveGain=static_cast<float>(dsp::fastExp2Audio(drive/6.020599913));}
+      |            ~~~~~~~~^ ~~~~~
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.h:7:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:6:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/InstrumentState.h:6:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:726:16: warning: enumeration value 'Envelope' not explicitly handled in switch [-Wswitch-enum]
+  726 |         switch(s.family) {
+      |                ^~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:726:16: note: add missing switch cases
+  726 |         switch(s.family) {
+      |                ^
+  727 |         case SourceFamily::Lfo:return lfo.next(s.lfo,sampleRate);
+  728 |         case SourceFamily::Random:return random.next(s.random,sampleRate);
+  729 |         case SourceFamily::Function:return function.next(s.function,sampleRate);
+  730 |         case SourceFamily::Chaos:return chaos.next(s.chaos,sampleRate);
+  731 |         case SourceFamily::Drift:return drift.next(s.drift,sampleRate);
+  732 |         case SourceFamily::Sequencer:return sequencer.next(s.sequencer,sampleRate);
+  733 |         default:return 0;
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:790:12: warning: 25 enumeration values not explicitly handled in switch: 'None', 'Cutoff', 'Resonance'... [-Wswitch-enum]
+  790 |     switch(d) {
+      |            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:790:12: note: add missing switch cases
+  790 |     switch(d) {
+      |            ^
+  791 |         case ModDestination::WtPosition:
+  792 |         case ModDestination::Process1Amount: case ModDestination::Process2Amount: case ModDestination::ProcessAmount:
+  793 |         case ModDestination::Route1Amount: case ModDestination::Route2Amount: case ModDestination::RouteAmount: return true;
+  794 |         default: return false;
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:798:12: warning: 12 enumeration values not explicitly handled in switch: 'None', 'MainTuning', 'Transpose'... [-Wswitch-enum]
+  798 |     switch(d) {
+      |            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:798:12: note: add missing switch cases
+  798 |     switch(d) {
+      |            ^
+  799 |         case ModDestination::Level: case ModDestination::Cutoff: case ModDestination::Resonance:
+  800 |         case ModDestination::WtPosition:
+  801 |         case ModDestination::Process1Amount: case ModDestination::Process2Amount: case ModDestination::ProcessAmount:
+  802 |         case ModDestination::Route1Amount: case ModDestination::Route2Amount: case ModDestination::RouteAmount:
+  803 |             return StereoCapability::Stereo;
+  804 |         case ModDestination::Octave: case ModDestination::Semitone: case ModDestination::Fine:
+  805 |         case ModDestination::FxParameter: case ModDestination::MasterGain: return StereoCapability::RequiresStereoDsp;
+  806 |         case ModDestination::EnvelopeScaling: case ModDestination::LfoScaling: return StereoCapability::Ambiguous;
+  807 |         // mct-origami-nested-modulation-manual-qa: an LFO's rate is its phase
+  808 |         // state, a macro is one value, a route depth one weight: LEFT only.
+  809 |         case ModDestination::LfoRate: case ModDestination::MacroValue: case ModDestination::RouteDepth:
+  810 |             return StereoCapability::RequiresStereoDsp;
+  811 |         default: return StereoCapability::Scalar;
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.h:7:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:7:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/Voice.h:14:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/dsp/OscillatorControlCache.h:16:33: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   16 |         if(!pitchValid_ || pitch!=pitch_) {
+      |                            ~~~~~^ ~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/dsp/OscillatorControlCache.h:24:27: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   24 |         if(!panValid_ || p!=pan_) {
+      |                          ~^ ~~~~
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.h:7:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:7:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/Voice.h:17:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:28:46: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   28 |                 changed|=module.filterSend[f]!=plan.filterSends[m][f];if(snap) module.filterSend[f]=plan.filterSends[m][f];}
+      |                          ~~~~~~~~~~~~~~~~~~~~^ ~~~~~~~~~~~~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:30:43: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   30 |                 changed|=module.busSend[b]!=plan.directSends[m][b];if(snap) module.busSend[b]=plan.directSends[m][b];
+      |                          ~~~~~~~~~~~~~~~~~^ ~~~~~~~~~~~~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:31:57: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   31 |                 if(b) module.auxSends|=module.busSend[b]!=0 || plan.directSends[m][b]!=0;}
+      |                                        ~~~~~~~~~~~~~~~~~^ ~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:31:86: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   31 |                 if(b) module.auxSends|=module.busSend[b]!=0 || plan.directSends[m][b]!=0;}
+      |                                                                ~~~~~~~~~~~~~~~~~~~~~~^ ~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:36:122: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   36 |         for(std::size_t f=0;f<plan.count;++f) for(std::size_t b=1;b<plan.busCount;++b) auxActive|=plan.stages[f].sends[b]!=0;
+      |                                                                                                   ~~~~~~~~~~~~~~~~~~~~~~~^ ~
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.h:7:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:57:12: warning: 5 enumeration values not explicitly handled in switch: 'None', 'Macro1', 'Macro2'... [-Wswitch-enum]
+   57 |     switch(s) {
+      |            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:57:12: note: add missing switch cases
+   57 |     switch(s) {
+      |            ^
+   58 |         case S::Env1:return "ENV 1"; case S::Env2:return "ENV 2"; case S::Env3:return "ENV 3";
+   59 |         case S::Lfo1:return "LFO 1"; case S::Lfo2:return "LFO 2"; case S::Lfo3:return "LFO 3"; case S::Lfo4:return "LFO 4";
+   60 |         case S::Random:return "RANDOM"; case S::Function:return "FUNCTION";
+   61 |         case S::Chaos:return "CHAOS"; case S::Drift:return "DRIFT"; case S::Sequencer:return "SEQUENCER";
+   62 |         case S::ModWheel:return "MOD WHEEL"; case S::Velocity:return "VELOCITY"; case S::Keytrack:return "KEYTRACK";
+   63 |         case S::Aftertouch:return "AFTERTOUCH"; case S::PitchBend:return "PITCH BEND"; case S::NoteGate:return "NOTE GATE";
+   64 |         default:break;
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:124:12: warning: 5 enumeration values not explicitly handled in switch: 'None', 'Macro1', 'Macro2'... [-Wswitch-enum]
+  124 |     switch(s) {
+      |            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:124:12: note: add missing switch cases
+  124 |     switch(s) {
+      |            ^
+  125 |     case S::Env1:return "ENV 1"; case S::Env2:return "ENV 2"; case S::Env3:return "ENV 3";
+  126 |     case S::Lfo1:return "LFO 1"; case S::Lfo2:return "LFO 2"; case S::Lfo3:return "LFO 3"; case S::Lfo4:return "LFO 4";
+  127 |     case S::Random:return "RANDOM"; case S::Function:return "FUNCTION";
+  128 |     case S::Chaos:return "CHAOS"; case S::Drift:return "DRIFT"; case S::Sequencer:return "SEQUENCER";
+  129 |     case S::ModWheel:return "MOD WHEEL"; case S::Velocity:return "VELOCITY"; case S::Keytrack:return "KEYTRACK";
+  130 |     case S::Aftertouch:return "AFTERTOUCH"; case S::PitchBend:return "PITCH BEND"; case S::NoteGate:return "NOTE GATE";
+  131 |     default:break;
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:372:25: warning: declaration shadows a local variable [-Wshadow]
+  372 |             const float r=3.0f+4.0f*amount;
+      |                         ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:197:66: note: previous declaration is here
+  197 | void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode& n,double sampleRate) {
+      |                                                                  ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:472:17: warning: implicit conversion changes signedness: 'int' to 'size_type' (aka 'unsigned long') [-Wsign-conversion]
+  472 |             mag[k]=std::sqrt(re*re+im*im);
+      |             ~~~ ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:473:42: warning: implicit conversion changes signedness: 'int' to 'size_type' (aka 'unsigned long') [-Wsign-conversion]
+  473 |             maximum=std::max(maximum,mag[k]);
+      |                                      ~~~ ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:478:73: warning: implicit conversion changes signedness: 'int' to 'size_type' (aka 'unsigned long') [-Wsign-conversion]
+  478 |             const float normalized=std::sqrt(juce::jlimit(0.0f,1.0f,mag[k]/maximum));
+      |                                                                     ~~~ ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:539:26: warning: implicit conversion changes signedness: 'int' to 'size_type' (aka 'unsigned long') [-Wsign-conversion]
+  539 |         auto& key=notes_[i]; const auto label=spectral::parameters()[10].choiceLabels[i];
+      |                   ~~~~~~ ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:575:88: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  575 |     for(int i=0;i<p->choices;++i) items.push_back({i+1,p->choiceLabels[i],true,p->label});
+      |                                                                                        ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:599:86: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+  599 |         if(node_.parameters[i].id!=node.parameters[i].id || node_.parameters[i].value!=node.parameters[i].value) { previewDirty_=true; break; }
+      |                                                             ~~~~~~~~~~~~~~~~~~~~~~~~~^ ~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:606:38: warning: implicit conversion changes signedness: 'int' to 'size_type' (aka 'unsigned long') [-Wsign-conversion]
+  606 |         for(int i=0;i<12;++i) notes_[i].setToggleState((mask&(1u<<i))!=0,juce::dontSendNotification);
+      |                               ~~~~~~ ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:711:18: warning: declaration shadows a local variable [-Wshadow]
+  711 |             auto row=juce::Rectangle<int>(12,40,getWidth()-24,20);
+      |                  ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:704:14: note: previous declaration is here
+  704 |         auto row=getLocalBounds().removeFromTop(34).reduced(12,5);
+      |              ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:716:111: warning: implicit conversion changes signedness: 'int' to 'size_type' (aka 'unsigned long') [-Wsign-conversion]
+  716 |             for(int i=0;i<12;++i) { const int a=12+(getWidth()-24)*i/12,b=12+(getWidth()-24)*(i+1)/12; notes_[i].setBounds(a,64,b-a-1,24); }
+      |                                                                                                        ~~~~~~ ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:760:69: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+  760 |         if(previewDirty_ || !previewImage_.isValid() || previewRate_!=previewRate || previewImage_.getWidth()!=viewport.getWidth() || previewImage_.getHeight()!=viewport.getHeight()) {
+      |                                                         ~~~~~~~~~~~~^ ~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:909:61: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  909 |         {1,node_.enabled ? "Bypass" : "Enable",true,"EFFECT"},
+      |                                                             ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:910:42: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  910 |         {2,"Disconnect All",true,"EFFECT"},
+      |                                          ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:911:34: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  911 |         {3,"Delete",true,"EFFECT"}},0,[page,id](int choice) {
+      |                                  ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1313:55: warning: declaration shadows a local variable [-Wshadow]
+ 1313 |                     const float mid=cell.getCentreY(),h=cell.getHeight()*0.5f*std::abs(v);
+      |                                                       ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1306:57: note: previous declaration is here
+ 1306 |             const float w=area.getWidth()/float(perRow),h=area.getHeight()/float(previewRows(view_));
+      |                                                         ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1369:109: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1369 |     if(key.kind==nodes::ControlNodeKind::Source) items.push_back({1,"Connect to Parameter...",true,"CONTROL"});
+      |                                                                                                             ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1375:87: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1375 |         if(controlPort>=0) items.push_back({1,"Connect to Parameter...",true,"CONTROL"});
+      |                                                                                       ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1376:55: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1376 |         items.push_back({3,"Duplicate",true,"OPERATOR"});
+      |                                                       ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1377:52: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1377 |         items.push_back({4,"Delete",true,"OPERATOR"});
+      |                                                    ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1379:160: warning: missing field 'path' initializer [-Wmissing-field-initializers]
+ 1379 |         items.push_back({2,"Remove from Canvas",view_.removable,"CONTROL",false,view_.removable ? juce::String() : juce::String("Delete its connections first")});
+      |                                                                                                                                                                ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1885:151: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1885 |             { NativeChoiceItem item{int(type),juce::String(info->label),true,juce::String("INSERT NODE / ")+juce::String(info->category).toUpperCase()};
+      |                                                                                                                                                       ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1889:98: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1889 |     items.push_back({removeId,hit.route!=0 ? "Delete Modulation" : "Disconnect",true,"CONNECTION"});
+      |                                                                                                  ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1909:68: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1909 |     items.push_back({addPoint,"Add Routing Point",true,"CONNECTION"});
+      |                                                                    ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1910:91: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1910 |     items.push_back({resetRouting,"Reset Routing",!connection->layout.empty(),"CONNECTION"});
+      |                                                                                           ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1911:76: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1911 |     items.push_back({removeConnection,"Remove Connection",true,"CONNECTION"});
+      |                                                                            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1938:57: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1938 |                 {1,"Remove Routing Point",true,"ROUTING"},
+      |                                                         ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:1939:50: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1939 |                 {2,"Reset Routing",true,"ROUTING"}},0,[page,target](int choice) {
+      |                                                  ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:2325:15: warning: declaration shadows a static data member of 'mct::origami::ui::FxSidebar' [-Wshadow]
+ 2325 |     const int width=juce::jmax(1,viewport_.getWidth()-10);
+      |               ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.h:394:26: note: previous declaration is here
+  394 |     static constexpr int width=268;
+      |                          ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:2664:80: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 2664 |             for(int i=0;i<6;++i) items.push_back({i+1,names[i],true,"BAND TYPE"});
+      |                                                                                ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:2986:155: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 2986 |                         items.push_back({c+1,descriptor->choiceLabels ? juce::String(descriptor->choiceLabels[c]) : juce::String(c),true,descriptor->label});
+      |                                                                                                                                                           ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3029:144: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 3029 |         for(const auto& s:availableSources(state.modulation)) items.push_back({int(s.source),sourceName(state.modulation,s.source),true,s.group});
+      |                                                                                                                                                ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3203:34: warning: comparison of integers of different signs: 'std::size_t' (aka 'unsigned long') and 'int' [-Wsign-compare]
+ 3203 |             for(std::size_t k=0;k<inputs_.size();++k) {
+      |                                 ~^~~~~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3205:73: warning: implicit conversion loses integer precision: 'std::size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 3205 |                 if(in.kind==ControlInput::Kind::None) { values+=inputs_[k]+" -    "; continue; }
+      |                                                                 ~~~~~~~ ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3208:33: warning: implicit conversion loses integer precision: 'std::size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 3208 |                 values+=inputs_[k]+" "+show(info ? info->inputSignals[k] : ControlSignal::Control,v,
+      |                         ~~~~~~~ ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3275:37: warning: implicit conversion loses integer precision: 'std::size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 3275 |                 text(g,paramLabels_[i],params_[i]->getBounds().withX(params_[i]->getX()-84).withWidth(80),Type::secondary,Palette::muted());
+      |                        ~~~~~~~~~~~~ ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3943:51: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3943 |         {"AUDIO INPUT",{},{},{},true,false,true,{}},
+      |                                                   ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3945:102: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3945 |          [safe]{if(safe!=nullptr) safe->selectNode(safe->graph().sourceForBus(safe->selectedBus()));}},
+      |                                                                                                      ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3946:77: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3946 |         {"EXTERNAL IN","PENDING","Not available yet",{},false,false,false,{}}});
+      |                                                                             ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3954:106: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3954 |         if(std::strcmp(lastGroup,s.group)!=0) { modulators.push_back({s.group,{},{},{},true,false,true,{}}); lastGroup=s.group; }
+      |                                                                                                          ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3955:139: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3955 |         Row row{sourceName(state.modulation,s.source),{},{},juce::String(sourceDragPrefix)+juce::String(int(s.source)),true,false,false,{}};
+      |                                                                                                                                           ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3975:78: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3975 |     std::vector<Row> filters{{"SYNTH / PER VOICE",{},{},{},true,false,true,{}}};
+      |                                                                              ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3976:236: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3976 |     if(state.modulation.filterEnabled) filters.push_back({"LEGACY LP","ON","Per oscillator, before buses / drag: post-mix copy","MCT_SYNTH_FILTER:0",true,true,false,[safe]{if(safe && safe->onOpenSynthFilter) safe->onOpenSynthFilter();}});
+      |                                                                                                                                                                                                                                            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3977:300: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3977 |     for(const auto& f:state.modulation.synthFilters.filters) if(f.id) filters.push_back({"FILTER "+juce::String(f.id),f.power?"ON":"BYPASS","Drag: independent post-mix copy","MCT_SYNTH_FILTER:"+juce::String(f.id),true,true,false,[safe]{if(safe && safe->onOpenSynthFilter) safe->onOpenSynthFilter();}});
+      |                                                                                                                                                                                                                                                                                                            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3981:70: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3981 |     std::vector<Row> buses{{"AUDIO BUSES",{},{},{},true,false,true,{}}};
+      |                                                                      ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3987:98: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3987 |                 {},true,busId==bus_,false,[safe,busId]{if(safe!=nullptr) safe->selectBus(busId);}};
+      |                                                                                                  ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3991:86: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 3991 |                 showNativeChoiceMenu(safe->sidebar_,"BUS",{{1,"Delete Bus",true,"BUS"}},0,[safe,busId](int choice) {
+      |                                                                                      ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:3998:129: warning: missing field 'onSecondaryClick' initializer [-Wmissing-field-initializers]
+ 3998 |                      busNames_.size()<maxRenderBuses && bool(host_.addBus),false,false,[safe]{if(safe!=nullptr) safe->addBus();}});
+      |                                                                                                                                 ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:4376:93: warning: missing field 'path' initializer [-Wmissing-field-initializers]
+ 4376 |     NativeChoiceItem item{id,text,enabled,path.joinIntoString(" / "),false,std::move(reason)};
+      |                                                                                             ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:4558:16: warning: 29 enumeration values not explicitly handled in switch: 'None', 'Add', 'Subtract'... [-Wswitch-enum]
+ 4558 |         switch(op.type) {
+      |                ^~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:4558:16: note: add missing switch cases
+ 4558 |         switch(op.type) {
+      |                ^
+ 4559 |         case ControlOpType::ScaleOffset: case ControlOpType::Constant: case ControlOpType::Smooth: case ControlOpType::Quantize:
+ 4560 |         case ControlOpType::Threshold: case ControlOpType::Pulse: case ControlOpType::Counter: return 0;
+ 4561 |         case ControlOpType::Curve: return 1;
+ 4562 |         case ControlOpType::Clock: return op.params[0]>=0.5f ? 2 : 1; // DIVISION when synced, else RATE
+ 4563 |         // N06
+ 4564 |         case ControlOpType::Sequencer: case ControlOpType::Probability: case ControlOpType::ChanceSplit:
+ 4565 |         case ControlOpType::Pattern: case ControlOpType::RandomWalk: return 0;
+ 4566 |         case ControlOpType::Euclidean: return 1;
+ 4567 |         case ControlOpType::EventDelay: return op.params[0]>=0.5f ? 2 : 1;
+ 4568 |         default: return -1;
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:4758:243: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+ 4758 |     const auto sameRoutes=[&]{ for(std::size_t i=0;i<m.routes.size();++i) { const auto& a=m.routes[i]; const auto& b=current.routes[i]; if(a.id!=b.id || a.enabled!=b.enabled || a.source!=b.source || !(a.destination==b.destination) || a.amount!=b.amount || a.bipolar!=b.bipolar) return false; } return true; };
+      |                                                                                                                                                                                                                                           ~~~~~~~~^ ~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:4837:12: warning: 6 enumeration values not explicitly handled in switch: 'Ok', 'Exists', 'MissingSource'... [-Wswitch-enum]
+ 4837 |     switch(check.result) {
+      |            ^~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:4837:12: note: add missing switch cases
+ 4837 |     switch(check.result) {
+      |            ^
+ 4838 |     case R::TypeMismatch: {
+ 4839 |         const auto into=name(nodes::controlInputSignal(m,to));
+ 4840 |         return name(nodes::controlOutputSignal(m,from))+" output cannot feed "+(into.startsWithChar('E') ? "an " : "a ")+into+" input";
+ 4841 |     }
+ 4842 |     case R::DomainCrossing: return "Per-voice output cannot drive a global parameter or node";
+ 4843 |     case R::InputOccupied: return "Input already connected";
+ 4844 |     case R::WouldCreateCycle: return "That connection would create a feedback loop";
+ 4845 |     case R::DestinationUnavailable: return "Parameter not available in this instrument";
+ 4846 |     case R::CapacityExceeded: return "Modulation is full (32 routes)";
+ 4847 |     case R::SourceInactive: return "Source not active: add it on SYNTH first";
+ 4848 |     case R::SourceNotExposed: return "That source is not available in NODES";
+ 4849 |     default: return "Not a valid connection";
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5003:108: warning: missing field 'path' initializer [-Wmissing-field-initializers]
+ 5003 |                               creatable ? juce::String() : juce::String("The instrument has one sequencer")};
+      |                                                                                                            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5008:132: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 5008 |     if(signal==ControlSignal::Control && fromOutput) items.push_back({FxModuleMenu::parameterPickerId,"Parameter...",true,"CONTROL"});
+      |                                                                                                                                    ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5016:120: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 5016 |                 { NativeChoiceItem item{FxModuleMenu::controlSourceBase+int(s),sourceName(m,s),true,"CONTROL / SOURCES"}; item.path={"CONTROL","SOURCES"}; items.push_back(item); }
+      |                                                                                                                        ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5092:16: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+ 5092 |     if(a.rateHz==settings.rateHz && a.steps==settings.steps && a.activeSteps==settings.activeSteps && a.direction==settings.direction
+      |        ~~~~~~~~^ ~~~~~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5093:118: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+ 5093 |        && a.loop==settings.loop && a.probability==settings.probability && a.ratchets==settings.ratchets && a.humanize==settings.humanize) return true;
+      |                                                                                                            ~~~~~~~~~~^ ~~~~~~~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5121:39: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+ 5121 |     if(m.operators[slot].params[index]==v) return true;
+      |        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5169:124: warning: missing field 'path' initializer [-Wmissing-field-initializers]
+ 5169 |         items.push_back({int(i)+1,enabled || reason.isEmpty() ? e.label : e.label+"  -  "+reason,enabled,group,false,reason});
+      |                                                                                                                            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5242:61: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 5242 |         {1,"Empty (BUS 1 > MASTER OUT)",true,"GRAPH PRESETS"},
+      |                                                             ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5243:72: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 5243 |         {2,"Serial Chain (Drive > Delay > Reverb)",true,"GRAPH PRESETS"},
+      |                                                                        ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5244:69: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 5244 |         {3,"Parallel Processing (dry + Reverb)",true,"GRAPH PRESETS"},
+      |                                                                     ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5245:65: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 5245 |         {5,"Delay / Reverb Send (pending)",false,"GRAPH PRESETS"},
+      |                                                                 ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5246:68: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 5246 |         {4,"Rearrange Current as Serial Chain",true,"CURRENT GRAPH"},
+      |                                                                    ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5247:51: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 5247 |         {10,"Development Graph",true,"DEVELOPMENT"}},0,[safe](int choice) {
+      |                                                   ^
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.cpp:5:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/FxPage.h:807:33: warning: private field 'lastUndoWasControl_' is not used [-Wunused-private-field]
+  807 |     bool operatorGesture_=false,lastUndoWasControl_=false,undoingGraph_=false;
+      |                                 ^
+79 warnings generated.
+[ 25%] Linking CXX static library "OrigamiPlugin_artefacts/Release/libMCT Origami_SharedCode.a"
+[ 46%] Built target OrigamiPlugin
+[ 47%] Linking CXX executable "OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app/Contents/MacOS/MCT Origami"
+[ 47%] Linking CXX CFBundle shared module "OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/MacOS/MCT Origami"
+[ 47%] Linking CXX CFBundle shared module "OrigamiPlugin_artefacts/Release/AU/MCT Origami.component/Contents/MacOS/MCT Origami"
+[ 47%] Building CXX object CMakeFiles/origami_plugin_tests.dir/tests/PluginTests.cpp.o
+[ 47%] Linking CXX executable origami_perf_bench
+[ 47%] Linking CXX executable origami_content_tests
+[ 59%] Built target origami_content_tests
+[ 71%] Built target origami_perf_bench
+[ 72%] Linking CXX executable origami_plugin_tests
+[ 84%] Built target origami_plugin_tests
+[ 89%] Built target OrigamiPlugin_Standalone
+[ 94%] Built target OrigamiPlugin_AU
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: code has no resources but signature indicates they must be present
+-- Replacing invalid signature with ad-hoc signature
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: replacing existing signature
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: code object is not signed at all
+In subcomponent: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/PkgInfo 2
+removing moduleinfo.json
+creating /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/Resources/moduleinfo.json
+[100%] Built target OrigamiPlugin_VST3

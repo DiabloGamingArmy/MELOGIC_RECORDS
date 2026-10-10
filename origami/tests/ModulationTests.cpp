@@ -668,7 +668,7 @@ void lfoStereoModulation() {
         c.globalFrame(*f,src,48000.0); return f;
     };
     {
-        ModulationState st; st.lfoActiveMask=0xF; st.nextRouteId=10;
+        ModulationState st; st.filterEnabled=true; st.lfoActiveMask=0xF; st.nextRouteId=10;
         st.routes[0]=route(1,ModSource::Lfo1,ModDestination::Cutoff,.4f);
         st.routes[1]=route(2,ModSource::Macro1,ModDestination::Cutoff,.2f);
         st.routes[2]=route(3,ModSource::Lfo1,ModDestination::Pan,.5f,1);
@@ -789,7 +789,7 @@ void lfoStereoModulation() {
         // Block-size independence of both channels.
         for(int block:{64,1024}) { std::vector<float> rb; const auto lb=render(s1,block,24576,&rb); check(lb==l1 && rb==r1,"stereo modulation renders identically at any block size"); }
         // CUTOFF: stereo spectral motion, LEFT unchanged.
-        auto c0=base; c0.routes[0]=route(1,ModSource::Lfo1,ModDestination::Cutoff,.8f); std::vector<float> rc0; const auto lc0=render(c0,256,12288,&rc0);
+        auto c0=base; c0.filterEnabled=true; c0.routes[0]=route(1,ModSource::Lfo1,ModDestination::Cutoff,.8f); std::vector<float> rc0; const auto lc0=render(c0,256,12288,&rc0);
         auto c1=c0; c1.lfo1.stereo=1.0f; std::vector<float> rc1; const auto lc1=render(c1,256,12288,&rc1);
         bool differ=false; for(std::size_t i=0;i<rc1.size();++i) differ|=std::abs(rc1[i]-lc1[i])>1e-4f;
         check(lc0==rc0 && lc1==lc0 && differ,"CUTOFF: STEREO 0 identical channels; STEREO 100% RIGHT filters differently, LEFT unchanged");
@@ -1445,8 +1445,108 @@ void lfoFunctionBenchmark() {
 }
 }
 
+// Wave 1: ENV 1 is "default until overridden". No graph: note-on starts it.
+// A connected ENV TRIGGER owns it. ENV 2 / 3 keep note-on + retrigger.
+void envelopeOwnershipAudit() {
+    const auto peakOf=[](OrigamiEngine& e,int blocks) {
+        std::array<float,256> left{},right{}; float* io[]{left.data(),right.data()};
+        float peak=0.0f;
+        for(int b=0;b<blocks;++b) { e.process(io,2,256); for(float x:left) peak=std::max(peak,std::abs(x)); }
+        return peak;
+    };
+    const auto rig=[](OrigamiEngine& e,ControlOpType event,int target,bool connect) {
+        auto m=e.instrumentState().modulation;
+        m.operators[0]=makeControlOperator(event,m.nextOperatorId++);
+        m.operators[1]=makeControlOperator(ControlOpType::EnvelopeTrigger,m.nextOperatorId++);
+        m.operators[1].params[0]=float(target);
+        if(connect) { m.operators[1].inputs[0].kind=ControlInput::Kind::Operator; m.operators[1].inputs[0].op=m.operators[0].id; }
+        return m;
+    };
+    auto e=std::make_unique<OrigamiEngine>();
+    check(e->prepare(48000,256,2),"ownership engine");
+    // Blank patch: a conventional synthesizer.
+    e->reset(); e->noteOn(60,1.0f);
+    check(peakOf(*e,4)>1.0e-4f,"blank patch: note-on plays ENV 1 automatically");
+    e->noteOff(60); peakOf(*e,400);
+    check(peakOf(*e,1)<1.0e-6f,"blank patch: the note releases to silence");
+    // NOTE ON -> ENV TRIGGER (ENV 1): the graph fires ENV 1.
+    check(e->setModulationState(rig(*e,ControlOpType::NoteOn,1,true)),"NOTE ON -> ENV 1 accepted");
+    e->reset(); e->noteOn(60,1.0f);
+    check(peakOf(*e,4)>1.0e-4f,"graph-owned ENV 1 sounds when the graph triggers it");
+    e->noteOff(60); peakOf(*e,400);
+    check(peakOf(*e,1)<1.0e-6f,"graph-owned ENV 1 releases with the note");
+    // NOTE OFF -> ENV TRIGGER (ENV 1): silent while held; a one-shot after release, never stuck.
+    const auto noteOffRig=rig(*e,ControlOpType::NoteOff,1,true);
+    check(e->setModulationState(noteOffRig),"NOTE OFF -> ENV 1 accepted");
+    e->reset(); e->noteOn(60,1.0f);
+    check(peakOf(*e,4)<1.0e-6f,"graph-owned ENV 1 does not auto-trigger on note-on");
+    e->noteOff(60);
+    check(peakOf(*e,8)>1.0e-5f,"the NOTE OFF event triggers ENV 1");
+    peakOf(*e,800);
+    check(peakOf(*e,4)<1.0e-6f,"a trigger after release is a one-shot: no stuck voice");
+    // Save / load: ownership is the graph, so it travels with the patch.
+    {
+        auto state=e->instrumentState();
+        const auto bytes=encodeInstrumentState(state);
+        InstrumentState back;
+        check(decodeInstrumentState(bytes.data(),bytes.size(),back),"owned patch round trip");
+        auto f=std::make_unique<OrigamiEngine>(); check(f->prepare(48000,256,2) && f->restoreInstrumentState(back),"restored engine");
+        f->noteOn(60,1.0f);
+        check(peakOf(*f,4)<1.0e-6f,"ENV 1 ownership survives save / load");
+    }
+    // Disconnect: automatic behavior returns.
+    check(e->setModulationState(rig(*e,ControlOpType::NoteOff,1,false)),"unconnected target accepted");
+    e->reset(); e->noteOn(60,1.0f);
+    check(peakOf(*e,4)>1.0e-4f,"disconnecting the graph restores automatic ENV 1");
+    e->noteOff(60); peakOf(*e,400);
+    // ENV 2 / 3 regression: a connected trigger RE-triggers, never owns.
+    for(int target:{2,3}) {
+        CompiledModulation compiled; compiled.prepare(48000.0);
+        const auto m=rig(*e,ControlOpType::NoteOff,target,true);
+        compiled.compile(m,e->instrumentState().oscillators,true);
+        check(compiled.hasEnvelopeTriggers() && compiled.envelopeOwnedMask()==0,"ENV 2 / 3 triggers retrigger and never own (note-on still starts them)");
+        check(e->setModulationState(m),"ENV 2 / 3 trigger accepted");
+        e->reset(); e->noteOn(60,1.0f);
+        check(peakOf(*e,4)>1.0e-4f,"an ENV 2 / 3 trigger leaves ENV 1 automatic");
+        e->noteOff(60); peakOf(*e,400);
+    }
+    // Typed ports: an EVENT input cannot take a CONTROL source.
+    {
+        auto m=rig(*e,ControlOpType::NoteOff,1,false);
+        m.operators[1].inputs[0].kind=ControlInput::Kind::Source;
+        m.operators[1].inputs[0].source=ModSource::Lfo1;
+        CompiledModulation compiled; compiled.prepare(48000.0);
+        compiled.compile(m,e->instrumentState().oscillators,true);
+        check(!e->setModulationState(m) || compiled.envelopeOwnedMask()==0,"a CONTROL source cannot drive (and own) an EVENT trigger input");
+    }
+}
+
 int main() {
     try {
+        envelopeOwnershipAudit();
+        // A connected event target owns ENV 1 triggering; an unconnected
+        // target leaves the conventional amp envelope automatic.
+        {
+            auto e=std::make_unique<OrigamiEngine>();
+            check(e->prepare(48000,256,2),"envelope ownership engine");
+            auto m=e->instrumentState().modulation;
+            m.operators[0]=makeControlOperator(ControlOpType::NoteOff,m.nextOperatorId++);
+            m.operators[1]=makeControlOperator(ControlOpType::EnvelopeTrigger,m.nextOperatorId++);
+            m.operators[1].params[0]=1.0f;
+            m.operators[1].inputs[0].kind=ControlInput::Kind::Operator;
+            m.operators[1].inputs[0].op=m.operators[0].id;
+            check(e->setModulationState(m),"connected ENV 1 event target accepted");
+            e->reset();e->noteOn(60,1.0f);
+            std::array<float,256> left{},right{};float* io[]{left.data(),right.data()};
+            e->process(io,2,256);
+            float peak=0;for(float x:left) peak=std::max(peak,std::abs(x));
+            check(peak<1.0e-6f,"graph-owned ENV 1 does not auto trigger");
+            m.operators[1].inputs[0]={};
+            check(e->setModulationState(m),"unconnected target accepted");
+            e->reset();e->noteOn(60,1.0f);e->process(io,2,256);
+            peak=0;for(float x:left) peak=std::max(peak,std::abs(x));
+            check(peak>1.0e-4f,"unconnected ENV 1 remains automatic");
+        }
         identitiesAndValidation();
         lfoContract();
         normalizationContract();

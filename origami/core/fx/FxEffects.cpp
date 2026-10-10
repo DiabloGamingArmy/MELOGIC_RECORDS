@@ -9,6 +9,9 @@
 // block boundaries.
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxFilter.h"
+#include "core/fx/EqDomain.h"
+#include "core/fx/SpectralTune.h"
+#include "core/dsp/Comb.h"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -131,13 +134,13 @@ constexpr FxParameterDescriptor limiterParameters[]{
 
 
 // P04 tables. Ids are persistent; descriptor order is the latched order.
-constexpr const char* filterTypes[]{"LOW PASS","HIGH PASS","BAND PASS","NOTCH","PEAK","ALL PASS","LOW SHELF","HIGH SHELF","COMB"};
+
 // FILTER keeps COMB's ids 1-4 (freq, feedback, mix, damp) for migration.
 constexpr FxParameterDescriptor filterParameters[]{
     {1,"frequency","FREQ",0.566f,P::Main,true,20.0f,20000.0f,C::Exponential,"Hz"},
     {6,"resonance","RES",0.109f,P::Main,true,0.5f,12.0f,C::Exponential,"",0,nullptr,5,0xFFu},
     {3,"mix","MIX",1.0f,P::Main,true,0.0f,1.0f,C::Linear,"%"},
-    {5,"type","TYPE",0.0f,P::Main,false,0.0f,8.0f,C::Choice,"",9,filterTypes},
+    {5,"type","TYPE",0.0f,P::Main,false,0.0f,float(dsp::filterTypeLabels.size()-1),C::Choice,"",int(dsp::filterTypeLabels.size()),dsp::filterTypeLabels.data()},
     {7,"gain","GAIN",0.5f,P::Main,false,-24.0f,24.0f,C::Linear,"dB",0,nullptr,5,0xD0u},
     {8,"drive","DRIVE",0.0f,P::Advanced,false,0.0f,24.0f,C::Linear,"dB",0,nullptr,5,0xFFu},
     {2,"feedback","FB",0.938f,P::Main,true,-0.97f,0.97f,C::Linear,"%",0,nullptr,5,0x100u},
@@ -477,13 +480,14 @@ class CombFx final : public FxProcessor {
 public:
     void prepare(double sampleRate) override {
         sampleRate_=sampleRate;
-        for(auto& l:lines_) l.prepare(static_cast<std::size_t>(sampleRate/15.0));
+        std::size_t size=1;while(size<std::size_t(sampleRate/15.0)+4) size<<=1;
+        for(int c=0;c<2;++c) {storage_[c].assign(size,0);state_[c].bind(storage_[c].data(),size);}
         period_.setTime(sampleRate,0.05);
         for(auto* s:{&feedback_,&mix_,&damp_}) s->setTime(sampleRate,0.02);
         reset();
         primed_=false;
     }
-    void reset() noexcept override { for(auto& l:lines_) l.reset(); lp_[0]=lp_[1]=0.0f; }
+    void reset() noexcept override {for(auto& state:state_) state.reset();}
     void process(float* left,float* right,int samples,const float* p) noexcept override {
         period_.target=float(sampleRate_)/param(combParameters,0,p);
         feedback_.target=param(combParameters,1,p);
@@ -493,21 +497,14 @@ public:
         float* channels[2]{left,right};
         for(int i=0;i<samples;++i) {
             const float d=period_.next(),f=feedback_.next(),m=mix_.next(),a=damp_.next();
-            const float normalize=std::sqrt(1.0f-std::abs(f));
-            for(int c=0;c<2;++c) {
-                const float x=sane(channels[c][i]);
-                lp_[c]+=a*(lines_[c].read(d)-lp_[c]);
-                const float y=softLimit(x+f*lp_[c]);
-                lines_[c].push(y);
-                channels[c][i]=x+m*(y*normalize-x);
-            }
+            const dsp::CombCoefficients coefficients{d,f,std::sqrt(1.f-std::abs(f)),a};
+            for(int c=0;c<2;++c) {const float x=sane(channels[c][i]);channels[c][i]=x+m*(state_[c].next(x,coefficients)-x);}
         }
     }
 private:
     double sampleRate_=48000.0;
-    DelayLine lines_[2];
+    std::vector<float> storage_[2];dsp::CombState state_[2];
     Smoothed period_,feedback_,mix_,damp_;
-    float lp_[2]{};
     bool primed_=false;
 };
 
@@ -778,6 +775,9 @@ public:
     }
     void reset() noexcept override { for(auto& b:band_) { b.state[0].reset(); b.state[1].reset(); } }
     void process(float* left,float* right,int samples,const float* p) noexcept override {
+        std::array<float,40> targets{};const auto* descriptor=findFxEffect(FxEffectType::Equalizer);
+        for(int i=0;i<40;++i)targets[i]=p?p[i]:descriptor->parameters[i].defaultValue;
+        eq::project(targets.data());p=targets.data();
         static constexpr SvfShape shapes[6]{SvfShape::HighPass,SvfShape::LowShelf,SvfShape::Bell,SvfShape::Notch,SvfShape::HighShelf,SvfShape::LowPass};
         for(int b=0;b<bands;++b) {
             auto& band=band_[b];
@@ -791,6 +791,9 @@ public:
             band.frequency.target=std::log(param(equalizerParameters,base+2,p));
             band.gain.target=param(equalizerParameters,base+3,p);
             band.q.target=param(equalizerParameters,base+4,p);
+            // A Bell -> cut/shelf switch cannot carry its old high-Q state
+            // through the smoothing ramp into the newly monotonic shape.
+            if(type!=2 && type!=3)band.q.value=std::min(band.q.value,float(1/std::sqrt(2.)));
             if(!primed_) for(auto* s:{&band.frequency,&band.gain,&band.q}) s->snap(s->target);
         }
         primed_=true;
@@ -1066,6 +1069,7 @@ const std::vector<FxEffectDescriptor>& fxEffectCatalog() noexcept {
         {FxEffectType::Diffuse,"diffuse","DIFFUSE",FxCategory::Time,FxVisual::Diffusion,true,diffuseParameters,std::size(diffuseParameters),&make<DiffuseFx>,0},
         {FxEffectType::Gain,"gain","GAIN",FxCategory::Utility,FxVisual::Utility,true,gainParameters,std::size(gainParameters),&make<GainFx>,0},
         {FxEffectType::StereoUtility,"stereo","STEREO UTILITY",FxCategory::Utility,FxVisual::Utility,true,stereoUtilityParameters,std::size(stereoUtilityParameters),&make<StereoUtilityFx>,0},
+        {FxEffectType::SpectralTune,"spectralTune","SPECTRAL TUNE",FxCategory::Spectral,FxVisual::Spectrum,true,spectral::parameters(),spectral::parameterCount,&spectral::create,2046},
     };
     return catalog;
 }

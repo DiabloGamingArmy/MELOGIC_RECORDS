@@ -1,29 +1,56 @@
 // mct-origami-v25.1.0-arp-advanced-page
 #pragma once
 #include "OrigamiStyle.h"
+#include "OrigamiIcon.h"
 #include "NativeChoiceMenu.h"
 #include "UserPreferences.h"
+#include "../FinalOutput.h"
 namespace mct::origami::ui {
+class MasterOutputControl final : public juce::Component {
+public:
+    explicit MasterOutputControl(bool expanded=false);
+    FinalOutputMeters displayedMeters() const noexcept {return meters_;}
+    juce::Slider& knob() noexcept {return knob_;}
+    void sync(float normalized,FinalOutputMeters meters);
+    void paint(juce::Graphics&) override;
+    void resized() override;
+private:
+    bool expanded_=false;
+    juce::Slider knob_;
+    FinalOutputMeters meters_{};
+};
 class OrigamiHeader final : public juce::Component {
 public:
     OrigamiHeader();
     std::function<void(int)> onModeSelected;
     // mct-origami-fx-modulation-graph-ux-p03
     std::function<void()> onGlobalFxRequested;
+    std::function<void()> onPanicRequested;
+    void assignmentDragStarted();
+    void assignmentDragEnded();
+    void reconcileAssignmentDragFocus();
+    bool panicVisibleAtCurrentPointer() const {return panic_.reveal(panic_.physicalHover());}
+    void reconcileAccessFocus(){panic_.resetAccessFocus();}
+    bool panicVisibleForPointer(bool inside) const noexcept {return panic_.reveal(inside);}
     void selectSynth();
     // Programmatic page switch (cross-page modulation drag); notifies onModeSelected.
     void selectMode(int mode);
     // Navigation tab bounds in header coordinates; -1 when none is under the point.
     int modeAt(juce::Point<int>) const noexcept;
     bool modeEnabled(int mode) const noexcept;
-    // mct-origami-nested-modulation-manual-qa: the "..." utility menu's items
+    // mct-origami-nested-modulation-manual-qa: the consolidated application menu's items
     // and their action (also used by tests). CAPTURE KEYBOARD INPUT is a
     // per-user preference shared by every instance, never patch state.
-    enum UtilityItem { globalFxItem=1, captureKeyboardItem=2, initPresetItem=3 };
+    enum UtilityItem { globalFxItem=1, captureKeyboardItem=2, initPresetItem=3, undoItem=4, redoItem=5, browseItem=6, saveItem=7 };
+    std::function<bool()> canUndo,canRedo;
+    std::function<void()> onUndo,onRedo;
     // mct-origami-content-browser: the preset name opens the PRESETS browser;
     // < > step through the browser's current results; SAVE saves with metadata.
     std::function<void()> onPresetBrowserRequested,onSaveRequested,onInitRequested;
     std::function<void(int)> onPresetStep;
+    void refreshHistoryState();
+    juce::Slider& masterKnob() noexcept {return master_.knob();}
+    void syncMaster(float normalized,FinalOutputMeters meters) {master_.sync(normalized,meters);}
     void setPresetName(const juce::String&);
     juce::String presetName() const { return preset_.getButtonText(); }
     std::vector<NativeChoiceItem> utilityMenuItems() const;
@@ -31,7 +58,60 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 private:
-    juce::TextButton previous_{"<"},next_{">"},preset_{"Init"},browse_{"BROWSE"},save_{"SAVE"},settings_{"..."};
+    // The identity is the emergency surface, revealed on hover or keyboard focus.
+    class PanicButton final : public juce::Button,private juce::Timer {
+    public:
+        PanicButton():juce::Button("Emergency DSP reset") { setTooltip("PANIC: silence every voice and clear effect tails; the patch is kept"); }
+        void focusGained(FocusChangeType cause) override { juce::Button::focusGained(cause); keyboardFocus_=cause==focusChangedByTabKey && !dragFocusSuppressed_; repaint(); }
+        void focusLost(FocusChangeType cause) override { if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) if(container->isDragAndDropActive() && cause==focusChangedDirectly) keyboardBeforeDrag_=keyboardFocus_;juce::Button::focusLost(cause); keyboardFocus_=false; repaint(); }
+        bool physicalHover() const {return isEnabled() && isShowing() && getLocalBounds().contains(getLocalPoint(nullptr,juce::Desktop::getMousePosition()));}
+        void resetAccessFocus(){keyboardFocus_=false;keyboardBeforeDrag_=false;restoreKeyboardFocus_=false;repaint();}
+        bool reveal(bool physicalHover) const noexcept {return physicalHover || keyboardFocus_;}
+        void beginDrag() {restoreKeyboardFocus_=keyboardBeforeDrag_ || keyboardFocus_;keyboardBeforeDrag_=false;dragFocusSuppressed_=true;keyboardFocus_=false;++dragGeneration_;repaint();}
+        void endDrag() {
+            keyboardFocus_=false;repaint();const auto generation=dragGeneration_;
+            juce::MessageManager::callAsync([safe=juce::Component::SafePointer<PanicButton>(this),generation] {
+                if(safe) safe->reconcileDragFocus(generation);
+            });
+        }
+        void reconcileDragFocus(unsigned generation) {
+            if(dragGeneration_!=generation || !dragFocusSuppressed_) return;
+            if(!restoreKeyboardFocus_ && hasKeyboardFocus(false)) giveAwayKeyboardFocus();
+            dragFocusSuppressed_=false;if(restoreKeyboardFocus_) {grabKeyboardFocus();keyboardFocus_=hasKeyboardFocus(false);}repaint();
+        }
+        void reconcileDragFocus() {reconcileDragFocus(dragGeneration_);}
+        void confirm() { confirmed_=true; startTimer(500); repaint(); }
+        void paintButton(juce::Graphics& g,bool over,bool down) override {
+            over=physicalHover();
+            if(!reveal(over)) return;
+            g.setColour(Palette::background().withAlpha(.78f));
+            g.fillRect(getLocalBounds());
+            auto bounds=getLocalBounds().toFloat().withSizeKeepingCentre(140.f,36.f);
+            g.setColour(confirmed_ ? signalShade(.55f,.9f) : down ? signalShade(.7f,.95f) : over ? signalShade(.35f,.9f) : Palette::raised());
+            g.fillRect(bounds);
+            g.setColour(confirmed_ || over ? signalSourceColour() : Palette::borderSoft());
+            g.drawRect(bounds,1.0f);
+            g.setColour(Palette::text());
+            g.setFont(juce::FontOptions(Type::control));
+            g.drawText(confirmed_ ? "DSP RESET" : "STOP / PANIC",bounds,juce::Justification::centred);
+        }
+    private:
+        void timerCallback() override { stopTimer(); confirmed_=false; repaint(); }
+        bool confirmed_=false,keyboardFocus_=false,keyboardBeforeDrag_=false,restoreKeyboardFocus_=false,dragFocusSuppressed_=false;
+        unsigned dragGeneration_=0;
+    } panic_;
+    class MenuButton final : public juce::TextButton {
+    public:
+        void paintButton(juce::Graphics& g,bool over,bool down) override {
+            juce::TextButton::paintButton(g,over,down);
+            g.setColour(Palette::text());const auto b=getLocalBounds().toFloat().withSizeKeepingCentre(14,12);
+            for(int i=0;i<3;++i)g.drawHorizontalLine(juce::roundToInt(b.getY()+i*5),b.getX(),b.getRight());
+        }
+    } settings_;
+    IconButton previous_{"PRESET PREVIOUS",IconId::PresetPrevious},next_{"PRESET NEXT",IconId::PresetNext};
+    IconButton undo_{"Undo",IconId::Undo},redo_{"Redo",IconId::Redo};
+    MasterOutputControl master_;
+    juce::TextButton preset_{"Init"};
     std::array<juce::TextButton,5> modes_;
     juce::Image logo_;
     juce::Image wordmark_;

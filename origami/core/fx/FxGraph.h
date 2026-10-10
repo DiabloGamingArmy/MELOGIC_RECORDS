@@ -73,7 +73,7 @@ const FxSourceDescriptor* findFxSource(FxSourceType) noexcept;
 // graphs are migrated on decode; Comb is no longer in the catalog.
 enum class FxEffectType : std::uint16_t {
     None=0, Drive=1, Delay=2, Reverb=3, Chorus=4, Comb=5, Diffuse=6, Limiter=7,
-    Filter=8, Compressor=9, Equalizer=10, Flanger=11, Phaser=12, Spatial=13, Gain=14, StereoUtility=15
+    Filter=8, Compressor=9, Equalizer=10, Flanger=11, Phaser=12, Spatial=13, Gain=14, StereoUtility=15, SpectralTune=16
 };
 
 // Routing workflows. All of them edit the SAME canonical graph; they are not
@@ -82,11 +82,12 @@ enum class FxRoutingMode : std::uint8_t { Serial=1, Parallel=2, Split=3, Send=4,
 
 enum class FxParameterPage : std::uint8_t { Main=1, Advanced=2 };
 enum class FxParameterCurve : std::uint8_t { Linear=1, Exponential=2, Choice=3 };
-enum class FxCategory : std::uint8_t { Distortion=1, Time=2, Spatial=3, Modulation=4, FilterEq=5, Dynamics=6, Utility=7 };
+enum class FxCategory : std::uint8_t { Distortion=1, Time=2, Spatial=3, Modulation=4, FilterEq=5, Dynamics=6, Utility=7, Spectral=8 };
 const char* fxCategoryName(FxCategory) noexcept;
+const std::array<FxCategory,8>& fxCategoryOrder() noexcept;
 enum class FxVisual : std::uint8_t {
     Transfer=1, Taps=2, Decay=3, Lfo=4, Comb=5, Diffusion=6, Dynamics=7,
-    FilterResponse=8, EqResponse=9, Compressor=10, Phaser=11, Spatial=12, Utility=13
+    FilterResponse=8, EqResponse=9, Compressor=10, Phaser=11, Spatial=12, Utility=13, Spectrum=14
 };
 
 // Canonical values are normalized [0,1] and keyed by stable parameter ID.
@@ -116,6 +117,15 @@ float fxChoiceNormalized(const FxParameterDescriptor&,int index) noexcept;
 
 inline constexpr std::size_t maxFxParameters=48;
 
+// Decimated log-frequency magnitudes from a processor's actual analysis.
+struct FxSpectrumSnapshot {
+    static constexpr std::size_t bins=64;
+    std::array<float,bins> input{},output{};
+    float low=20.0f,high=20000.0f,sampleRate=48000.0f;
+    std::uint16_t mask=4095;
+    std::uint64_t sequence=0;
+};
+
 // Realtime DSP contract. prepare() allocates and runs off the audio thread;
 // reset() and process() are allocation-free and lock-free. params are the
 // canonical normalized values in descriptor order (resolved at compile time).
@@ -124,6 +134,10 @@ public:
     virtual ~FxProcessor()=default;
     virtual void prepare(double sampleRate)=0;
     virtual void reset() noexcept=0;
+    virtual void setProcessingPhase(unsigned) noexcept {}
+    virtual int latencySamples() const noexcept { return 0; }
+    virtual bool spectrumSnapshot(FxSpectrumSnapshot&) const noexcept { return false; }
+    virtual void setSpectrumTelemetryEnabled(bool) noexcept {}
     virtual void process(float* left,float* right,int samples,const float* params) noexcept=0;
 };
 
@@ -401,6 +415,7 @@ public:
     std::uint64_t revision() const noexcept { return revision_; }
     // Invoked after every committed change (edit, gesture step, undo, redo, replace).
     std::function<void()> onChanged;
+    std::function<void()> onEditBegin,onEditEnd;
 
     // Applies fn to a working copy; commits and records undo only on success
     // and only if the graph actually changed.
@@ -416,9 +431,11 @@ public:
     template<typename Fn> bool gestureEdit(Fn&& fn) {
         FxGraph working=graph_;
         if(!fn(working) || working==graph_) return false;
+        if(onEditBegin)onEditBegin();
         graph_=std::move(working);
         ++revision_;
         notify();
+        if(onEditEnd)onEditEnd();
         return true;
     }
     void endGesture();

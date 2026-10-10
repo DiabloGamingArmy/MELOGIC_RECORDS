@@ -7,6 +7,20 @@
 #include "InstrumentState.h"
 #include <cmath>
 namespace mct::origami {
+InstrumentState canonicalInitState() noexcept {
+    InstrumentState s;
+    auto set=[&](ParameterId id,float value){s.parameters[static_cast<std::size_t>(id)]=value;};
+    set(ParameterId::Waveform,1.0f); // saw frame 1 / (four Basic Shapes frames - 1)
+    set(ParameterId::OscLevel,1.0f);
+    set(ParameterId::OscUnison,1.0f); // one oscillator lane, no additional unison
+    set(ParameterId::OscDetune,0.0f);
+    set(ParameterId::Decay,0.5f);set(ParameterId::Sustain,1.0f);set(ParameterId::Release,0.0f);
+    set(ParameterId::MasterGain,0.35f); // transparent Init-only nominal level calibration
+    auto& osc=s.oscillators[0];osc.id=1;osc.enabled=true;
+    applyLegacyOscillatorParameters(osc,s.parameters);
+    osc.wtPosition=1.0f/3.0f;osc.blend=0.5f;
+    return s;
+}
 void applyLegacyOscillatorParameters(OscillatorModuleState& m,const ParameterValues& p) noexcept {
     auto v=[&](ParameterId id){return p[static_cast<std::size_t>(id)];};
     m.waveform=v(ParameterId::Waveform);m.wtPosition=m.waveform/3.0f;
@@ -39,6 +53,7 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
            !range(m.octave,-4,4) || m.octave!=std::round(m.octave) ||
            !range(m.semitone,-12,12) || m.semitone!=std::round(m.semitone) ||
            !range(m.fineCents,-100,100) || m.unison<1 || m.unison>16 ||
+           static_cast<unsigned>(m.phaseMode)>3 || !range(m.phaseDegrees,0,360) || !range(m.randomPhaseDegrees,0,360) ||
            !range(m.detuneCents,0,100) || !range(m.blend,0,1) ||
            !range(m.pan,-1,1) || !range(m.level,0,1) ||
            !dsp::validOscProcessType(m.process1) ||
@@ -76,6 +91,8 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
         if(!validOscBusRoutes(m,s.buses)) return false;
     }
     if(!validBusState(s.buses)) return false;
+    for(const auto& f:s.modulation.synthFilters.filters) if(f.id) for(std::size_t b=0;b<f.busCount;++b) if(!s.buses.find(f.buses[b].bus)) return false;
+    for(const auto& in:s.modulation.synthFilters.inputs) if(in.oscillator) for(std::size_t b=0;b<in.busCount;++b) if(!in.buses[b].filter && !s.buses.find(in.buses[b].bus)) return false;
     auto first=s.oscillators[0];applyLegacyOscillatorParameters(first,s.parameters);
     const auto& m=s.oscillators[0];
     return first.waveform==m.waveform && first.wtPosition==m.wtPosition &&
@@ -90,6 +107,13 @@ bool removeBus(InstrumentState& s,BusId id) noexcept {
     if(index==b.count) return false;
     for(std::size_t i=index;i+1<b.count;++i) b.buses[i]=b.buses[i+1];
     b.buses[--b.count]={};
+    const auto prune=[&](auto& sends,auto& count) {
+        std::size_t kept=0;for(std::size_t i=0;i<count;++i) if(sends[i].filter || sends[i].bus!=id) sends[kept++]=sends[i];
+        if(count && !kept) {sends[0]={mainBusId,1};kept=1;}
+        for(std::size_t i=kept;i<sends.size();++i) sends[i]={};count=static_cast<std::uint8_t>(kept);
+    };
+    for(auto& f:s.modulation.synthFilters.filters) if(f.id) prune(f.buses,f.busCount);
+    for(auto& in:s.modulation.synthFilters.inputs) if(in.oscillator) prune(in.buses,in.busCount);
     for(auto& m:s.oscillators) {
         if(!m.id) continue;
         std::size_t kept=0;

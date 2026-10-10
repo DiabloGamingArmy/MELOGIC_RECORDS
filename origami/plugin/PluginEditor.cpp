@@ -92,9 +92,9 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
       performance_([&owner](int note,bool on,float velocity){return owner.enqueueUiKeyboardNote(note,on,velocity);},
           [&owner](float v){owner.setUiPitchWheel(v);},
           [&owner](float v){owner.setUiModWheel(v);},
-          [&owner](float up,float down){return owner.setUiPitchBendRanges(up,down);},
+          [this,&owner](float up,float down){const bool ok=owner.setUiPitchBendRanges(up,down);if(ok)syncGlobalViews();return ok;},
           [&owner]{return std::pair<float,float>{owner.getUiPitchBendRange(),owner.getUiPitchBendDownRange()};},
-          [&owner](const mct::origami::PerformanceState& p){return owner.setUiPerformanceState(p);},
+          [this,&owner](const mct::origami::PerformanceState& p){const bool ok=owner.setUiPerformanceState(p);if(ok)syncGlobalViews();return ok;},
           [&owner]{return owner.getUiPerformanceState();},
           [&owner](const mct::origami::ArpeggiatorState& a){return owner.setUiArpeggiatorState(a);},
           [&owner]{return owner.getUiArpeggiatorState();}),
@@ -104,7 +104,22 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner]{return owner.getUiArpeggiatorRuntimeSnapshot();},
           [&owner]{owner.clearUiArpeggiatorLatch();}),
       global_([&owner]{return owner.getUiVisualizationMask();},
-              [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);}),
+              [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);},
+              mct::origami::ui::GlobalPanelHost{
+                  [&owner]{return owner.getUiFinalOutput();},
+                  [this,&owner](float value){outputHistoryDraftRevision_=wavetableEditor_.authoringRevision();owner.setUiFinalOutput(value);syncGlobalViews();},
+                  [&owner]{return owner.finalOutputMeters();},
+                  [&owner]{return owner.getUiPerformanceState();},
+                  [this,&owner](const auto& p){const bool ok=owner.setUiPerformanceState(p);if(ok)syncGlobalViews();return ok;},
+                  [this,&owner](float up,float down){const bool ok=owner.setUiPitchBendRanges(up,down);if(ok)syncGlobalViews();return ok;},
+                  [&owner]{
+                      const auto d=owner.getAudioContinuityDiagnostics();const auto q=owner.getUiRenderBudgetSnapshot();
+                      mct::origami::ui::GlobalEngineInfo info;info.sampleRate=d.preparedSampleRate;
+                      info.blockSize=d.lastCallbackSamples>0?d.lastCallbackSamples:d.preparedBlockSize;info.maximumBlockSize=d.preparedBlockSize;
+                      info.activeVoices=q.load.activeVoices;info.maximumVoices=mct::origami::OrigamiEngine::voiceCount;
+                      info.audioLoad=q.smoothedDeadlineFraction;info.loadAvailable=d.callbacks>0 && d.callbackBudgetMs>0;return info;
+                  },
+                  [&owner]{owner.requestPanic();}}),
       fxPage_(owner.getUiFxWorkspace(),modulationBindings(owner,[this]{modulationRoutesChanged();}),
               mct::origami::ui::FxPageHost{[&owner]{return owner.consumeUiFxPeaks();},
                                             [&owner]{return owner.addUiBus();},
@@ -112,8 +127,13 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
                                             &owner.getUiFxViewState(),
                                             &owner.getUiControlLayout(),
                                             [&owner](mct::origami::BusId bus){return owner.consumeUiFxInputPeaks(bus);},
-                                            [&owner](mct::origami::BusId bus,mct::origami::fx::FxNodeId node){return owner.consumeUiFxNodeTelemetry(bus,node);}}),
+                                            [&owner](mct::origami::BusId bus,mct::origami::fx::FxNodeId node){return owner.consumeUiFxNodeTelemetry(bus,node);},
+                                            [&owner](mct::origami::BusId bus,bool enabled){owner.setUiFxNodeTelemetryEnabled(bus,enabled);},
+                                            [this,&owner](bool begin,const char* name){if(begin){owner.setUiHistoryContext(2,fxPage_.selectedBus());owner.beginUiTransaction(name);}else owner.endUiTransaction();},
+                                            [&owner]{return owner.canUndoUi();},[&owner]{return owner.canRedoUi();},
+                                            [this]{performDocumentHistory(false);},[this]{performDocumentHistory(true);}}),
       globalFx_(std::make_unique<mct::origami::ui::FxGlobalFxEditor>(owner.getUiFxWorkspace())) {
+    oscillators_.setSynthRoutingSetter([&owner](const auto& mod){return owner.setUiModulationState(mod);});
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,13> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_}};
     for(auto* component:components) addAndMakeVisible(component);
@@ -128,6 +148,17 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     addChildComponent(globalOverlay_);
     globalFx_->onClose=[this]{globalOverlay_.dismiss();};
     header_.onGlobalFxRequested=[this]{openGlobalFx();};
+    header_.masterKnob().onValueChange=[this]{outputHistoryDraftRevision_=wavetableEditor_.authoringRevision();processor_.setUiFinalOutput(mct::origami::FinalOutputGain::position(float(header_.masterKnob().getValue())));syncGlobalViews();};
+    header_.masterKnob().onDragStart=[this]{processor_.beginFinalOutputGesture();};
+    header_.masterKnob().onDragEnd=[this]{processor_.endFinalOutputGesture();};
+    global_.masterKnob().onDragStart=[this]{processor_.beginFinalOutputGesture();};
+    global_.masterKnob().onDragEnd=[this]{processor_.endFinalOutputGesture();};
+    syncGlobalViews();
+    header_.onPanicRequested=[this]{processor_.requestPanic();};
+    header_.canUndo=[this]{return wavetableEditorSelected_ && !preferFinalOutputHistory(false) ? wavetableEditor_.canUndoAuthoring() : processor_.canUndoUi();};
+    header_.canRedo=[this]{return wavetableEditorSelected_ && !preferFinalOutputHistory(true) ? wavetableEditor_.canRedoAuthoring() : processor_.canRedoUi();};
+    header_.onUndo=[this]{performDocumentHistory(false);};
+    header_.onRedo=[this]{performDocumentHistory(true);};
     // mct-origami-content-browser
     {
         using mct::origami::content::ContentType;
@@ -181,6 +212,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     }
     fxPage_.onOpenSynthFilter=[this]{header_.selectMode(0);};
     header_.onModeSelected=[this](int mode){
+        processor_.setUiHistoryContext(mode,fxPage_.selectedBus());
         currentPage_=mode;
         fxSelected_=mode==2;
         matrixSelected_=mode==3;
@@ -215,9 +247,24 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     // Global knob interaction policy. Register as a recursive mouse listener so
     // every current and future rotary Slider in the editor gets the same UX.
     addMouseListener(this,true);
+    header_.getProperties().set("mct.history.excludeMenu",true);
+    wavetableEditor_.getProperties().set("mct.history.excludeMenu",true);
     registerKnobDefaults(*this);
+    addKeyListener(this);
+    header_.refreshHistoryState();
+    processor_.addChangeListener(this);
+    normalSurface_.setName("Origami authorized workspace");
+    const auto children=getChildren();for(auto* child:children)normalSurface_.addChildComponent(child); // preserves visibility
+    normalSurface_.setWantsKeyboardFocus(true);
+    addAndMakeVisible(normalSurface_);addChildComponent(activation_);addChildComponent(welcome_);
+    welcome_.onContinue=[this]{normalSurface_.setEnabled(processor_.isAuthorized());header_.reconcileAccessFocus();if(isShowing())normalSurface_.grabKeyboardFocus();repaint();};
+    syncActivationGate();
+
 }
 OrigamiAudioProcessorEditor::~OrigamiAudioProcessorEditor() {
+    if(historyMouseGesture_)processor_.endUiTransaction();
+    removeKeyListener(this);
+    processor_.removeChangeListener(this);
     removeMouseListener(this);
     stopTimer();
     setLookAndFeel(nullptr);
@@ -291,6 +338,7 @@ OrigamiAudioProcessorEditor::ModulationDropTarget OrigamiAudioProcessorEditor::m
 }
 
 bool OrigamiAudioProcessorEditor::isInterestedInDragSource(const SourceDetails& details) {
+    if(interactionBlocked())return false;
     mct::origami::ModSource source{};
     // FILTER 1 drags are accepted only so a deliberate tab hover can carry
     // them from SYNTH to the FX graph; dropping them here does nothing.
@@ -384,6 +432,8 @@ bool OrigamiAudioProcessorEditor::createRouteTo(
 }
 
 void OrigamiAudioProcessorEditor::itemDropped(const SourceDetails& details) {
+    if(interactionBlocked())return;
+    OrigamiAudioProcessor::UiEdit transaction(processor_,"Assign modulation");
     mct::origami::ModSource source{};
     const auto target=modulationDropAt(details.localPosition);
     if(decodeDraggedModSource(details.description,source)) {
@@ -511,13 +561,43 @@ void OrigamiAudioProcessorEditor::paintOverChildren(juce::Graphics& g) {
     }
 }
 
+void OrigamiAudioProcessorEditor::syncGlobalViews() {
+    header_.syncMaster(processor_.getUiFinalOutput(),processor_.finalOutputMeters());
+    global_.syncFromModel();performance_.syncPerformanceFromModel();
+}
+
+bool OrigamiAudioProcessorEditor::interactionBlocked() const {return !processor_.isAuthorized() || welcome_.isVisible();}
+void OrigamiAudioProcessorEditor::syncActivationGate() {
+    const bool blocked=!processor_.isAuthorized();const bool changed=activation_.isVisible()!=blocked;
+    // Clear sensitive UI and consume only a current initiating activation event
+    // before exposing the normal editor. Restore/refresh has no such event.
+    activation_.sync(blocked && isShowing());
+    if(blocked)welcome_.setVisible(false);
+    else if(activation_.takeActivationWelcome())welcome_.present();
+    normalSurface_.setEnabled(!blocked && !welcome_.isVisible());
+    activation_.setBounds(getLocalBounds());welcome_.setBounds(getLocalBounds());activation_.setVisible(blocked);
+    if(changed){
+        juce::PopupMenu::dismissAllActiveMenus();globalOverlay_.dismiss();endModulationDrag();
+        if(historyMouseGesture_){historyMouseGesture_=false;processor_.endUiTransaction();}
+        // Removing a focused gate can automatically focus the first Button.
+        // This is not intentional keyboard navigation to Panic.
+        header_.reconcileAccessFocus();
+        if(!blocked && !welcome_.isVisible() && isShowing())normalSurface_.grabKeyboardFocus();
+        repaint();
+    }
+    if(blocked){activation_.toFront(false);if(changed && isShowing())activation_.grabKeyboardFocus();}
+    else if(welcome_.isVisible()){welcome_.toFront(false);}
+}
 void OrigamiAudioProcessorEditor::timerCallback() {
+    syncActivationGate();if(interactionBlocked())return;
     // Dynamic oscillator cards can introduce new knobs after editor creation.
     // Register them lazily without disturbing existing defaults.
     registerKnobDefaults(*this);
 
     modulation_.syncFromModel();macros_.syncFromModel();matrix_.syncFromModel();filter_.syncFromModel();
     performance_.syncArpFromModel();
+    header_.refreshHistoryState();
+    header_.syncMaster(processor_.getUiFinalOutput(),processor_.finalOutputMeters());
     header_.setPresetName(processor_.getUiCurrentPreset().name); // a host restore may change it
     if(arpSelected_) arpeggiator_.syncFromModel();
     if(globalSelected_) global_.syncFromModel();
@@ -578,6 +658,19 @@ double OrigamiAudioProcessorEditor::defaultForKnob(juce::Slider& slider) const n
 }
 
 void OrigamiAudioProcessorEditor::registerKnobDefaults(juce::Component& root) {
+    if(auto* slider=dynamic_cast<juce::Slider*>(&root);slider && !wavetableEditor_.isParentOf(slider) && !slider->getProperties().contains("mct.history.gesture")) {
+        slider->getProperties().set("mct.history.gesture",true);
+        const auto begin=slider->onDragStart,end=slider->onDragEnd;
+        const bool finalOutput=slider==&header_.masterKnob() || slider==&global_.masterKnob();
+        slider->onDragStart=[this,begin,finalOutput]{processor_.beginUiTransaction(finalOutput ? "Adjust Master Output" : "Adjust parameter");if(begin)begin();};
+        slider->onDragEnd=[this,end]{if(end)end();processor_.endUiTransaction();header_.refreshHistoryState();};
+    }
+    if(auto* button=dynamic_cast<juce::Button*>(&root);button && button->onClick && !header_.isParentOf(button) && !wavetableEditor_.isParentOf(button) && !button->getProperties().contains("mct.history.action")) {
+        button->getProperties().set("mct.history.action",true);
+        const auto original=button->onClick;
+        button->onClick=[this,original]{auto action=original;OrigamiAudioProcessor::UiEdit transaction(processor_,"Edit document");action();};
+    }
+
     if(auto* slider=dynamic_cast<juce::Slider*>(&root); slider!=nullptr && isKnob(*slider)) {
         auto& props=slider->getProperties();
         if(!props.contains("mct.origami.knobDefault")) {
@@ -596,6 +689,10 @@ void OrigamiAudioProcessorEditor::registerKnobDefaults(juce::Component& root) {
 }
 
 void OrigamiAudioProcessorEditor::mouseDown(const juce::MouseEvent& event) {
+    if(interactionBlocked())return;
+    if(!historyMouseGesture_ && event.originalComponent && !header_.isParentOf(event.originalComponent) && !wavetableEditor_.isParentOf(event.originalComponent)) {
+        historyMouseGesture_=true;processor_.beginUiTransaction("Adjust document");
+    }
     auto* slider=sliderFromMouseEvent(event);
     if(slider==nullptr || !isKnob(*slider))
         return;
@@ -617,6 +714,7 @@ void OrigamiAudioProcessorEditor::mouseDown(const juce::MouseEvent& event) {
 }
 
 void OrigamiAudioProcessorEditor::mouseDoubleClick(const juce::MouseEvent& event) {
+    if(interactionBlocked())return;
     auto* slider=sliderFromMouseEvent(event);
     if(slider==nullptr || !isKnob(*slider))
         return;
@@ -663,6 +761,7 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
     for(const auto s:mct::origami::activeMacroSources(state.modulation)) sources.push_back(s); // stable macro ids
     for(const auto s:{S::Random,S::Function,S::Chaos,S::Drift,S::Sequencer}) sources.push_back(s);
     for(const auto s:{S::Velocity,S::ModWheel,S::Keytrack,S::Aftertouch,S::PitchBend,S::NoteGate}) sources.push_back(s);
+    for(const auto& a:state.modulation.instances) if(a.id) sources.push_back(mct::origami::instanceSource(a.id));
     const auto available=[&state](S s) {
         const auto raw=static_cast<std::uint32_t>(s);
         if(raw>=1 && raw<=3) return (state.modulation.envActiveMask&(1u<<(raw-1)))!=0;
@@ -816,6 +915,7 @@ void OrigamiAudioProcessorEditor::closeWavetableEditor() {
 }
 
 void OrigamiAudioProcessorEditor::resized() {
+    normalSurface_.setBounds(getLocalBounds());
     // mct-origami-consistent-resize-v11
     const auto designBounds=juce::Rectangle<int>(0,0,EditorLayout::defaultWidth,EditorLayout::defaultHeight);
     const auto layout=EditorLayout::calculate(designBounds);
@@ -871,11 +971,13 @@ void OrigamiAudioProcessorEditor::resized() {
         wavetableEditor_.toFront(false);
     if(browserOpen_) browser_->toFront(false);
     if(globalOverlay_.isShowing()) globalOverlay_.toFront(true);
+    syncActivationGate();
 }
 
 void OrigamiAudioProcessorEditor::openGlobalFx() {
     globalFx_->sync();
     globalOverlay_.show(*globalFx_,{0,0,620,330});
+    registerKnobDefaults(*globalFx_);
 }
 
 void OrigamiAudioProcessorEditor::beginModulationDrag(mct::origami::ModSource source) {
@@ -926,6 +1028,7 @@ void OrigamiAudioProcessorEditor::openContentBrowser(mct::origami::content::Cont
 void OrigamiAudioProcessorEditor::closeContentBrowser() {
     if(!browserOpen_) return;
     browserOpen_=false;
+    contentLoaded();
     resized();
 }
 juce::String OrigamiAudioProcessorEditor::oscillatorLabel(unsigned oscillatorId) const {
@@ -935,8 +1038,22 @@ juce::String OrigamiAudioProcessorEditor::oscillatorLabel(unsigned oscillatorId)
 }
 void OrigamiAudioProcessorEditor::contentLoaded() {
     header_.setPresetName(processor_.getUiCurrentPreset().name);
+    header_.syncMaster(processor_.getUiFinalOutput(),processor_.finalOutputMeters());
     oscillators_.syncFromModel();
-    refreshModulationViews();
+    if(!sameModulationView(lastModulationView_,processor_.getUiInstrumentState().modulation))
+        refreshModulationViews();
+    fxPage_.syncFromModel();
+    macros_.syncFromModel();
+    filter_.syncFromModel();
+    performance_.syncArpFromModel();
+    if(arpSelected_) arpeggiator_.syncFromModel();
+    if(globalSelected_) global_.syncFromModel();
+    if(globalOverlay_.isShowing()) globalFx_->sync();
+    registerKnobDefaults(*this);
+    header_.refreshHistoryState();
+}
+void OrigamiAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcaster*) {
+    contentLoaded();
 }
 bool OrigamiAudioProcessorEditor::loadPresetRecord(const mct::origami::content::ContentRecord& r) {
     bool ok=false;
@@ -1053,15 +1170,18 @@ juce::Result OrigamiAudioProcessorEditor::savePreset(const mct::origami::ui::Pre
     processor_.setUiCurrentPreset(saved.id,saved.name);
     library.state().author=f.author;
     library.markUsed(meta.type,saved.id);
+    processor_.markUiSaved();
     header_.setPresetName(saved.name);
     if(browserOpen_) browser_->refresh();
     return juce::Result::ok();
 }
 bool OrigamiAudioProcessorEditor::isInterestedInFileDrag(const juce::StringArray& files) {
+    if(interactionBlocked())return false;
     for(const auto& f:files) { const juce::File file(f); if(file.hasFileExtension(".wav;.aif;.aiff")) return true; }
     return false;
 }
 void OrigamiAudioProcessorEditor::filesDropped(const juce::StringArray& files,int x,int y) {
+    if(interactionBlocked())return;
     // A Finder drop onto an oscillator imports (same pipeline) into it.
     unsigned target=0;
     for(auto* c=getComponentAt(x,y);c!=nullptr && c!=this;c=c->getParentComponent())
@@ -1077,4 +1197,60 @@ void OrigamiAudioProcessorEditor::filesDropped(const juce::StringArray& files,in
 
 mct::origami::dsp::Wavetable OrigamiAudioProcessorEditor::WavetableEditorSurface::compiledWavetable() const {
     return OrigamiAudioProcessor::compileWavetable(documentData());
+}
+
+void OrigamiAudioProcessorEditor::dragOperationStarted(const juce::DragAndDropTarget::SourceDetails&) {header_.assignmentDragStarted();}
+void OrigamiAudioProcessorEditor::dragOperationEnded(const juce::DragAndDropTarget::SourceDetails&) {header_.assignmentDragEnded();}
+
+void OrigamiAudioProcessorEditor::mouseUp(const juce::MouseEvent&) {
+    if(historyMouseGesture_){historyMouseGesture_=false;processor_.endUiTransaction();header_.refreshHistoryState();}
+}
+void OrigamiAudioProcessorEditor::performDocumentHistory(bool redo) {
+    if(interactionBlocked())return;
+    if(wavetableEditorSelected_ && !preferFinalOutputHistory(redo)) {if(redo)wavetableEditor_.redoAuthoring();else wavetableEditor_.undoAuthoring();header_.refreshHistoryState();return;}
+    if(wavetableEditorSelected_)outputHistoryDraftRevision_=wavetableEditor_.authoringRevision();
+    const auto selectedBus=fxPage_.selectedBus();
+    const auto selectedNode=fxPage_.selectedNode();
+    const auto selectedControl=fxPage_.selectedControlNodes();
+    if(!(redo ? processor_.redoUi() : processor_.undoUi()))return;
+    const auto [page,bus]=processor_.uiHistoryContext();
+    if(browserOpen_)closeContentBrowser();
+    header_.selectMode(page);
+    if(page==2 && processor_.getUiFxWorkspace().contains(bus))fxPage_.selectBus(bus);
+    contentLoaded();
+    // Replays invalidate stale bindings, but keep surviving selection for the
+    // same workspace (e.g. Move -> Undo -> Align). Preset loads still clear it.
+    if(page==2 && selectedBus==bus) {
+        if(fxPage_.graph().findNode(selectedNode))fxPage_.selectNode(selectedNode);
+        std::vector<mct::origami::nodes::ControlNodeKey> valid;
+        for(const auto& key:selectedControl)if(fxPage_.controlGraph().find(key))valid.push_back(key);
+        if(!valid.empty())fxPage_.setControlNodeSelection(valid);
+    }
+}
+bool OrigamiAudioProcessorEditor::keyPressed(const juce::KeyPress& key,juce::Component* origin) {
+    if(welcome_.isVisible())return true;
+    if(!processor_.isAuthorized())return !(origin && (origin==&activation_ || activation_.isParentOf(origin)));
+    if(!captureKeyboardInput() || !hasKeyboardFocus(true))return false;
+    if(dynamic_cast<juce::TextEditor*>(origin) || (origin && origin->findParentComponentOfClass<juce::TextEditor>()))return false;
+    const auto mods=key.getModifiers();
+    if((mods.isCommandDown() || mods.isCtrlDown()) && (key.getKeyCode()=='Z' || key.getKeyCode()=='z' || juce::CharacterFunctions::toLowerCase(key.getTextCharacter())=='z')) {
+        performDocumentHistory(mods.isShiftDown());return true;
+    }
+    return false;
+}
+
+void OrigamiAudioProcessorEditor::beginDocumentAction() { processor_.beginUiTransaction("Menu action"); }
+void OrigamiAudioProcessorEditor::endDocumentAction() { processor_.endUiTransaction(); }
+
+bool OrigamiAudioProcessorEditor::replayDocumentAction(bool redo) {
+    const bool available=redo ? processor_.canRedoUi() : processor_.canUndoUi();
+    if(available)performDocumentHistory(redo);
+    return available;
+}
+
+bool OrigamiAudioProcessorEditor::preferFinalOutputHistory(bool redo) const {
+    // Draft authoring remains local. A newer Master edit wins, while a new
+    // draft edit returns focus to authoring; exhausting it reveals Master again.
+    const bool draftAvailable=redo ? wavetableEditor_.canRedoAuthoring() : wavetableEditor_.canUndoAuthoring();
+    return (outputHistoryDraftRevision_==wavetableEditor_.authoringRevision() || !draftAvailable) && processor_.nextHistoryIsFinalOutput(redo);
 }

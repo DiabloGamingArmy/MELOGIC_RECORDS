@@ -80,19 +80,9 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String& title,cons
             }
         }
 
-        NSString* itemTitle=[NSString stringWithUTF8String:choice.text.toRawUTF8()];
-        if(itemTitle==nil) itemTitle=@"";
-        NSMenuItem* item=[[NSMenuItem alloc]initWithTitle:itemTitle action:@selector(choose:) keyEquivalent:@""];
-        [item setTarget:target];[item setTag:choice.id];[item setEnabled:choice.enabled?YES:NO];
-        [item setState:(choice.checked || choice.id==current)?NSControlStateValueOn:NSControlStateValueOff];
-        if(choice.tooltip.isNotEmpty()) {
-            NSString* tip=[NSString stringWithUTF8String:choice.tooltip.toRawUTF8()];
-            if(tip!=nil) [item setToolTip:tip];
-        }
-        [activeMenu addItem:item];
-#if !__has_feature(objc_arc)
-        [item release];
-#endif
+        // Use the same item builder as hierarchical menus: id 0 is a real
+        // separator, not an empty selectable item checked by current == 0.
+        [activeMenu addItem:choiceItem(choice,current,target)];
     }
     const NSPoint screen=[NSEvent mouseLocation],window=[view.window convertPointFromScreen:screen],local=[view convertPoint:window fromView:nil];
     [menu popUpMenuPositioningItem:nil atLocation:local inView:view];

@@ -1,0 +1,18 @@
+U03 tests-off Release build validation
+Build targets: OrigamiPlugin_Standalone, OrigamiPlugin_AU, OrigamiPlugin_VST3
+Build command exited successfully; no install or application launch.
+Standalone/MCT Origami.app
+origami/build-p0-release/OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app/Contents/MacOS/MCT Origami: Mach-O 64-bit executable arm64
+CFBundleShortVersionString=0.1.0
+CFBundleVersion=0
+Tests-only account/update fixture symbols and isolated CLI mode absent.
+AU/MCT Origami.component
+origami/build-p0-release/OrigamiPlugin_artefacts/Release/AU/MCT Origami.component/Contents/MacOS/MCT Origami: Mach-O 64-bit bundle arm64
+CFBundleShortVersionString=0.1.0
+CFBundleVersion=0
+Tests-only account/update fixture symbols and isolated CLI mode absent.
+VST3/MCT Origami.vst3
+origami/build-p0-release/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/MacOS/MCT Origami: Mach-O 64-bit bundle arm64
+CFBundleShortVersionString=0.1.0
+CFBundleVersion=0
+Tests-only account/update fixture symbols and isolated CLI mode absent.

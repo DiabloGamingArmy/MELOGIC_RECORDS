@@ -1,8 +1,11 @@
+#include "../ParameterFormatting.h"
 // mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #include "core/fx/FxGraph.h"
+#include "core/fx/SpectralTune.h"
+#include "core/fx/EqDomain.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -84,6 +87,11 @@ float fxChoiceNormalized(const FxParameterDescriptor& d,int index) noexcept {
     return std::clamp(float(index)/float(states-1),0.0f,1.0f);
 }
 
+const std::array<FxCategory,8>& fxCategoryOrder() noexcept {
+    static constexpr std::array<FxCategory,8> order{FxCategory::Dynamics,FxCategory::FilterEq,FxCategory::Distortion,FxCategory::Modulation,FxCategory::Spectral,FxCategory::Spatial,FxCategory::Time,FxCategory::Utility};
+    return order;
+}
+
 const char* fxCategoryName(FxCategory c) noexcept {
     switch(c) {
     case FxCategory::Distortion: return "DISTORTION";
@@ -93,6 +101,7 @@ const char* fxCategoryName(FxCategory c) noexcept {
     case FxCategory::FilterEq: return "FILTER / EQ";
     case FxCategory::Dynamics: return "DYNAMICS";
     case FxCategory::Utility: return "UTILITY";
+    case FxCategory::Spectral: return "SPECTRAL";
     }
     return "EFFECTS";
 }
@@ -121,7 +130,7 @@ std::string fxParameterText(const FxParameterDescriptor& d,float normalized) {
         return v>=0.5f ? "ON" : "OFF";
     }
     if(unit=="%") std::snprintf(text,sizeof(text),"%d%%",int(std::lround(v*100.0f)));
-    else if(unit=="Hz" && v>=1000.0f) std::snprintf(text,sizeof(text),"%.2f kHz",v/1000.0f);
+    else if(unit=="Hz") return formatFrequencyHz(v);
     else if(unit=="ms" && v>=1000.0f) std::snprintf(text,sizeof(text),"%.2f s",v/1000.0f);
     else if(std::abs(v)<10.0f) std::snprintf(text,sizeof(text),"%.2f %s",v,d.unit);
     else std::snprintf(text,sizeof(text),"%.0f %s",v,d.unit);
@@ -549,6 +558,8 @@ FxEditResult FxGraph::setParameter(FxNodeId id,FxParameterId parameter,float val
     for(auto& p:node->parameters) {
         if(p.id!=parameter) continue;
         p.value=std::clamp(value,0.0f,1.0f);
+        if(node->effect==FxEffectType::SpectralTune) spectral::normalizeState(*node,parameter);
+        if(node->effect==FxEffectType::Equalizer) eq::normalizeState(*node,parameter);
         return FxEditResult::Ok;
     }
     return FxEditResult::InvalidPort;
@@ -903,6 +914,7 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
             }
         }
         if(!graph.validate()) return false;
+        for(auto& n:graph.nodes_) {if(n.effect==FxEffectType::SpectralTune) spectral::normalizeState(n);if(n.effect==FxEffectType::Equalizer)eq::normalizeState(n);}
         output=std::move(graph);
         return true;
     } catch(...) {
@@ -915,15 +927,19 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
 FxGraphDocument::FxGraphDocument(FxGraph initial):graph_(std::move(initial)) {}
 
 void FxGraphDocument::commit(FxGraph next) {
+    if(onEditBegin)onEditBegin();
     undo_.push_back(std::move(graph_));
     if(undo_.size()>historyLimit) undo_.erase(undo_.begin());
     redo_.clear();
     graph_=std::move(next);
     ++revision_;
     notify();
+    if(onEditEnd)onEditEnd();
 }
 
 void FxGraphDocument::beginGesture() {
+    if(gestureStart_)return;
+    if(onEditBegin)onEditBegin();
     gestureStart_=graph_;
 }
 
@@ -931,10 +947,12 @@ void FxGraphDocument::endGesture() {
     if(!gestureStart_) return;
     auto start=std::move(*gestureStart_);
     gestureStart_.reset();
-    if(start==graph_) return;
-    undo_.push_back(std::move(start));
-    if(undo_.size()>historyLimit) undo_.erase(undo_.begin());
-    redo_.clear();
+    if(start!=graph_) {
+        undo_.push_back(std::move(start));
+        if(undo_.size()>historyLimit) undo_.erase(undo_.begin());
+        redo_.clear();
+    }
+    if(onEditEnd)onEditEnd();
 }
 
 bool FxGraphDocument::undo() {

@@ -25,15 +25,16 @@ juce::String modulationRouteTargetLabel(const InstrumentState&,std::uint32_t rou
 void paintModulationRouteTooltip(juce::Graphics&,const juce::String& label,
                                  juce::Point<float> at,juce::Rectangle<float> bounds);
 
-class ModulationSourceRow final : public juce::TextButton {
+class ModulationSourceRow final : public SourceEntityButton {
 public:
-    static constexpr int baseHeight=36;
+    static constexpr int baseHeight=SourceEntityButton::baseHeight;
     static constexpr int routedHeight=54;
     static constexpr std::size_t maxRings=6;
     static int heightFor(std::size_t routeCount) noexcept { return routeCount==0 ? baseHeight : routedHeight; }
 
     ModulationSourceRow(ModSource,const juce::String& title,const juce::String& componentName);
 
+    void setSource(ModSource s) noexcept { source_=s; }
     ModSource source() const noexcept { return source_; }
     // Returns true when the row's preferred height changed.
     bool setRoutes(std::vector<ModulationSourceRoute>);

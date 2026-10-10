@@ -17,7 +17,13 @@
 #include <cstddef>
 namespace mct::origami {
 struct RuntimeVisualizationSnapshot {
+    std::array<SynthFilterValues,maxSynthFilters> synthFilters{};
+    std::array<SynthFilterId,maxSynthFilters> synthFilterIds{};
+    double sampleRate=48000;
     static constexpr std::size_t waveformBins=256;
+    std::array<float,maxSourceInstances> instancePhases{};
+    std::array<EnvelopeRuntimeInfo,maxSourceInstances> instanceEnvelopes{};
+    std::array<std::uint32_t,maxSourceInstances> instanceIds{};
     std::array<float,12> sourceValues{};
     std::array<float,12> sourcePhases{};
     // Observed voice's MIDI/control sources, copied at visualization cadence.
@@ -68,6 +74,8 @@ public:
     OrigamiEngine& operator=(const OrigamiEngine&)=delete;
     bool applyPatchState(const ParameterValues& values) noexcept; // exclusive, resets voices
     InstrumentState instrumentState() const noexcept; // serialize writers externally
+    bool prepareSynthFilterStorage(const SynthFilterCollection& filters) noexcept {return synthCombPool_.ensure(filters);} // writer only, before restore publication
+    std::size_t synthCombStorageBytes() const noexcept {return synthCombPool_.bytes();}
     bool restoreInstrumentState(const InstrumentState&) noexcept; // exclusive, transactional
     // mct-origami-fx-graph-dsp-bus-routing-p02: canonical bus list (Mixer-owned later).
     bool setBusState(const BusState&) noexcept;
@@ -94,6 +102,8 @@ public:
     bool setParameter(ParameterId id, float physicalValue) noexcept;
     bool setParameter(std::string_view id, float physicalValue) noexcept;
     void reset() noexcept;
+    // Audio-thread only: clear sounding state without reading UI-owned patch state.
+    void emergencyResetRuntime() noexcept;
     bool noteOn(int note, float velocity, std::uint8_t channel = 0, std::uint32_t noteId = 0) noexcept;
     bool noteOff(int note, std::uint8_t channel = 0, std::uint32_t noteId = 0) noexcept;
     void allNotesOff() noexcept;
@@ -170,11 +180,18 @@ private:
     void latchParameters() noexcept;
     float value(ParameterId id) const noexcept { return smooth_[static_cast<std::size_t>(id)].value; }
     ModulationState modulation_{}; // non-realtime model; never read in process
-    LatestStateMailbox<ModulationState> modulationMailbox_;
+    struct ModulationUpdate {ModulationState state{};SynthFilterPlan filters{};};
+    LatestStateMailbox<ModulationUpdate> modulationMailbox_;
+    SynthFilterPlan preparedSynthFilters_{},audioSynthFilters_{};
+    ModulationUpdate pendingModulationUpdate_{};
+    void publishModulation() noexcept;
     ModulationState audioModulation_{};
     CompiledModulation compiledModulation_;
     OscillatorRenderPlan oscillatorPlan_;
     std::array<OscillatorModuleId,16> compiledModuleIds_{};
+    std::array<GlobalSourceRuntime,maxSourceInstances> instanceRuntime_{};
+    std::array<std::uint8_t,maxSourceInstances> globalInstanceSlots_{};
+    std::size_t globalInstanceCount_=0;
     std::array<Lfo,4> globalLfos_{};
     RandomGenerator globalRandom_{};
     FunctionGenerator globalFunction_{};
@@ -197,6 +214,7 @@ private:
     float globalSwingBase_=0.0f,currentSwing_=0.0f;
     unsigned hostChannels_ = 0;
     bool hostBlockActive_ = false;
+    SynthCombPool synthCombPool_;
     std::array<Voice, voiceCount> voices_;
     // Patch 09/19: voice stealing must not clone and double-render a complete
     // wavetable/modulation/filter Voice at the exact moment polyphony is saturated.
@@ -206,7 +224,6 @@ private:
     std::array<Voice::AuxSamples, voiceCount> lastAux_{};
     std::array<Voice::AuxSamples, voiceCount> stealAuxResidual_{};
     static BusSlotMap slotMapFor(const BusState&) noexcept;
-    LatestStateMailbox<BusSlotMap> busSlotMailbox_;
     BusSlotMap hostBusSlots_{};
     std::array<std::size_t, voiceCount> tailRemaining_{};
     dsp::Wavetable wavetable_;

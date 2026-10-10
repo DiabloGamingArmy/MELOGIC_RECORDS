@@ -13,6 +13,7 @@
 // mct-origami-v34.2.1-performance-reinforcement
 // mct-origami-v34.3.0-lfo-interaction-mod-properties
 #pragma once
+#include "../SynthFilter.h"
 #include "core/OscillatorModule.h"
 #include "core/dsp/Filter.h"
 #include "core/dsp/Envelope.h"
@@ -70,8 +71,10 @@ enum class ModDestination : std::uint32_t {
     // depth is identified by that id, never by its array index.
     LfoRate=301,      // the canonical LFO rate (Hz; BEATS / SECONDS / HZ are views)
     MacroValue=302,   // the macro's EFFECTIVE value (its stored base never moves)
-    RouteDepth=303    // the depth (amount) of another route
+    RouteDepth=303,    // the depth (amount) of another route
+    SynthCutoff=401,SynthResonance=402,SynthDrive=403,SynthMix=404,SynthKeytrack=405
 };
+constexpr bool isSynthFilterDestination(ModDestination d) noexcept {return d>=ModDestination::SynthCutoff && d<=ModDestination::SynthKeytrack;}
 constexpr bool isNestedDestination(ModDestination d) noexcept {
     return d==ModDestination::LfoRate || d==ModDestination::MacroValue || d==ModDestination::RouteDepth;
 }
@@ -203,7 +206,7 @@ enum class ControlOpType : std::uint8_t {
     Threshold=50, Edge=51, Pulse=52,                             // conversion
     Compare=60, And=61, Or=62, Xor=63, Not=64, Switch=65,        // logic
     SampleHold=70, TrackHold=71, RandomTrigger=72, Toggle=73, Counter=74, // stateful
-    EnvelopeTrigger=80,                                          // target: retrigger ENV 2 / ENV 3
+    EnvelopeTrigger=80,                                          // target: trigger ENV 1 / 2 / 3
     // N06 sequencing / generative (multi-output capable).
     ClockDivider=90, EventDelay=91, Probability=92, ChanceSplit=93, EventMerge=94,
     Euclidean=95, Pattern=96, RandomWalk=97,
@@ -377,9 +380,33 @@ struct ModRoute {
     // into [0,1] before depth is applied. True restores centre-crossing motion.
     bool bipolar=false;
 };
+// Additional sources share a fixed pool. Identity is monotonic and independent
+// of storage slot and family; removing/reusing a slot never retargets a cable.
+inline constexpr std::size_t maxSourceInstances=32;
+inline constexpr std::uint32_t instanceSourceBase=0x1000u, maxSourceInstanceId=0x6fffu;
+constexpr ModSource instanceSource(std::uint32_t id) noexcept { return static_cast<ModSource>(instanceSourceBase+id); }
+constexpr bool isInstanceSource(ModSource s) noexcept { const auto v=static_cast<std::uint32_t>(s); return v>instanceSourceBase && v<=instanceSourceBase+maxSourceInstanceId; }
+constexpr std::uint32_t instanceIdOf(ModSource s) noexcept { return isInstanceSource(s) ? static_cast<std::uint32_t>(s)-instanceSourceBase : 0; }
+enum class SourceFamily : std::uint32_t { Envelope=1,Lfo=2,Random=3,Chaos=4,Drift=5,Sequencer=6,Function=7 };
+struct SourceInstance {
+    std::uint32_t id=0,number=0;
+    SourceFamily family=SourceFamily::Envelope;
+    dsp::EnvelopeSettings envelope{};
+    LfoSettings lfo{};
+    RandomSettings random{};
+    FunctionSettings function{};
+    ChaosSettings chaos{};
+    DriftSettings drift{};
+    SequencerSettings sequencer{};
+};
 struct ModulationState {
+    SynthFilterCollection synthFilters{};
+    // Derived writer-side resolution, never serialized or UI-authored.
+    std::array<std::int8_t,32> preparedFilterRouteSlots=[]() constexpr {std::array<std::int8_t,32> slots{};for(auto& value:slots) value=-1;return slots;}();
     static constexpr std::size_t capacity=32;
     static constexpr std::size_t maxControlOperators=32;
+    std::array<SourceInstance,maxSourceInstances> instances{};
+    std::uint32_t nextInstanceId=1;
     LfoSettings lfo1{},lfo2{},lfo3{},lfo4{};
     std::array<float,3> env1Curves{};
     dsp::EnvelopeSettings env2{},env3{};
@@ -410,9 +437,30 @@ struct ModulationState {
     // bit0 Function, bit1 Random, bit2 Chaos, bit3 Drift, bit4 Sequencer.
     // ENV1 is the only source that cannot be removed.
     std::uint32_t generatorActiveMask=0x1Fu;
-    bool filterEnabled=true;
+    bool filterEnabled=false;
 };
 
+std::size_t sourceInstanceSlot(const ModulationState&,ModSource) noexcept;
+const SourceInstance* findSourceInstance(const ModulationState&,ModSource) noexcept;
+ModSource addSourceInstance(ModulationState&,SourceFamily) noexcept;
+bool removeSourceInstance(ModulationState&,ModSource) noexcept;
+// Effective output sends use the existing splice override as an atomic,
+// generalized bus/filter mixer. No override means the oscillator's bus sends.
+OscillatorModuleState oscillatorOutputRouting(const ModulationState&,const OscillatorModuleState&) noexcept;
+bool setOscillatorOutputRouting(ModulationState&,const OscillatorModuleState&) noexcept;
+SynthFilterId addSynthFilter(ModulationState&) noexcept;
+bool removeSynthFilter(ModulationState&,SynthFilterId) noexcept;
+bool insertSynthFilter(ModulationState&,const std::array<OscillatorModuleState,16>&,SynthFilterId,OscillatorModuleId) noexcept;
+bool insertSynthFilterAfter(ModulationState&,SynthFilterId inserted,SynthFilterId before) noexcept;
+bool validSynthFilters(const SynthFilterCollection&,const std::array<OscillatorModuleState,16>&) noexcept;
+SynthFilterPlan prepareSynthFilters(ModulationState&,const std::array<OscillatorModuleState,16>&,const std::array<BusId,8>&,std::size_t) noexcept;
+const char* sourceFamilyName(SourceFamily) noexcept;
+
+inline std::size_t lfoIndexForItem(const ModulationState& s,std::uint32_t item) noexcept {
+    if(item>=1 && item<=4) return item-1;
+    const auto slot=sourceInstanceSlot(s,static_cast<ModSource>(item));
+    return slot<maxSourceInstances && s.instances[slot].family==SourceFamily::Lfo ? 4+slot : 4+maxSourceInstances;
+}
 // Block-rate FX destination output. FX run after the voice sum, so they are
 // global destinations: global sources use their latest value and per-voice
 // sources (ENV, velocity, keytrack...) follow the most recently played voice.
@@ -486,7 +534,7 @@ bool sourceIsVoice(ModSource,const ModulationState&) noexcept;
 // storage slot (global value, or the newest voice's for per-voice operators).
 inline constexpr std::size_t operatorOutputSlotCount=ModulationState::maxControlOperators*maxControlOutputs;
 // Global (25: 13 original + macros 5..16) + voice (13) source slots, then operator outputs.
-inline constexpr std::size_t modulationSourceSlotCount=25+13+operatorOutputSlotCount;
+inline constexpr std::size_t modulationSourceSlotCount=25+13+3*maxSourceInstances+operatorOutputSlotCount;
 inline constexpr std::size_t operatorOutputIndex(std::size_t slot,std::size_t port) noexcept { return slot*maxControlOutputs+port; }
 using ModulationSourceSlots=std::array<float,modulationSourceSlotCount>;
 // Normalized control contribution of ONE route: source -> polarity -> amount,
@@ -496,9 +544,11 @@ float routeContribution(const ModRoute&,const ModulationState&,const ModulationS
 
 // Inline: the renderers ask for every LFO's settings per voice per sample.
 inline const LfoSettings& lfoSettings(const ModulationState& s,std::size_t i) noexcept {
+    if(i>=4 && i<4+maxSourceInstances) return s.instances[i-4].lfo;
     switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
 }
 inline LfoSettings& lfoSettings(ModulationState& s,std::size_t i) noexcept {
+    if(i>=4 && i<4+maxSourceInstances) return s.instances[i-4].lfo;
     switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
 }
 
@@ -581,8 +631,8 @@ static_assert(sizeof(Lfo)<=160,"Lfo runtime grew: 4 per voice x every voice");
 
 class RandomGenerator {
 public:
-    void reset() noexcept {
-        phase_=0;delayElapsed_=0;state_=0x6d2b79f5u;
+    void reset(std::uint32_t seed=0) noexcept {
+        phase_=0;delayElapsed_=0;state_=0x6d2b79f5u ^ (seed*0x9e3779b9u);
         current_=next_=value_=0;initialized_=false;
     }
     float next(const RandomSettings&,double sampleRate) noexcept;
@@ -621,7 +671,7 @@ private:
 
 class DriftGenerator {
 public:
-    void reset() noexcept {phase_=0;state_=0x9e3779b9u;target_=0;value_=0;}
+    void reset(std::uint32_t seed=0) noexcept {phase_=0;state_=0x9e3779b9u ^ (seed*0x85ebca6bu);target_=0;value_=0;}
     float next(const DriftSettings&,double sampleRate) noexcept;
     double phase() const noexcept { return phase_; }
 private:
@@ -660,6 +710,29 @@ private:
     std::uint32_t substep_=0;
     std::uint32_t rng_=0x8f7011eeu;
     double stepScale_=1.0;
+};
+
+// Only small generator state is reserved. Inactive slots never advance.
+struct GlobalSourceRuntime {
+    std::uint32_t id=0;
+    Lfo lfo{}; RandomGenerator random{}; FunctionGenerator function{};
+    ChaosGenerator chaos{}; DriftGenerator drift{}; SequencerGenerator sequencer{};
+    void reset(std::uint32_t identity=0) noexcept {
+        id=identity; lfo.reset(); lfo.setStreams(Lfo::globalStream(identity+4),Lfo::fractureSeed(identity+4));
+        random.reset(identity); function.reset(); chaos.reset(); drift.reset(identity); sequencer.reset();
+    }
+    float next(const SourceInstance& s,double sampleRate) noexcept {
+        if(id!=s.id) reset(s.id);
+        switch(s.family) {
+        case SourceFamily::Lfo:return lfo.next(s.lfo,sampleRate);
+        case SourceFamily::Random:return random.next(s.random,sampleRate);
+        case SourceFamily::Function:return function.next(s.function,sampleRate);
+        case SourceFamily::Chaos:return chaos.next(s.chaos,sampleRate);
+        case SourceFamily::Drift:return drift.next(s.drift,sampleRate);
+        case SourceFamily::Sequencer:return sequencer.next(s.sequencer,sampleRate);
+        default:return 0;
+        }
+    }
 };
 
 template<class T> class LatestStateMailbox {
@@ -741,6 +814,8 @@ constexpr StereoCapability stereoCapability(ModDestination d) noexcept {
 // RIGHT values of the four LFOs this sample (bit i of mask: LFO i is stereo,
 // so its right value may differ; otherwise right == left by definition).
 struct StereoSourceValues {
+    std::array<float,maxSourceInstances> instances; // read only under instanceMask
+    std::uint32_t instanceMask=0;
     std::array<float,4> lfo{};
     std::uint8_t mask=0;
 };
@@ -765,13 +840,15 @@ struct StereoModulationFrame {
 };
 
 struct ModulationFrame {
+    std::array<SynthFilterValues,maxSynthFilters> synthFilters{};
+    std::uint8_t synthFilterMask=0;
     std::array<OscillatorModuleState,16> modules{};
     ControlEventContext events{}; // N05: timing (global) + note state (per voice)
     // N04: operator outputs by storage slot (global operators evaluated in the
     // global frame; per-voice operators overwrite theirs inside each voice).
     // N06: one value per (operator slot, output port): index slot*4 + port.
     std::array<float,ModulationState::maxControlOperators*maxControlOutputs> operatorOutputs{};
-    std::array<float,25> globalSources{}; // copied for per-voice operators (only when operators exist)
+    std::array<float,25+maxSourceInstances> globalSources{}; // copied for per-voice operators (only when operators exist)
     float cutoff=8000,resonance=.1f,master=.2f,mainTuning=0.0f,transpose=0.0f;
     float portaTime=0.0f,envelopeScaling=1.0f,lfoScaling=1.0f,swing=0.0f;
     dsp::LowPassCoefficients filter{};
@@ -798,6 +875,8 @@ struct ModulationFrame {
         }
         for(std::size_t i=0;i<activeCount && i<active.size();++i)
             if((moduleMask>>active[i])&1u) modules[active[i]]=g.modules[active[i]];
+        if(g.synthFilterMask) synthFilters=g.synthFilters;
+        synthFilterMask=g.synthFilterMask;
         events=g.events; globalSources=g.globalSources;
         cutoff=g.cutoff; resonance=g.resonance; master=g.master; mainTuning=g.mainTuning; transpose=g.transpose;
         portaTime=g.portaTime; envelopeScaling=g.envelopeScaling; lfoScaling=g.lfoScaling; swing=g.swing;
@@ -809,15 +888,19 @@ struct ModulationFrame {
 
 // Fields copied by ModulationFrame::copyForVoice: the size is pinned so any
 // field change trips here and forces copyForVoice to be updated with it.
-static_assert(sizeof(ModulationFrame)==8928+2*sizeof(float)*ModulationState::capacity+sizeof(StereoModulationFrame),"ModulationFrame changed: update copyForVoice");
+static_assert(sizeof(ModulationFrame)==11232+4*maxSourceInstances+2*sizeof(float)*ModulationState::capacity+sizeof(StereoModulationFrame)+sizeof(SynthFilterValues)*maxSynthFilters+8,"ModulationFrame changed: update copyForVoice");
 
 class CompiledModulation {
 public:
+    dsp::LowPassCoefficients synthFilterCoefficients(float cutoff,float resonance) const noexcept {return filterTable_.make(cutoff,resonance);}
     // Global slots: 0..12 as always (macros 1..4 at 4..7), 13..24 macros 5..16.
     // Voice slots follow (globalSourceCount + 0..12), then operator outputs.
-    static constexpr std::size_t globalSourceCount=13+(maxMacros-4);
+    static constexpr std::size_t globalSourceCount=13+(maxMacros-4)+maxSourceInstances;
     static constexpr std::size_t macroSlot(std::size_t id) noexcept { return id<=4 ? 3+id : 13+(id-5); } // id 1..16
-    static constexpr std::size_t voiceSourceCount=13;
+    static constexpr std::size_t voiceSourceCount=13+2*maxSourceInstances;
+    static constexpr std::size_t instanceGlobalSlot(std::size_t i) noexcept { return 25+i; }
+    static constexpr std::size_t instanceEnvelopeSlot(std::size_t i) noexcept { return 13+i; }
+    static constexpr std::size_t instanceLfoSlot(std::size_t i) noexcept { return 13+maxSourceInstances+i; }
     static constexpr std::size_t sourceSlotCount=globalSourceCount+voiceSourceCount;
     static constexpr std::size_t operatorSlotCount=ModulationState::maxControlOperators;
     static constexpr std::size_t totalSlotCount=sourceSlotCount+operatorSlotCount;
@@ -847,9 +930,12 @@ public:
     std::uint32_t readStereoGroups() const noexcept { return readGroupsAll_; }
     struct ReadTarget { ModDestination parameter=ModDestination::None; std::uint8_t item=0; };
     const ReadTarget& readTarget(std::size_t group) const noexcept { return readTargets_[group]; }
-    // N05: ENV 2 / ENV 3 retrigger requests produced this sample (bit 1 / 2).
+    // N05: ENV 1 / 2 / 3 trigger requests produced this sample (bit 0 / 1 / 2).
     std::uint8_t envelopeTriggers(const ModulationFrame&) const noexcept;
     bool hasEnvelopeTriggers() const noexcept { return envelopeTriggerCount_!=0; }
+    // Bit 0: ENV 1 is graph-owned (a connected ENV TRIGGER targets it), so a
+    // note-on does not start it automatically. ENV 2 / 3 are never owned.
+    std::uint8_t envelopeOwnedMask() const noexcept { return envelopeOwnedMask_; }
     bool needsEventContext() const noexcept { return eventOps_; }
     // N06: a SEQUENCER node drives the canonical sequencer from the plan (the
     // engine then skips its legacy source-pass advance: never double clocked).
@@ -940,7 +1026,7 @@ public:
     void evaluateVoiceOperator(std::size_t op,ModulationFrame&,const std::array<float,voiceSourceCount>&,OperatorState&,
                                std::array<std::uint32_t,operatorSlotCount>* eventCounts=nullptr,
                                const ModulationFrame* global=nullptr,const StereoSourceValues* voiceStereo=nullptr) const noexcept;
-    bool lfoRateModulated(std::size_t lfo) const noexcept { return lfo<4 && lfoRateGroup_[lfo]>=0; }
+    bool lfoRateModulated(std::size_t lfo) const noexcept { return lfo<4+maxSourceInstances && lfoRateGroup_[lfo]>=0; }
     bool macroModulated(std::size_t id) const noexcept { return id>=1 && id<=maxMacros && macroGroup_[id-1]>=0; }
 private:
     struct Group {
@@ -973,6 +1059,7 @@ private:
         // Stereo terms (stereo-capable destinations only): which of this
         // group's sources may carry a different RIGHT value.
         bool stereo=false;
+        std::uint32_t stereoGlobalInstances=0,stereoVoiceInstances=0;
         std::uint8_t stereoGlobalLfos=0,stereoVoiceLfos=0; // bit i: LFO i
         std::uint32_t stereoGlobalOps=0,stereoVoiceOps=0;  // bit: compact routed operator slot
     };
@@ -1046,6 +1133,7 @@ private:
     std::array<std::uint32_t,operatorSlotCount> globalEventCounts_{};
     std::array<std::uint8_t,operatorSlotCount> envelopeTriggerSlots_{},envelopeTriggerTargets_{};
     std::size_t envelopeTriggerCount_=0;
+    std::uint8_t envelopeOwnedMask_=0;
     bool eventOps_=false;
     static float read(const ModulationFrame&,const Group&) noexcept;
     static void write(ModulationFrame&,const Group&,float normalized) noexcept;
@@ -1061,11 +1149,11 @@ private:
     void buildNestedPlan(const ModulationState&) noexcept;
     bool nestedPlan_=false,voiceNestedPlan_=false,needsNewestVoice_=false;
     template<std::size_t N> static constexpr std::array<std::int8_t,N> noGroups() noexcept { std::array<std::int8_t,N> a{}; for(auto& v:a) v=-1; return a; }
-    std::array<std::int8_t,4> lfoRateGroup_=noGroups<4>();
+    std::array<std::int8_t,4+maxSourceInstances> lfoRateGroup_=noGroups<4+maxSourceInstances>();
     std::array<std::int8_t,maxMacros> macroGroup_=noGroups<maxMacros>();
     std::array<std::int8_t,ModulationState::capacity> depthGroup_=noGroups<ModulationState::capacity>(),routeGroup_=noGroups<ModulationState::capacity>();
     std::array<std::uint8_t,ModulationState::capacity> routeSlot_{};
-    std::array<ProgramStep,4+maxMacros+operatorSlotCount+ModulationState::capacity> globalProgram_{},voiceProgram_{};
+    std::array<ProgramStep,4+maxSourceInstances+maxMacros+operatorSlotCount+ModulationState::capacity> globalProgram_{},voiceProgram_{};
     std::size_t globalProgramCount_=0,voiceProgramCount_=0;
     std::array<Group,ModulationState::capacity> groups_{};
     std::array<std::size_t,ModulationState::capacity> voiceGroups_{};
@@ -1096,6 +1184,7 @@ private:
         bool operator==(const ModulePlanKey&) const noexcept;
     };
     struct PlanKey {
+        std::array<std::int8_t,32> filterRouteSlots{};
         bool valid=false;
         double sampleRate=0.0;
         std::array<ModRoute,ModulationState::capacity> routes{};
@@ -1105,6 +1194,10 @@ private:
         // source (STEREO > 0) shapes the stereo plan, so crossing zero is a
         // topology change (a value change above zero is not).
         std::array<bool,4> lfoStereo{};
+        std::array<std::uint32_t,maxSourceInstances> instanceIds{};
+        std::array<SourceFamily,maxSourceInstances> instanceFamilies{};
+        std::array<LfoMode,maxSourceInstances> instanceModes{};
+        std::array<bool,maxSourceInstances> instanceStereo{};
         bool filterEnabled=true;
         std::array<ModulePlanKey,16> modules{};
     };

@@ -6,10 +6,14 @@ on:
     branches: [main]
     paths:
       - "origami/**"
+      - "shared/melogic/**"
+      - "config/firebase-client.json"
       - ".github/workflows/origami-native-ci.yml"
   pull_request:
     paths:
       - "origami/**"
+      - "shared/melogic/**"
+      - "config/firebase-client.json"
       - ".github/workflows/origami-native-ci.yml"
   workflow_dispatch:
 

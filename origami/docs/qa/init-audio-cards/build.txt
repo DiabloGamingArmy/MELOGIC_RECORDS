@@ -1,0 +1,228 @@
+[  1%] Building VST3 manifest helper for OrigamiPlugin
+[  6%] Built target OrigamiAssets
+[ 13%] Built target origami_core
+-- Configuring done (0.0s)
+[ 16%] Linking CXX executable origami_wavetable_bank_tests
+[ 16%] Built target origami_patch
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/vst3_helpers/OrigamiPlugin
+[ 16%] Linking CXX executable origami_nodes_bench
+[ 17%] Linking CXX executable origami_dsp_profile
+make[3]: warning: jobserver unavailable: using -j1.  Add `+' to parent make rule.
+[ 18%] Built target origami_tests
+[ 19%] Linking CXX executable origami_state_tests
+[ 19%] Built target origami_wavetable_bank_tests
+[100%] Built target vst3_helper
+[ 19%] Built target origami_dsp_profile
+[ 20%] Built target origami_nodes_bench
+[ 20%] Linking CXX executable origami_render
+[ 20%] Built target OrigamiPlugin_vst3_helper
+[ 20%] Linking CXX executable origami_modulation_tests
+[ 20%] Built target origami_state_tests
+[ 21%] Linking CXX executable origami_fx_tests
+[ 22%] Built target origami_render
+[ 22%] Built target origami_modulation_tests
+[ 22%] Built target origami_fx_tests
+[ 22%] Building CXX object CMakeFiles/OrigamiPlugin.dir/plugin/ui/ModulationPanel.cpp.o
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:32:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.h:21:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:6:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/InstrumentState.h:6:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:16:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/../SynthFilter.h:96:105: warning: implicit conversion changes signedness: 'int' to 'std::size_t' (aka 'unsigned long') [-Wsign-conversion]
+   96 |     void bindComb(float* data,std::size_t length) noexcept {for(int c=0;c<2;++c) comb[c].bind(data?data+c*length:nullptr,length);}
+      |                                                                                                         ^~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/../SynthFilter.h:110:20: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+  110 |         if(driveKey!=drive) {driveKey=drive;driveGain=static_cast<float>(dsp::fastExp2Audio(drive/6.020599913));}
+      |            ~~~~~~~~^ ~~~~~
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:32:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.h:21:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:6:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/InstrumentState.h:6:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:726:16: warning: enumeration value 'Envelope' not explicitly handled in switch [-Wswitch-enum]
+  726 |         switch(s.family) {
+      |                ^~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:726:16: note: add missing switch cases
+  726 |         switch(s.family) {
+      |                ^
+  727 |         case SourceFamily::Lfo:return lfo.next(s.lfo,sampleRate);
+  728 |         case SourceFamily::Random:return random.next(s.random,sampleRate);
+  729 |         case SourceFamily::Function:return function.next(s.function,sampleRate);
+  730 |         case SourceFamily::Chaos:return chaos.next(s.chaos,sampleRate);
+  731 |         case SourceFamily::Drift:return drift.next(s.drift,sampleRate);
+  732 |         case SourceFamily::Sequencer:return sequencer.next(s.sequencer,sampleRate);
+  733 |         default:return 0;
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:790:12: warning: 25 enumeration values not explicitly handled in switch: 'None', 'Cutoff', 'Resonance'... [-Wswitch-enum]
+  790 |     switch(d) {
+      |            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:790:12: note: add missing switch cases
+  790 |     switch(d) {
+      |            ^
+  791 |         case ModDestination::WtPosition:
+  792 |         case ModDestination::Process1Amount: case ModDestination::Process2Amount: case ModDestination::ProcessAmount:
+  793 |         case ModDestination::Route1Amount: case ModDestination::Route2Amount: case ModDestination::RouteAmount: return true;
+  794 |         default: return false;
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:798:12: warning: 12 enumeration values not explicitly handled in switch: 'None', 'MainTuning', 'Transpose'... [-Wswitch-enum]
+  798 |     switch(d) {
+      |            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/modulation/Modulation.h:798:12: note: add missing switch cases
+  798 |     switch(d) {
+      |            ^
+  799 |         case ModDestination::Level: case ModDestination::Cutoff: case ModDestination::Resonance:
+  800 |         case ModDestination::WtPosition:
+  801 |         case ModDestination::Process1Amount: case ModDestination::Process2Amount: case ModDestination::ProcessAmount:
+  802 |         case ModDestination::Route1Amount: case ModDestination::Route2Amount: case ModDestination::RouteAmount:
+  803 |             return StereoCapability::Stereo;
+  804 |         case ModDestination::Octave: case ModDestination::Semitone: case ModDestination::Fine:
+  805 |         case ModDestination::FxParameter: case ModDestination::MasterGain: return StereoCapability::RequiresStereoDsp;
+  806 |         case ModDestination::EnvelopeScaling: case ModDestination::LfoScaling: return StereoCapability::Ambiguous;
+  807 |         // mct-origami-nested-modulation-manual-qa: an LFO's rate is its phase
+  808 |         // state, a macro is one value, a route depth one weight: LEFT only.
+  809 |         case ModDestination::LfoRate: case ModDestination::MacroValue: case ModDestination::RouteDepth:
+  810 |             return StereoCapability::RequiresStereoDsp;
+  811 |         default: return StereoCapability::Scalar;
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:32:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.h:21:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:7:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/Voice.h:14:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/dsp/OscillatorControlCache.h:16:33: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   16 |         if(!pitchValid_ || pitch!=pitch_) {
+      |                            ~~~~~^ ~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/dsp/OscillatorControlCache.h:24:27: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   24 |         if(!panValid_ || p!=pan_) {
+      |                          ~^ ~~~~
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:32:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.h:21:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:7:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/Voice.h:17:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:28:46: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   28 |                 changed|=module.filterSend[f]!=plan.filterSends[m][f];if(snap) module.filterSend[f]=plan.filterSends[m][f];}
+      |                          ~~~~~~~~~~~~~~~~~~~~^ ~~~~~~~~~~~~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:30:43: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   30 |                 changed|=module.busSend[b]!=plan.directSends[m][b];if(snap) module.busSend[b]=plan.directSends[m][b];
+      |                          ~~~~~~~~~~~~~~~~~^ ~~~~~~~~~~~~~~~~~~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:31:57: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   31 |                 if(b) module.auxSends|=module.busSend[b]!=0 || plan.directSends[m][b]!=0;}
+      |                                        ~~~~~~~~~~~~~~~~~^ ~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:31:86: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   31 |                 if(b) module.auxSends|=module.busSend[b]!=0 || plan.directSends[m][b]!=0;}
+      |                                                                ~~~~~~~~~~~~~~~~~~~~~~^ ~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/core/OscillatorRenderPlan.h:36:122: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+   36 |         for(std::size_t f=0;f<plan.count;++f) for(std::size_t b=1;b<plan.busCount;++b) auxActive|=plan.stages[f].sends[b]!=0;
+      |                                                                                                   ~~~~~~~~~~~~~~~~~~~~~~~^ ~
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:32:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.h:21:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:57:12: warning: 5 enumeration values not explicitly handled in switch: 'None', 'Macro1', 'Macro2'... [-Wswitch-enum]
+   57 |     switch(s) {
+      |            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationBindings.h:57:12: note: add missing switch cases
+   57 |     switch(s) {
+      |            ^
+   58 |         case S::Env1:return "ENV 1"; case S::Env2:return "ENV 2"; case S::Env3:return "ENV 3";
+   59 |         case S::Lfo1:return "LFO 1"; case S::Lfo2:return "LFO 2"; case S::Lfo3:return "LFO 3"; case S::Lfo4:return "LFO 4";
+   60 |         case S::Random:return "RANDOM"; case S::Function:return "FUNCTION";
+   61 |         case S::Chaos:return "CHAOS"; case S::Drift:return "DRIFT"; case S::Sequencer:return "SEQUENCER";
+   62 |         case S::ModWheel:return "MOD WHEEL"; case S::Velocity:return "VELOCITY"; case S::Keytrack:return "KEYTRACK";
+   63 |         case S::Aftertouch:return "AFTERTOUCH"; case S::PitchBend:return "PITCH BEND"; case S::NoteGate:return "NOTE GATE";
+   64 |         default:break;
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:534:30: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  534 |         {1,"Envelope",true,""},
+      |                              ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:535:25: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  535 |         {2,"LFO",true,""},
+      |                         ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:536:28: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  536 |         {3,"Random",true,""},
+      |                            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:537:27: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  537 |         {4,"Chaos",true,""},
+      |                           ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:538:27: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  538 |         {5,"Drift",true,""},
+      |                           ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:539:31: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  539 |         {6,"Sequencer",true,""},
+      |                               ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:540:30: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  540 |         {7,"Function",true,""},
+      |                              ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:543:30: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  543 |         {8,"Velocity",true,""},
+      |                              ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:544:26: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+  544 |         {9,"Note",true,""}
+      |                          ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:1713:33: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1713 |         {1,"Reset shape",true,""},
+      |                                 ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:1714:35: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1714 |         {2,"Flip vertical",true,""},
+      |                                   ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:1715:40: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1715 |         {3,"Normalize vertical",true,""},
+      |                                        ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:1716:130: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1716 |         {4,"Quantize points to grid ("+juce::String(lfoStrip_.gridColumns())+" x "+juce::String(lfoStrip_.gridRows())+")",true,""},
+      |                                                                                                                                  ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:1717:44: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 1717 |         {5,"Flatten segment curves",true,""}
+      |                                            ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:2448:89: warning: implicit conversion turns floating-point number into integer: 'float' to 'int' [-Wfloat-conversion]
+ 2448 |         const auto badge=juce::Rectangle<int>(envCanvas_.getRight()-84,envCanvas_.getY()+7,76,16);
+      |                          ~~~~                                          ~~~~~~~~~~~~~~~~~^~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:2448:68: warning: implicit conversion turns floating-point number into integer: 'float' to 'int' [-Wfloat-conversion]
+ 2448 |         const auto badge=juce::Rectangle<int>(envCanvas_.getRight()-84,envCanvas_.getY()+7,76,16);
+      |                          ~~~~                 ~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:2536:35: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 2536 |         {1,"Init diagonal",true,""},{2,"Flip vertical",true,""},
+      |                                   ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:2536:63: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 2536 |         {1,"Init diagonal",true,""},{2,"Flip vertical",true,""},
+      |                                                               ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:2537:45: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 2537 |         {3,"Quantize points to 1/16",true,""},{4,"Flatten segment curves",true,""}
+      |                                             ^
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:2537:82: warning: missing field 'tooltip' initializer [-Wmissing-field-initializers]
+ 2537 |         {3,"Quantize points to 1/16",true,""},{4,"Flatten segment curves",true,""}
+      |                                                                                  ^
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:32:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.h:20:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/OrigamiStyle.h:9:
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/JuceLibraryCode/JuceHeader.h:15:
+In file included from /Users/ginobarnes/Downloads/JUCE/modules/juce_audio_processors/juce_audio_processors.h:65:
+In file included from /Users/ginobarnes/Downloads/JUCE/modules/juce_gui_extra/juce_gui_extra.h:68:
+In file included from /Users/ginobarnes/Downloads/JUCE/modules/juce_gui_basics/juce_gui_basics.h:68:
+In file included from /Users/ginobarnes/Downloads/JUCE/modules/juce_graphics/juce_graphics.h:140:
+/Users/ginobarnes/Downloads/JUCE/modules/juce_graphics/geometry/juce_Line.h:132:94: warning: comparing floating point with == or != is unsafe [-Wfloat-equal]
+  132 |     bool isVertical() const noexcept                                        { return start.x == end.x; }
+      |                                                                                      ~~~~~~~ ^  ~~~~~
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:2878:17: note: in instantiation of member function 'juce::Line<float>::isVertical' requested here
+ 2878 |         if(line.isVertical()) g.fillRect(juce::Rectangle<float>(line.getStartX()-.5f,line.getStartY(),1.0f,line.getLength()));
+      |                 ^
+In file included from /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.cpp:32:
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/plugin/ui/ModulationPanel.h:274:10: warning: private field 'havePreviousChaosPoint_' is not used [-Wunused-private-field]
+  274 |     bool havePreviousChaosPoint_=false;
+      |          ^
+35 warnings generated.
+[ 22%] Linking CXX static library "OrigamiPlugin_artefacts/Release/libMCT Origami_SharedCode.a"
+[ 44%] Built target OrigamiPlugin
+[ 44%] Linking CXX CFBundle shared module "OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/MacOS/MCT Origami"
+[ 45%] Linking CXX CFBundle shared module "OrigamiPlugin_artefacts/Release/AU/MCT Origami.component/Contents/MacOS/MCT Origami"
+[ 46%] Linking CXX executable "OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app/Contents/MacOS/MCT Origami"
+[ 47%] Linking CXX executable origami_content_tests
+[ 47%] Building CXX object CMakeFiles/origami_plugin_tests.dir/tests/PluginTests.cpp.o
+[ 48%] Linking CXX executable origami_perf_bench
+[ 60%] Built target origami_content_tests
+[ 72%] Built target origami_perf_bench
+[ 72%] Linking CXX executable origami_plugin_tests
+[ 85%] Built target origami_plugin_tests
+[ 90%] Built target OrigamiPlugin_Standalone
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: code has no resources but signature indicates they must be present
+-- Replacing invalid signature with ad-hoc signature
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: replacing existing signature
+/Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3: code object is not signed at all
+In subcomponent: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/PkgInfo 2
+removing moduleinfo.json
+[ 95%] Built target OrigamiPlugin_AU
+creating /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3/Contents/Resources/moduleinfo.json
+[100%] Built target OrigamiPlugin_VST3

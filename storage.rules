@@ -654,6 +654,11 @@ service firebase.storage {
       allow write: if isThreadOwner(threadId);
     }
 
+    // Private release bytes: trusted publisher IAM and short-lived signed GET only.
+    match /software-releases/{releasePath=**} {
+      allow read, write: if false;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

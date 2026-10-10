@@ -1,3 +1,4 @@
+#include "TestAuthorization.h"
 // mct-origami-dsp-performance-stereo-chain: performance regression harness.
 //
 // Drives the real OrigamiAudioProcessor::processBlock (engine + bus FX +
@@ -218,7 +219,7 @@ double percentile(std::vector<double> v,double q) {
 }
 
 Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
-    auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized()); auto& p=*owner;
     p.setPlayConfigDetails(0,2,s.sampleRate,s.block);
     p.prepareToPlay(s.sampleRate,s.block);
     if(s.setup) s.setup(p);
@@ -288,6 +289,47 @@ Result run(const Scenario& s,double measureSeconds,bool profileLoop=false) {
 
 std::vector<Scenario> matrix() {
     std::vector<Scenario> m;
+    for(int voices:{1,8,16}) for(int mode=0;mode<6;++mode) {
+        const char* names[]{"zero","single","shared four OSC","serial two","four separate","maximum eight serial"};
+        m.push_back({std::string("Synth filters ")+names[mode]+", "+std::to_string(voices)+" voices",48000,256,voices,[mode](OrigamiAudioProcessor& p){
+            oscillators(p,(mode==2 || mode==4 || mode==5)?4:1);
+            auto state=p.getUiInstrumentState();auto mod=state.modulation;std::array<SynthFilterId,maxSynthFilters> ids{};
+            const int count=mode==0?0:mode==3?2:mode==4?4:mode==5?8:1;
+            for(int i=0;i<count;++i) {ids[std::size_t(i)]=addSynthFilter(mod);mod.synthFilters.filters[std::size_t(i)].values.cutoff=1200+400*float(i);}
+            if(count) {insertSynthFilter(mod,state.oscillators,ids[0],state.oscillators[0].id);
+                if(mode==2) for(const auto& osc:state.oscillators) if(osc.id && osc.id!=state.oscillators[0].id) insertSynthFilter(mod,state.oscillators,ids[0],osc.id);
+                if(mode==4) for(int i=1;i<4;++i) insertSynthFilter(mod,state.oscillators,ids[std::size_t(i)],state.oscillators[std::size_t(i)].id);
+                if(mode==3 || mode==5) for(int i=1;i<count;++i) insertSynthFilterAfter(mod,ids[std::size_t(i)],ids[std::size_t(i-1)]);
+            }
+            p.setUiModulationState(mod);
+        }});
+    }
+    for(int voices:{1,8,16}) for(int mode=0;mode<7;++mode) {
+        const char* names[]{"MAIN only","FILTER only","MAIN + FILTER","MAIN + FILTER + BUS","four OSC multi sends","maximum 16 OSC 16 sends","dry + serial chain"};
+        m.push_back({std::string("Route mixer ")+names[mode]+", "+std::to_string(voices)+" voices",48000,256,voices,[mode](OrigamiAudioProcessor& p){
+            oscillators(p,mode==5?16:mode==4?4:1);const int buses=mode==5?7:mode>=3?1:0;
+            for(int b=0;b<buses;++b) p.addUiBus();auto state=p.getUiInstrumentState();auto mod=state.modulation;
+            std::array<SynthFilterId,8> filters{};const int count=mode==0?0:mode==5?8:mode==6?2:1;
+            for(int f=0;f<count;++f) {filters[std::size_t(f)]=addSynthFilter(mod);mod.synthFilters.filters[std::size_t(f)].values.cutoff=1200+float(f)*400;}
+            if(mode==6) insertSynthFilterAfter(mod,filters[1],filters[0]);
+            for(auto osc:state.oscillators) if(osc.id) {
+                osc.busRouteCount=0;osc.busRoutes={};if(mode!=1) osc.busRoutes[osc.busRouteCount++]={mainBusId,mode==0?1.f:.25f};
+                for(int f=0;f<(mode==6?1:count);++f) osc.busRoutes[osc.busRouteCount++]={filters[std::size_t(f)],mode==5?.1f:1.f,true};
+                for(std::size_t b=1;b<state.buses.count;++b) osc.busRoutes[osc.busRouteCount++]={state.buses.buses[b].id,mode==5?.1f:.5f};
+                setOscillatorOutputRouting(mod,osc);
+            }p.setUiModulationState(mod);
+        }});
+    }
+    for(int voices:{1,8,16}) for(bool serial:{false,true}) m.push_back({std::string("Synth multimode ")+(serial?"mixed eight serial":"band pass")+", "+std::to_string(voices)+" voices",48000,256,voices,[serial](OrigamiAudioProcessor& p){
+        oscillators(p,1);auto state=p.getUiInstrumentState();auto mod=state.modulation;SynthFilterId previous=0;
+        for(int i=0;i<(serial?8:1);++i) {const auto id=addSynthFilter(mod);auto& f=mod.synthFilters.filters[std::size_t(i)];f.type=serial?static_cast<dsp::FilterType>(i):dsp::FilterType::BandPass;f.values.cutoff=1200+400*float(i);f.values.gain=dsp::filterTypeInfo(f.type)->gain?6.f:0.f;
+            if(previous) insertSynthFilterAfter(mod,id,previous);else insertSynthFilter(mod,state.oscillators,id,state.oscillators[0].id);previous=id;
+        }p.setUiModulationState(mod);
+    }});
+    for(double rate:{48000.,192000.}) for(int voices:{1,8,16}) for(int mode:{0,1,2,4,8}) m.push_back({"Comb audit "+std::string(mode==0?"zero filters":mode==1?"one ordinary":std::to_string(mode==2?1:mode)+" Comb")+", "+std::to_string(voices)+" voices",rate,256,voices,[mode](OrigamiAudioProcessor& p){
+        oscillators(p,1);auto state=p.getUiInstrumentState();auto mod=state.modulation;SynthFilterId previous=0;
+        for(int i=0;i<(mode==2?1:mode);++i) {const auto id=addSynthFilter(mod);auto& f=mod.synthFilters.filters[std::size_t(i)];f.type=mode==1?dsp::FilterType::LowPass:dsp::FilterType::Comb;f.values={370,.85f,0,1,0,0};if(previous) insertSynthFilterAfter(mod,id,previous);else insertSynthFilter(mod,state.oscillators,id,state.oscillators[0].id);previous=id;}p.setUiModulationState(mod);
+    }});
     const auto typical=[](OrigamiAudioProcessor& p){ oscillators(p,2,4); chain(p,false); routes(p,8,false); };
     m.push_back({"idle (no notes)",48000,256,0,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});
     for(int v:{1,8,16}) m.push_back({"1 osc, "+std::to_string(v)+" voices",48000,256,v,[](OrigamiAudioProcessor& p){ oscillators(p,1); }});
@@ -369,6 +411,15 @@ std::vector<Scenario> matrix() {
     }
     m.push_back({"32 routes + nested all, 16 voices",48000,256,16,[](OrigamiAudioProcessor& p){
         oscillators(p,1); routes(p,32,true); for(int k=0;k<4;++k) nested(p,k); }});
+    for(int count:{0,8,32}) m.push_back({"instance pool "+std::to_string(count)+", 16 voices",48000,256,16,[count](OrigamiAudioProcessor& p) {
+        oscillators(p,1);auto state=p.getUiInstrumentState().modulation;
+        for(int i=0;i<count;++i) {
+            const auto source=addSourceInstance(state,static_cast<SourceFamily>(i%7+1));
+            auto& a=state.instances[std::size_t(i)];a.lfo.mode=LfoMode::Loop;
+            state.routes[std::size_t(i)]={state.nextRouteId++,true,source,{ModDestination::Level,firstOscillator(p),0},.01f,false};
+        }
+        p.setUiModulationState(state);
+    }});
     return m;
 }
 }
@@ -395,7 +446,7 @@ void browseStress() {
     const auto typical=[](OrigamiAudioProcessor& p){ oscillators(p,2,4); chain(p,false); routes(p,8,false); };
     const char* names[]{"idle UI thread","search / filter / sort 10k records","wavetable import (64 frames)","wavetable export (64 frames)","preset loads","wavetable loads into OSC 1"};
     for(int mode=0;mode<6;++mode) {
-        auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
+        auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized()); auto& p=*owner;
         p.setPlayConfigDetails(0,2,48000.0,256); p.prepareToPlay(48000.0,256);
         typical(p);
         juce::MemoryBlock presetA,presetB; p.getStateInformation(presetA);
@@ -438,6 +489,7 @@ void browseStress() {
 
 // B40 memory budget: the realtime objects' fixed footprints.
 void memoryReport() {
+    std::printf("Exact bytes: Voice=%zu Engine=%zu Processor=%zu\n",sizeof(Voice),sizeof(OrigamiEngine),sizeof(OrigamiAudioProcessor));
     const auto kb=[](std::size_t b){ return double(b)/1024.0; };
     std::printf("OrigamiAudioProcessor  %10.1f KB\n",kb(sizeof(OrigamiAudioProcessor)));
     std::printf("  OrigamiEngine        %10.1f KB\n",kb(sizeof(OrigamiEngine)));
@@ -450,6 +502,8 @@ void memoryReport() {
     std::printf("WavetableOscillator    %10zu B   SpectralReadHint %zu B\n",sizeof(dsp::WavetableOscillator),sizeof(dsp::SpectralReadHint));
     std::printf("Lfo                    %10zu B   LowPassFilter %zu B   Envelope %zu B\n",sizeof(Lfo),sizeof(dsp::LowPassFilter),sizeof(dsp::Envelope));
     std::printf("OscillatorModuleState  %10zu B   InstrumentState %.1f KB\n",sizeof(OscillatorModuleState),kb(sizeof(InstrumentState)));
+    std::printf("SynthCombPool metadata %zu B, CombState %zu B, ring samples/channel @48k=2404; lazy bytes/slot=307712, max16x8=2461696\n",sizeof(SynthCombPool),sizeof(dsp::CombState));
+    std::printf("SynthFilterRuntime %zu B (x8 per voice), SynthFilterPlan %zu B, SynthFilterCollection %zu B\n",sizeof(SynthFilterRuntime),sizeof(SynthFilterPlan),sizeof(SynthFilterCollection));
     const auto table=dsp::Wavetable::builtIns(); std::size_t samples=0;
     for(const auto& f:table.frames) for(const auto& b:f.bands) samples+=b.samples.size();
     std::printf("built-in table data    %10.1f KB  (%zu frames x %zu bands x %zu)\n",kb(samples*sizeof(float)),table.frames.size(),table.frames[0].bands.size(),table.tableLength);
@@ -458,6 +512,7 @@ void memoryReport() {
 }
 
 int main(int argc,char** argv) {
+    melogic::account::Service::useInMemoryForTesting();
     if(argc>=2 && std::strcmp(argv[1],"--memory")==0) { juce::ScopedJuceInitialiser_GUI gui; memoryReport(); return 0; }
     if(argc>=2 && std::strcmp(argv[1],"--browse-stress")==0) {
 #if defined(__APPLE__)
@@ -472,6 +527,13 @@ int main(int argc,char** argv) {
 #endif
     juce::ScopedJuceInitialiser_GUI gui;
     dsp::prepareSpectralCompiler();
+    if(argc>=2 && std::strcmp(argv[1],"--filter-prepare")==0) {
+        OrigamiAudioProcessor processor{origami_test::authorized()};oscillators(processor,4);auto state=processor.getUiInstrumentState();auto mod=state.modulation;SynthFilterId previous=0;
+        for(std::size_t n=0;n<maxSynthFilters;++n) {const auto id=addSynthFilter(mod);if(previous) insertSynthFilterAfter(mod,id,previous);else insertSynthFilter(mod,state.oscillators,id,state.oscillators[0].id);previous=id;}
+        std::vector<double> times;times.reserve(1000);
+        for(int n=0;n<1000;++n) {const auto start=std::chrono::steady_clock::now();const bool ok=processor.setUiModulationState(mod);const auto stop=std::chrono::steady_clock::now();if(!ok) return 1;times.push_back(std::chrono::duration<double,std::micro>(stop-start).count());}
+        std::sort(times.begin(),times.end());std::printf("maximum Synth topology writer validation/preparation/publication: median %.3f us, p99 %.3f us\n",times[500],times[990]);return 0;
+    }
     auto scenarios=matrix();
     if(argc>=4 && std::strcmp(argv[1],"--profile")==0) {
         for(const auto& s:scenarios) if(s.name.find(argv[2])!=std::string::npos) {

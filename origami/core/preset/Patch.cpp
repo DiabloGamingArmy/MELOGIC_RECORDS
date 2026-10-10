@@ -115,7 +115,8 @@ bool parsePatch(std::string_view json, Patch& output, std::string& error) {
                 do {
                     const auto id=reader.string();const auto* p=findParameter(id);require(p!=nullptr,"Unknown parameter ID");
                     const auto index=static_cast<std::size_t>(p->id);require(!parameters[index],"Duplicate parameter ID");parameters[index]=true;
-                    reader.expect(':');const auto value=reader.number();
+                    reader.expect(':');auto value=reader.number();
+                    if(p->id==ParameterId::OscUnison && value==0) value=1;
                     require(value>=-std::numeric_limits<float>::max() && value<=std::numeric_limits<float>::max(),"Parameter magnitude too large");
                     require(static_cast<float>(value)>=p->minimum && static_cast<float>(value)<=p->maximum,"Parameter outside allowed range");
                     require(p->scale!=ParameterScale::Choice || value==std::round(value),"Choice parameter must be an integer");

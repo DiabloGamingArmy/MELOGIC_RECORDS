@@ -248,3 +248,48 @@ test('Vertix account assets are owner-private and versions are immutable', async
   await assertFails(updateDoc(versionRef, { contentHash: 'changed' }))
   await assertFails(setDoc(doc(ownerDb, 'users/owner/vertixMarketplaceInstalls/untrusted'), { status: 'installed' }))
 })
+
+test('L01 auth grants and license credentials are server-only; own entitlement/activation reads only', async () => {
+  const own = testEnv.authenticatedContext('l01-owner').firestore()
+  const other = testEnv.authenticatedContext('l01-other').firestore()
+  for (const path of ['desktopAuthRequests/request', 'desktopAuthRateLimits/bucket', 'licenseKeys/digest']) {
+    await seed(path, { uid: 'l01-owner' })
+    await assertFails(getDoc(doc(own, path)))
+    await assertFails(setDoc(doc(own, path), { uid: 'l01-owner' }))
+  }
+  for (const path of ['users/l01-owner/entitlements/origami', 'activations/l01-activation']) {
+    await seed(path, { uid: 'l01-owner', productId: 'origami', status: 'active' })
+    await assertSucceeds(getDoc(doc(own, path)))
+    await assertFails(getDoc(doc(other, path)))
+    await assertFails(setDoc(doc(own, path), { uid: 'l01-owner', status: 'active' }))
+    await assertFails(deleteDoc(doc(own, path)))
+  }
+})
+
+test('L01 reserves Origami product identity against marketplace client edits', async () => {
+  const db = testEnv.authenticatedContext('l01-creator').firestore()
+  const payload = { id: 'normal-fixture', artistId: 'l01-creator', title: 'Fixture', status: 'draft', visibility: 'private' }
+  await assertSucceeds(setDoc(doc(db, 'products/normal-fixture'), payload))
+  await assertFails(setDoc(doc(db, 'products/origami'), { ...payload, id: 'origami' }))
+  await seed('products/origami', { artistId: 'l01-creator', status: 'draft', visibility: 'private' })
+  await assertFails(updateDoc(doc(db, 'products/origami'), { title: 'Spoofed' }))
+  await assertFails(deleteDoc(doc(db, 'products/origami')))
+})
+
+test('A01 generic licensing products and metadata cannot be created/edited by clients', async () => {
+  const db = testEnv.authenticatedContext('a01-creator').firestore()
+  const payload = { id: 'a01-product', artistId: 'a01-creator', title: 'Fixture', status: 'draft', visibility: 'private' }
+  await assertFails(setDoc(doc(db, 'products/a01-product'), { ...payload, licensing: { enabled: true, editions: ['beta'] } }))
+  await seed('products/a01-product', payload)
+  await assertFails(updateDoc(doc(db, 'products/a01-product'), { licensing: { enabled: true } }))
+  await seed('products/a01-product', { ...payload, licensing: { enabled: true, editions: ['beta'] } })
+  await assertFails(updateDoc(doc(db, 'products/a01-product'), { status: 'published' }))
+  await assertFails(deleteDoc(doc(db, 'products/a01-product')))
+  for (const claims of [{}, { admin: true, settingsManage: true }]) {
+    const client = testEnv.authenticatedContext('a01-creator', claims).firestore()
+    await assertFails(setDoc(doc(client, 'users/a01-creator/entitlements/origami'), { status: 'active', edition: 'beta' }))
+    await assertFails(getDoc(doc(client, 'licenseKeys/test-hash')))
+    await assertFails(setDoc(doc(client, 'licenseKeys/test-hash'), { status: 'active' }))
+    await assertFails(setDoc(doc(client, 'adminLogs/spoof'), { action: 'entitlement_granted' }))
+  }
+})

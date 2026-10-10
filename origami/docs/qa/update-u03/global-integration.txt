@@ -1,0 +1,6 @@
+PASS L01.2 activation controls and continuation audit
+PASS L01.1 authorization UI/audio gate audit
+PASS L01.4 welcome, first-frame hover, UI/audio/state isolation
+PASS L01 account/patch boundary audit
+PASS Global G01 plugin/UI audit
+PASS focused Global: 3817 checks

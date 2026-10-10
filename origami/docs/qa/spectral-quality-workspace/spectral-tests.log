@@ -1,0 +1,31 @@
+neutral rate=44100 fixture=0 RMS error=1.32378e-08 peak error=5.96046e-08 latency=2048 bytes=386792
+neutral rate=44100 fixture=1 RMS error=1.12299e-08 peak error=4.47035e-08 latency=2048 bytes=386792
+neutral rate=44100 fixture=2 RMS error=1.9391e-09 peak error=1.78814e-07 latency=2048 bytes=386792
+neutral rate=44100 fixture=3 RMS error=1.18463e-08 peak error=4.47035e-08 latency=2048 bytes=386792
+neutral rate=44100 fixture=4 RMS error=1.69211e-08 peak error=8.9407e-08 latency=2048 bytes=386792
+neutral rate=44100 fixture=5 RMS error=1.55301e-08 peak error=5.96046e-08 latency=2048 bytes=386792
+neutral rate=48000 fixture=0 RMS error=1.25549e-08 peak error=5.96046e-08 latency=2048 bytes=386792
+neutral rate=48000 fixture=1 RMS error=1.11007e-08 peak error=5.96046e-08 latency=2048 bytes=386792
+neutral rate=48000 fixture=2 RMS error=1.84167e-09 peak error=1.78814e-07 latency=2048 bytes=386792
+neutral rate=48000 fixture=3 RMS error=1.1883e-08 peak error=4.47035e-08 latency=2048 bytes=386792
+neutral rate=48000 fixture=4 RMS error=1.70044e-08 peak error=8.9407e-08 latency=2048 bytes=386792
+neutral rate=48000 fixture=5 RMS error=1.53206e-08 peak error=5.96046e-08 latency=2048 bytes=386792
+neutral rate=96000 fixture=0 RMS error=1.42177e-08 peak error=5.96046e-08 latency=4096 bytes=771816
+neutral rate=96000 fixture=1 RMS error=1.23823e-08 peak error=5.96046e-08 latency=4096 bytes=771816
+neutral rate=96000 fixture=2 RMS error=3.36307e-10 peak error=1.76024e-08 latency=4096 bytes=771816
+neutral rate=96000 fixture=3 RMS error=1.30346e-08 peak error=5.96046e-08 latency=4096 bytes=771816
+neutral rate=96000 fixture=4 RMS error=1.81571e-08 peak error=1.19209e-07 latency=4096 bytes=771816
+neutral rate=96000 fixture=5 RMS error=1.66964e-08 peak error=8.9407e-08 latency=4096 bytes=771816
+neutral rate=192000 fixture=0 RMS error=1.77593e-08 peak error=8.9407e-08 latency=8192 bytes=1541864
+neutral rate=192000 fixture=1 RMS error=1.44549e-08 peak error=7.45058e-08 latency=8192 bytes=1541864
+neutral rate=192000 fixture=2 RMS error=6.54872e-10 peak error=1.19209e-07 latency=8192 bytes=1541864
+neutral rate=192000 fixture=3 RMS error=1.56151e-08 peak error=8.9407e-08 latency=8192 bytes=1541864
+neutral rate=192000 fixture=4 RMS error=2.45626e-08 peak error=1.49012e-07 latency=8192 bytes=1541864
+neutral rate=192000 fixture=5 RMS error=2.33798e-08 peak error=1.3411e-07 latency=8192 bytes=1541864
+region low=0.200021 mid target=0.147176 mid source=0.0028944 high=0.11997
+neutral transition clearMask=0 max sample jump=0.00732997 settled error=6.40091e-08
+neutral transition clearMask=1 max sample jump=0.00732997 settled error=6.40091e-08
+bypass mode=2 max sample jump=0.0114566
+bypass mode=1 max sample jump=0.0114566
+bypass mode=3 max sample jump=0.0114566
+PASS: 3691997 spectral checks; RT allocations=0 deletes=0 C mallocs=0 C frees=0

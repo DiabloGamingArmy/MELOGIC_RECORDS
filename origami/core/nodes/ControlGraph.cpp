@@ -28,6 +28,7 @@ constexpr std::uint16_t layoutVersion=1,layoutVersionOperators=2;
 }
 
 NodeExecutionDomain sourceDomain(ModSource s,const ModulationState& m) noexcept {
+    if(isInstanceSource(s)) return sourceIsVoice(s,m) ? NodeExecutionDomain::Voice : NodeExecutionDomain::Global;
     // A processed source (an operator output) runs where its chain runs.
     if(isOperatorSource(s)) return sourceIsVoice(s,m) ? NodeExecutionDomain::Voice : NodeExecutionDomain::Global;
     if(lfoSource(s)) return lfoSettings(m,lfoIndex(s)).mode==LfoMode::Free ? NodeExecutionDomain::Global : NodeExecutionDomain::Voice;
@@ -52,6 +53,7 @@ bool domainCrossingSupported(NodeExecutionDomain source,NodeExecutionDomain dest
 }
 
 bool controlSourceExposed(ModSource s) noexcept {
+    if(isInstanceSource(s)) return true;
     if(isMacroSource(s)) return true; // every macro id (existence: controlSourceActive)
     switch(s) {
     case ModSource::Env1: case ModSource::Env2: case ModSource::Env3:
@@ -69,6 +71,7 @@ bool controlSourceExposed(ModSource s) noexcept {
 }
 
 bool controlSourceActive(ModSource s,const ModulationState& m) noexcept {
+    if(isInstanceSource(s)) return findSourceInstance(m,s)!=nullptr;
     if(s>=ModSource::Env1 && s<=ModSource::Env3) return (m.envActiveMask&(1u<<(static_cast<unsigned>(s)-1u)))!=0;
     if(lfoSource(s)) return (m.lfoActiveMask&(1u<<lfoIndex(s)))!=0;
     if(const auto id=macroIdOf(s)) return macroActive(m,id);
@@ -180,6 +183,13 @@ bool ControlLayout::operator==(const ControlLayout& o) const noexcept {
         if(a.key!=b.key || a.x!=b.x || a.y!=b.y || a.placed!=b.placed || a.positioned!=b.positioned) return false;
     }
     return true;
+}
+
+void ControlLayout::pruneSynthFilterDestinations(const ModulationState& m) noexcept {
+    entries_.erase(std::remove_if(entries_.begin(),entries_.end(),[&](const ControlLayoutEntry& e) {
+        return e.key.kind==ControlNodeKind::Parameter && isSynthFilterDestination(e.key.destination.parameter)
+            && synthFilterSlot(m.synthFilters,e.key.destination.itemId)==maxSynthFilters;
+    }),entries_.end());
 }
 
 std::vector<std::uint8_t> ControlLayout::encode() const {
@@ -683,7 +693,7 @@ void scanControlGraph(const ModulationState& m,OnOperator&& onOperator,OnInput&&
             }
             if(k>=info->inputs) { onInput(i,k,ControlIssueKind::UnusedInput); continue; }
             if(in.kind==ControlInput::Kind::Source) {
-                if(!knownModSource(in.source) || in.op!=0 || (isMacroSource(in.source) && !macroActive(m,macroIdOf(in.source)))) onInput(i,k,ControlIssueKind::InvalidSource);
+                if(!knownModSource(in.source) || (isInstanceSource(in.source) && !findSourceInstance(m,in.source)) || in.op!=0 || (isMacroSource(in.source) && !macroActive(m,macroIdOf(in.source)))) onInput(i,k,ControlIssueKind::InvalidSource);
                 else if(in.port!=0) onInput(i,k,ControlIssueKind::InvalidPort);
                 else if(info->inputSignals[k]!=ControlSignal::Control) onInput(i,k,ControlIssueKind::TypeMismatch);
                 continue;
@@ -703,7 +713,7 @@ void scanControlGraph(const ModulationState& m,OnOperator&& onOperator,OnInput&&
         const auto& route=m.routes[r];
         if(!route.id) continue;
         if(!isOperatorSource(route.source)) {
-            if(route.source!=ModSource::None && (!knownModSource(route.source) || (isMacroSource(route.source) && !macroActive(m,macroIdOf(route.source)))))
+            if(route.source!=ModSource::None && (!knownModSource(route.source) || (isInstanceSource(route.source) && !findSourceInstance(m,route.source)) || (isMacroSource(route.source) && !macroActive(m,macroIdOf(route.source)))))
                 onRoute(r,ControlIssueKind::RouteInvalidSource);
             continue;
         }

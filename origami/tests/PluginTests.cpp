@@ -1,3 +1,8 @@
+#include "TestAuthorization.h"
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+#include "core/fx/SpectralTune.h"
 // mct-origami-deep-audit-p03-fix2-canonical-state-repair
 // mct-origami-deep-audit-p03-canonical-state
 // mct-origami-audio-reengineer-p17-global-qos-budget
@@ -39,8 +44,10 @@
 #include <cmath>
 using namespace mct::origami;
 namespace {
-std::atomic<bool> pluginGuardAllocations{false};
-std::atomic<unsigned> pluginAllocations{0};
+// The guard measures the calling audio-test thread. Account/background workers
+// may allocate; those allocations must not masquerade as callback work.
+thread_local std::atomic<bool> pluginGuardAllocations{false};
+std::atomic<unsigned> pluginAllocations{0},pluginFrees{0};
 }
 #ifndef ORIGAMI_SANITIZED
 void* operator new(std::size_t size) {
@@ -50,10 +57,10 @@ void* operator new(std::size_t size) {
     throw std::bad_alloc();
 }
 void* operator new[](std::size_t size) { return ::operator new(size); }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p,std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p,std::size_t) noexcept { std::free(p); }
+void operator delete(void* p) noexcept {if(p && pluginGuardAllocations.load(std::memory_order_relaxed)) ++pluginFrees;std::free(p); }
+void operator delete[](void* p) noexcept {::operator delete(p);}
+void operator delete(void* p,std::size_t) noexcept {::operator delete(p);}
+void operator delete[](void* p,std::size_t) noexcept {::operator delete(p);}
 #endif
 namespace {
 unsigned checks=0;
@@ -84,6 +91,15 @@ double energy(const juce::AudioBuffer<float>& audio) {
             total+=v*v;
         }
     return total;
+}
+// Existing cross-oscillator/optimized-path audits use their historical four-OSC
+// authored fixture explicitly. They no longer depend on product NEW/INIT content.
+std::unique_ptr<OrigamiAudioProcessor> makeLegacyProcessorFixture() {
+    auto p=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());
+    for(const auto& d:parameterRegistry()) p->setUiParameter(d.id,d.defaultValue);
+    auto first=p->getUiOscillatorState(1);first.blend=.35f;p->setUiOscillatorState(1,first);
+    for(int i=0;i<3;++i) p->addUiOscillator();
+    return p;
 }
 juce::AudioBuffer<float> renderNote(OrigamiAudioProcessor& p,int note=60,float velocity=.8f,int samples=1024) {
     juce::AudioBuffer<float> audio(2,samples);
@@ -170,18 +186,18 @@ void audioContinuityP0Audit() {
                   "P0 held sine remains sample-continuous across host callbacks");
     };
 
-    auto hostOwner=std::make_unique<OrigamiAudioProcessor>(); auto& host=*hostOwner;
+    auto hostOwner=makeLegacyProcessorFixture(); auto& host=*hostOwner;
     configure(host);
     runHeld(host,false);
 
-    auto uiOwner=std::make_unique<OrigamiAudioProcessor>(); auto& ui=*uiOwner;
+    auto uiOwner=makeLegacyProcessorFixture(); auto& ui=*uiOwner;
     configure(ui);
     runHeld(ui,true);
 
     // Repeat at host sizes surrounding the captured 256-sample cadence. This
     // distinguishes a true fixed-block failure from a generic oscillator defect.
     for(const int blockSize:{64,128,512,1024}) {
-        auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+        auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
         p.prepareToPlay(48000.0,blockSize);
         disableExtraOscillators(p);
         check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 varied-block sine accepted");
@@ -213,7 +229,7 @@ void audioPurityP0Audit() {
     // isolated sine through the full processor path and fit its fundamental.
     constexpr double sampleRate=48000.0;
     constexpr int blockSize=256, warmupBlocks=12, captureBlocks=32, note=69;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(sampleRate,blockSize);
     disableExtraOscillators(p);
     check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 purity sine WT position accepted");
@@ -287,7 +303,7 @@ void multiOscillatorTopologyP0Audit() {
     using Capture=std::array<float,blockSize*captureBlocks>;
 
     auto capture=[&](int activeCount) {
-        auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+        auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
         p.prepareToPlay(sampleRate,blockSize);
         check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 topology sine WT accepted");
         check(p.setUiParameter(ParameterId::Sustain,1.0f),"P0 topology sustain accepted");
@@ -586,7 +602,7 @@ void stateIoBoundaryAudit() {
     check(header.contains("LatestStateMailbox<mct::origami::InstrumentState> restoreMailbox_"),
           "processor owns complete-state restore mailbox");
 
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,128);
     disableExtraOscillators(p);
 
@@ -685,7 +701,7 @@ void telemetryBoundaryAudit() {
 void playabilityAudit() {
     std::vector<std::unique_ptr<OrigamiAudioProcessor>> processors;
     auto create=[&]() -> OrigamiAudioProcessor& {
-        processors.push_back(std::make_unique<OrigamiAudioProcessor>());
+        processors.push_back(makeLegacyProcessorFixture());
         return *processors.back();
     };
     auto& host=create();
@@ -779,6 +795,7 @@ void playabilityAudit() {
     auto& filterLow=create();auto& filterHigh=create();
     filterLow.prepareToPlay(48000,128);filterHigh.prepareToPlay(48000,128);
     disableExtraOscillators(filterLow);disableExtraOscillators(filterHigh);
+    for(auto* p:{&filterLow,&filterHigh}) {auto m=p->getUiInstrumentState().modulation;m.filterEnabled=true;check(p->setUiModulationState(m),"explicit filter fixture");}
     check(filterLow.setUiParameter(ParameterId::Cutoff,100.0f),"low cutoff accepted");
     check(filterHigh.setUiParameter(ParameterId::Cutoff,20000.0f),"high cutoff accepted");
     const auto low=renderNote(filterLow,100,1.0f,4096),high=renderNote(filterHigh,100,1.0f,4096);
@@ -807,7 +824,7 @@ void playabilityAudit() {
 // Patch 05/19: allocation regression gate around the actual AudioProcessor callback.
 void pluginRealtimeAllocationGate() {
     // Keep the large processor off the 8 MB macOS test-thread stack.
-    auto processor=std::make_unique<OrigamiAudioProcessor>();
+    auto processor=makeLegacyProcessorFixture();
     auto& p=*processor;
     p.prepareToPlay(48000.0,512);
 
@@ -861,7 +878,7 @@ void pluginRealtimeAllocationGate() {
                       "plugin realtime stress output remains finite");
 
     // Patch 11/19: adversarial whole-wrapper realtime pass.
-    auto stressOwner=std::make_unique<OrigamiAudioProcessor>(); auto& stress=*stressOwner;
+    auto stressOwner=makeLegacyProcessorFixture(); auto& stress=*stressOwner;
     stress.prepareToPlay(48000.0,128);
     juce::AudioBuffer<float> stressAudio(2,1024);
     std::array<juce::MidiBuffer,8> stressMidi;
@@ -1297,7 +1314,7 @@ struct CountingRack {
 };
 
 void oscillatorVisualSchedulerAudit() {
-    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
+    auto processorOwner=makeLegacyProcessorFixture(); auto& processor=*processorOwner;
     CountingRack rack(processor);
     rack.resetCounters();
     for(unsigned frame=0;frame<60;++frame) rack.view.advanceVisualFrame();
@@ -1322,7 +1339,7 @@ void oscillatorVisualSchedulerAudit() {
 }
 
 void oscillatorOffscreenSchedulingAudit() {
-    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
+    auto processorOwner=makeLegacyProcessorFixture(); auto& processor=*processorOwner;
     CountingRack rack(processor);
     auto* card=rack.card(4);
     check(card!=nullptr,"fourth oscillator card exists");
@@ -1345,7 +1362,7 @@ void oscillatorOffscreenSchedulingAudit() {
 }
 
 void oscillatorInteractionDeferralAudit() {
-    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
+    auto processorOwner=makeLegacyProcessorFixture(); auto& processor=*processorOwner;
     CountingRack rack(processor);
     auto* semitone=rack.slider(1,"OSC TUNING SEM");
     check(semitone!=nullptr,"OSC1 semitone control exists");
@@ -1373,7 +1390,7 @@ void oscillatorInteractionDeferralAudit() {
 }
 
 void oscillatorRevisionSemanticsAudit() {
-    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
+    auto processorOwner=makeLegacyProcessorFixture(); auto& processor=*processorOwner;
     const auto revision=[&]{return processor.getUiOscillatorRevision();};
     auto r=revision();
     check(!processor.removeUiOscillator(99) && revision()==r,"failed oscillator delete leaves revision");
@@ -1414,7 +1431,7 @@ void oscillatorRevisionSemanticsAudit() {
 // notes play crosses into the callback without heap traffic (the previous
 // mailbox deep-copied the table in processBlock and freed the old one there).
 void wavetableCommitRealtimeAudit() {
-    auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*owner;
+    auto owner=makeLegacyProcessorFixture(); auto& p=*owner;
     p.setPlayConfigDetails(0,2,48000.0,256); p.prepareToPlay(48000.0,256);
     juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi; midi.ensureSize(4096);
     for(int n=0;n<6;++n) midi.addEvent(juce::MidiMessage::noteOn(1,48+n*3,.7f),n);
@@ -1442,7 +1459,7 @@ void wavetableCommitRealtimeAudit() {
 }
 
 void modulationKnobBaseAudit() {
-    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
+    auto processorOwner=makeLegacyProcessorFixture(); auto& processor=*processorOwner;
     auto module=processor.getUiOscillatorState(2);
     module.processCount=1;module.nextProcessId=2;
     module.processes[0]={1,dsp::OscProcessType::BendBoth,0.25f,7,true};
@@ -1550,7 +1567,7 @@ void modulationKnobBaseAudit() {
 }
 
 void matrixDynamicRouteAudit() {
-    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
+    auto processorOwner=makeLegacyProcessorFixture(); auto& processor=*processorOwner;
     auto module=processor.getUiOscillatorState(2);
     module.processCount=1;module.nextProcessId=2;
     module.processes[0]={1,dsp::OscProcessType::RandAmp,0.5f,0x12345678u,true};
@@ -1669,7 +1686,7 @@ void matrixDynamicRouteAudit() {
 // mct-origami-fx-page-foundation-p01
 void fxPageAudit() {
     using namespace mct::origami::fx;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     juce::TextButton *fxButton=nullptr,*matrixButton=nullptr,*synthButton=nullptr;
     ui::FxPage* page=nullptr;
@@ -1734,9 +1751,7 @@ void fxPageAudit() {
     check(quick!=nullptr,"effect node exposes model-backed quick controls");
     quick->setValue(0.9,juce::sendNotificationSync);
     check(std::abs(*page->graph().findNode(delay)->parameter(1)-0.9f)<1.0e-4f,"quick control writes model parameter");
-    page->selectParameterTab(2);
-    check(page->parameterTabName()=="ADVANCED","parameter tabs switch");
-    page->selectParameterTab(0);
+    check(page->inspectorViewport().getViewedComponent()!=nullptr,"unified parameter viewport exists");
 
     const auto connectionsBefore=page->graph().connections().size();
     check(page->deleteNode(delay),"delete selected node");
@@ -1758,11 +1773,9 @@ void fxPageAudit() {
     check(!page->connectPorts({page->graph().outputNode(),0},{drive,0}) && page->graph()==snapshot,
           "invalid wire leaves graph unchanged");
 
-    juce::Slider* macro=nullptr;
-    walk(*page,[&](auto& c){if(auto* s=dynamic_cast<juce::Slider*>(&c)) if(s->getName()=="FX Macro 1") macro=s;});
-    check(macro!=nullptr,"FX macro section present");
-    macro->setValue(0.7,juce::sendNotificationSync);
-    check(std::abs(p.getUiInstrumentState().modulation.macros[0]-0.7f)<1.0e-4f,"FX macros drive the canonical synth macros");
+    check(!page->macrosPanel().isVisible(),"NODES omits duplicate macro controls");
+    check(p.setUiMacro(0,0.7f) && std::abs(p.getUiInstrumentState().modulation.macros[0]-0.7f)<1.0e-4f,
+          "the canonical macro remains available to NODES routing");
 
     const auto movedTo=page->graph().findNode(delay)->position;
     editor.reset();
@@ -1776,7 +1789,7 @@ void fxPageAudit() {
 // mct-origami-fx-graph-dsp-bus-routing-p02
 void fxGraphUxAudit() {
     using namespace mct::origami::fx;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     ui::FxPage* page=nullptr;
     walk(*editor,[&](auto& c){if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) page=candidate;});
@@ -1850,7 +1863,7 @@ void fxGraphUxAudit() {
 // mct-origami-fx-modulation-graph-ux-p03
 void fxWorkspaceP03Audit() {
     using namespace mct::origami::fx;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
     check(editor!=nullptr,"Origami editor");
@@ -1861,10 +1874,10 @@ void fxWorkspaceP03Audit() {
         if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) page=candidate;
         if(auto* b=dynamic_cast<juce::TextButton*>(&c)) {
             if(b->getButtonText()=="NODES") fxTab=b;
-            if(b->getName()=="Origami utility menu") utility=b;
+            if(b->getName()=="Origami menu") utility=b;
         }
     });
-    check(page && fxTab && utility,"FX page, FX tab and utility menu present");
+    check(page && fxTab && utility,"FX page, FX tab and consolidated menu present");
     check(utility->isEnabled(),"header ... utility menu enabled");
 
     // Build BUS 1 -> DELAY -> MASTER OUT.
@@ -1932,14 +1945,11 @@ void fxWorkspaceP03Audit() {
     check(matrixListsFx,"Matrix destination menus include FX parameters");
     fxTab->onClick();
 
-    // MODULATION tab lists the routes targeting the selected effect.
+    // The unified inspector lists routes targeting the selected effect.
     page->selectNode(delay);
-    page->selectParameterTab(1);
     page->syncFromModel();
-    check(page->modulationRowCount()==2,"MODULATION tab shows ENV 1 and LFO 1 routes");
-    page->selectParameterTab(2);
-    check(page->parameterTabName()=="ADVANCED","ADVANCED tab");
-    page->selectParameterTab(0);
+    check(page->modulationRowCount()==2,"Inline modulation shows ENV 1 and LFO 1 routes");
+    check(page->inspectorViewport().getViewedComponent()!=nullptr,"advanced parameters share the inspector viewport");
 
     // Deleting the node prunes its routes: no dangling destinations.
     check(page->deleteNode(delay),"delete delay");
@@ -2010,13 +2020,14 @@ void fxWorkspaceP03Audit() {
     for(const auto& r:modulators) envDrag|=r.label=="ENV 1" && r.dragDescription=="MCT_MOD_SOURCE:1";
     check(envDrag,"MODULATORS drag the same source description as SYNTH");
     bool mainBus=false,addBus=false,mainInput=false,filterTruth=false;
+    auto withFilter=p.getUiInstrumentState().modulation;withFilter.filterEnabled=true;check(p.setUiModulationState(withFilter),"sidebar authored filter fixture");page->syncFromModel();
     for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Buses)) {
         mainBus|=r.label=="MAIN" && r.active && !r.onSecondaryClick; // selected, not deletable
         addBus|=r.label=="+ ADD BUS" && bool(r.onClick);
     }
     for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Sources)) mainInput|=r.label=="MAIN IN" && r.active;
     for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Filters))
-        filterTruth|=r.label=="FILTER 1" && r.detail.contains("before buses") && r.dragDescription=="MCT_SYNTH_FILTER:1";
+        filterTruth|=r.label=="LEGACY LP" && r.detail.contains("before buses") && r.dragDescription=="MCT_SYNTH_FILTER:0";
     check(mainBus && addBus && mainInput && filterTruth,"SOURCES / FILTERS / BUSES rows are truthful");
 
     // Clear: Origami-native confirmation, one undoable transaction.
@@ -2043,7 +2054,7 @@ void fxWorkspaceP03Audit() {
 void fxModulationAudioAudit() {
     using namespace mct::origami::fx;
     constexpr int blockSize=256;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,blockSize);
     FxNodeId limiter=0;
     p.getUiFxDocument().edit([&](FxGraph& g){limiter=g.insertEffectBeforeOutput(FxEffectType::Limiter);return limiter!=0;});
@@ -2074,7 +2085,7 @@ void fxModulationAudioAudit() {
     // master gain after the FX graph preserves the level. Fresh processors,
     // one oscillator: deterministic regardless of start phase.
     const auto orderRms=[&](FxOrder order) {
-        auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& q=*owner;
+        auto owner=makeLegacyProcessorFixture(); auto& q=*owner;
         q.prepareToPlay(48000.0,blockSize);
         disableExtraOscillators(q);
         FxGlobalSettings s=q.getUiFxWorkspace().globals();s.order=order;q.getUiFxWorkspace().setGlobals(s);
@@ -2094,7 +2105,7 @@ void fxModulationAudioAudit() {
 void busWorkspaceP04Audit() {
     using namespace mct::origami::fx;
     constexpr int blockSize=256;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,blockSize);
     disableExtraOscillators(p);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
@@ -2158,7 +2169,7 @@ void busWorkspaceP04Audit() {
     // Persistence: buses + their graphs survive save/load.
     juce::MemoryBlock saved;
     p.getStateInformation(saved);
-    auto restoredOwner=std::make_unique<OrigamiAudioProcessor>(); auto& restored=*restoredOwner;
+    auto restoredOwner=makeLegacyProcessorFixture(); auto& restored=*restoredOwner;
     restored.setStateInformation(saved.getData(),int(saved.getSize()));
     check(restored.getUiInstrumentState().buses.find(bus) && restored.getUiInstrumentState().buses.find(bus)->label()=="BUS 1"
           && restored.getUiFxWorkspace().find(bus) && restored.getUiFxWorkspace().find(bus)->graph()==p.getUiFxWorkspace().find(bus)->graph(),
@@ -2184,7 +2195,7 @@ void busWorkspaceP04Audit() {
     const auto fx=encodeFxGraph(legacyGraph);
     bytes.insert(bytes.end(),fx.begin(),fx.end());
     for(const auto word:{std::uint32_t(fx.size()),std::uint32_t(0x46584732u)}) for(int sh=24;sh>=0;sh-=8) bytes.push_back(std::uint8_t(word>>sh));
-    auto legacyOwner=std::make_unique<OrigamiAudioProcessor>(); auto& legacy=*legacyOwner;
+    auto legacyOwner=makeLegacyProcessorFixture(); auto& legacy=*legacyOwner;
     legacy.setStateInformation(bytes.data(),int(bytes.size()));
     auto expected=legacyGraph;expected.setGlobals(FxGlobalSettings{});
     check(legacy.getUiFxDocument().graph()==expected && legacy.getUiFxWorkspace().globals().outputGainDb==-6.0f,
@@ -2230,7 +2241,7 @@ void fxAudioPathAudit() {
     const auto finite=[](const juce::AudioBuffer<float>& b){for(int ch=0;ch<b.getNumChannels();++ch) for(int i=0;i<b.getNumSamples();++i) if(!std::isfinite(b.getSample(ch,i))) return false;return true;};
 
     // OSC -> filter -> BUS 1 -> FX GRAPH -> MASTER OUT, through processBlock.
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,blockSize);
     auto& document=p.getUiFxDocument();
     renderBlocks(p,4,noteOn());
@@ -2263,13 +2274,19 @@ void fxAudioPathAudit() {
     renderBlocks(p,1,noteOff());
     renderBlocks(p,int(48000*1.5)/blockSize,{});
     const float tail=blockRms(renderBlocks(p,24,{}));
-    auto neutralOwner=std::make_unique<OrigamiAudioProcessor>(); auto& neutral=*neutralOwner;
+    auto neutralOwner=makeLegacyProcessorFixture(); auto& neutral=*neutralOwner;
     neutral.prepareToPlay(48000.0,blockSize);
     renderBlocks(neutral,20,noteOn());
     renderBlocks(neutral,1,noteOff());
     renderBlocks(neutral,int(48000*1.5)/blockSize,{});
     const float neutralTail=blockRms(renderBlocks(neutral,24,{}));
     check(tail>1.0e-4f && tail>neutralTail*10.0f,"delay produces echoes after the dry note has released");
+
+    const auto graphBeforePanic=document.graph();
+    p.requestPanic();
+    const auto stopped=renderBlocks(p,2,{});
+    check(magnitude(stopped)==0.0f && document.graph()==graphBeforePanic,
+          "panic clears delay tail and preserves FX routing");
 
     document.edit([&](FxGraph& g){return g.setEnabled(delay,false)==FxEditResult::Ok;});
     renderBlocks(p,8,{});
@@ -2290,7 +2307,7 @@ void fxAudioPathAudit() {
     // State: FX graph round-trips; old states without it load neutral.
     juce::MemoryBlock saved;
     p.getStateInformation(saved);
-    auto restoredOwner=std::make_unique<OrigamiAudioProcessor>(); auto& restored=*restoredOwner;
+    auto restoredOwner=makeLegacyProcessorFixture(); auto& restored=*restoredOwner;
     restored.setStateInformation(saved.getData(),int(saved.getSize()));
     check(restored.getUiFxDocument().graph()==document.graph(),"FX graph (nodes, params, bypass, layout, globals) persists");
     const auto legacy=encodeInstrumentState(p.getUiInstrumentState());
@@ -2315,7 +2332,7 @@ void fxAudioPathAudit() {
 // shared card fed from the same canonical routes.
 void modulationRowConsistencyAudit() {
     using mct::origami::ModSource;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
@@ -2412,9 +2429,10 @@ void modulationRowConsistencyAudit() {
 // state compatibility.
 void nodesN01Audit() {
     using namespace mct::origami;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
+    {auto m=p.getUiInstrumentState().modulation;m.filterEnabled=true;check(p.setUiModulationState(m),"Nodes destination fixture includes a filter");}
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
     ui::FxPage* page=nullptr;
@@ -2446,13 +2464,14 @@ void nodesN01Audit() {
     check(sidebar.getBottom()==page->getHeight() && sidebar.getBottom()==page->moduleParametersPanel().getBottom(),
           "sidebar runs to the bottom of the workspace (top of the keyboard)");
     check(page->moduleParametersPanel().getName()=="MODULE PARAMETERS" && page->moduleParametersPanel().getX()>=sidebar.getRight()
-          && page->macrosPanel().getX()>=page->moduleParametersPanel().getRight(),"MODULE PARAMETERS + MACROS sit beside the sidebar");
+          && page->moduleParametersPanel().getRight()==page->getWidth() && !page->macrosPanel().isVisible(),
+          "MODULE PARAMETERS spans the graph width without duplicate macros");
     bool oldPanels=false;
     walk(*page,[&](auto& c){oldPanels|=c.getName()=="SELECTED EFFECT" || c.getName()=="EFFECT PARAMETERS";});
     check(!oldPanels,"no separate SELECTED EFFECT / EFFECT PARAMETERS panels");
     const auto filter=page->addEffect(fx::FxEffectType::Filter);
     page->selectNode(filter);
-    check(page->inspectorHeadline()=="FILTER" && page->parameterTabName()=="MAIN","MODULE PARAMETERS follows selection");
+    check(page->inspectorHeadline()=="FILTER","MODULE PARAMETERS follows selection");
 
     // New route defaults: ON / UNIPOLAR / no source / no destination / 0%.
     const auto routeById=[&](std::uint32_t id) {
@@ -2561,7 +2580,7 @@ void nodesN01Audit() {
         p.getStateInformation(state);
         std::array<std::unique_ptr<OrigamiAudioProcessor>,2> twins;
         for(auto& t:twins) {
-            t=std::make_unique<OrigamiAudioProcessor>();
+            t=makeLegacyProcessorFixture();
             t->prepareToPlay(48000.0,256);
             t->setStateInformation(state.getData(),int(state.getSize()));
         }
@@ -2627,7 +2646,7 @@ void nodesN01Audit() {
 // is compiled settled. Saved state is equal; only the first block differs.
 void deterministicRenderAudit() {
     using namespace mct::origami;
-    const auto make=[]{ auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256); disableExtraOscillators(*q); return q; };
+    const auto make=[]{ auto q=makeLegacyProcessorFixture(); q->prepareToPlay(48000.0,256); disableExtraOscillators(*q);auto m=q->getUiInstrumentState().modulation;m.filterEnabled=true;check(q->setUiModulationState(m),"deterministic authored filter fixture"); return q; };
     const auto render=[](OrigamiAudioProcessor& q,int blocks,const std::function<void()>& perBlock={}) {
         std::vector<float> out;
         juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi;
@@ -2645,7 +2664,7 @@ void deterministicRenderAudit() {
     };
     const auto clone=[&](OrigamiAudioProcessor& q) {
         juce::MemoryBlock st; q.getStateInformation(st);
-        auto t=std::make_unique<OrigamiAudioProcessor>(); t->prepareToPlay(48000.0,256);
+        auto t=makeLegacyProcessorFixture(); t->prepareToPlay(48000.0,256);
         t->setStateInformation(st.getData(),int(st.getSize()));
         juce::MemoryBlock back; t->getStateInformation(back);
         check(back==st,"save -> load -> save is byte-identical");
@@ -2705,9 +2724,10 @@ void deterministicRenderAudit() {
 // SYNTH drag, MATRIX and NODES are three views of ONE modulation relationship.
 void nodesN03Audit() {
     using namespace mct::origami;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
+    {auto m=p.getUiInstrumentState().modulation;m.filterEnabled=true;check(p.setUiModulationState(m),"Nodes picker fixture includes a filter");}
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
     editor->setVisible(true);
@@ -2784,7 +2804,7 @@ void nodesN03Audit() {
     // 14-16. State: relationships live in the instrument; NODES adds positions only.
     {
         juce::MemoryBlock saved; p.getStateInformation(saved);
-        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256);
+        auto copy=makeLegacyProcessorFixture(); copy->prepareToPlay(48000.0,256);
         copy->setStateInformation(saved.getData(),int(saved.getSize()));
         int found=0; for(const auto& r:copy->getUiInstrumentState().modulation.routes) found+=r.id==id && r.source==ModSource::Lfo1 && r.destination==cutoff;
         check(found==1,"save/load preserves the relationship (as a ModRoute)");
@@ -2795,9 +2815,9 @@ void nodesN03Audit() {
         for(auto& r:mod.routes) if(r.id==id) r.amount=0.9f;
         check(p.setUiModulationState(mod) && p.getUiControlLayout().encode()==layoutBytes,"route edits never touch NODES view data (no duplicate state)");
         // Pre-N03 state (no NCL1 trailer) loads with the default layout.
-        auto legacy=std::make_unique<OrigamiAudioProcessor>(); legacy->prepareToPlay(48000.0,256);
+        auto legacy=makeLegacyProcessorFixture(); legacy->prepareToPlay(48000.0,256);
         juce::MemoryBlock plain; legacy->getStateInformation(plain);
-        auto restored=std::make_unique<OrigamiAudioProcessor>(); restored->prepareToPlay(48000.0,256);
+        auto restored=makeLegacyProcessorFixture(); restored->prepareToPlay(48000.0,256);
         restored->setStateInformation(plain.getData(),int(plain.getSize()));
         juce::MemoryBlock back; restored->getStateInformation(back);
         check(restored->getUiControlLayout().entries().empty() && back==plain,"states without CONTROL view data load and save unchanged");
@@ -2857,7 +2877,7 @@ void nodesN03Audit() {
 void nodesN04Audit() {
     using namespace mct::origami;
     using T=ControlOpType;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
@@ -2981,7 +3001,7 @@ void nodesN04Audit() {
     // 5. Save / load: operators + processed routes + positions.
     {
         juce::MemoryBlock saved; p.getStateInformation(saved);
-        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256);
+        auto copy=makeLegacyProcessorFixture(); copy->prepareToPlay(48000.0,256);
         copy->setStateInformation(saved.getData(),int(saved.getSize()));
         const auto restored=copy->getUiInstrumentState().modulation;
         const auto live=mod();
@@ -3014,7 +3034,7 @@ void nodesN05Audit() {
     using namespace mct::origami;
     using T=ControlOpType;
     using E=nodes::ControlEndpoint;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
@@ -3120,7 +3140,7 @@ void nodesN05Audit() {
     check([&]{ int n=0; for(const auto& o:mod().operators) n+=o.id!=0; return n; }()==ops,"adding an event node is undoable");
     {
         juce::MemoryBlock saved; p.getStateInformation(saved);
-        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256);
+        auto copy=makeLegacyProcessorFixture(); copy->prepareToPlay(48000.0,256);
         copy->setStateInformation(saved.getData(),int(saved.getSize()));
         const auto restored=copy->getUiInstrumentState().modulation; const auto live=mod();
         bool same=true;
@@ -3138,7 +3158,7 @@ void nodesN06Audit() {
     using namespace mct::origami;
     using T=ControlOpType;
     using E=nodes::ControlEndpoint;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
@@ -3316,7 +3336,7 @@ void nodesN06Audit() {
     // ---- save / load (v30) and legacy behaviour -------------------------------
     {
         juce::MemoryBlock saved; p.getStateInformation(saved);
-        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256);
+        auto copy=makeLegacyProcessorFixture(); copy->prepareToPlay(48000.0,256);
         copy->setStateInformation(saved.getData(),int(saved.getSize()));
         const auto restored=copy->getUiInstrumentState().modulation; const auto live=mod();
         bool same=true;
@@ -3342,7 +3362,7 @@ void nodesN07Audit() {
     using namespace mct::origami;
     using T=ControlOpType;
     using E=nodes::ControlEndpoint;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
@@ -3430,7 +3450,7 @@ void nodesN07Audit() {
         // Rendering is identical with NODES visible or hidden.
         auto state=p.getUiInstrumentState();
         const auto renderFresh=[&](bool visible) {
-            auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256); disableExtraOscillators(*q);
+            auto q=makeLegacyProcessorFixture(); q->prepareToPlay(48000.0,256); disableExtraOscillators(*q);
             q->setUiModulationState(state.modulation);
             auto ed=std::unique_ptr<juce::AudioProcessorEditor>(q->createEditor()); ed->setVisible(true);
             juce::TextButton* nb=nullptr; walk(*ed,[&](auto& c){ if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="NODES" && !nb) nb=b; });
@@ -3546,7 +3566,7 @@ void nodesN07Audit() {
         page->redo();
         check(opCount()==before+2,"and redoes");
         juce::MemoryBlock saved; p.getStateInformation(saved);
-        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256); copy->setStateInformation(saved.getData(),int(saved.getSize()));
+        auto copy=makeLegacyProcessorFixture(); copy->prepareToPlay(48000.0,256); copy->setStateInformation(saved.getData(),int(saved.getSize()));
         check(copy->getUiInstrumentState().modulation.operators==mod().operators,"pasted graphs survive save/load");
         page->undo();
         // Duplicate: below the original, selected, parameters copied, no connections.
@@ -3682,7 +3702,7 @@ void nodesN07Audit() {
         page->redo(); page->redo(); page->redo();
         check(std::abs(mod().sequencer.steps[5]-0.6f)<1e-4f && findControlOperator(mod(),*seq)->params[0]==1.0f,"redo replays the edit and the clock ownership");
         juce::MemoryBlock saved; p.getStateInformation(saved);
-        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256); copy->setStateInformation(saved.getData(),int(saved.getSize()));
+        auto copy=makeLegacyProcessorFixture(); copy->prepareToPlay(48000.0,256); copy->setStateInformation(saved.getData(),int(saved.getSize()));
         check(copy->getUiInstrumentState().modulation.sequencer.steps==mod().sequencer.steps,"the sequence round-trips through save/load");
     }
     // ---- UI cost measurements (printed; dense 32-node graph) -------------------
@@ -3755,7 +3775,7 @@ void nodesMenuHierarchyAudit() {
     }
 
     // ---- the real Add Module catalog ----------------------------------------
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
@@ -3775,35 +3795,36 @@ void nodesMenuHierarchyAudit() {
         }
     };
     dump(tree,0);
-    check(names(tree)==juce::StringArray("EFFECTS","ROUTING","SOURCES","CONTROL","EVENT","SEQUENCING"),"top level: EFFECTS ROUTING SOURCES CONTROL EVENT SEQUENCING (no slash paths)");
+    check(names(tree)==juce::StringArray("AUDIO","CONTROL","EVENTS","LOGIC / GENERATIVE"),"producer-facing AUDIO CONTROL EVENTS LOGIC / GENERATIVE roots");
     bool slashFree=true,emptyFree=true;
     std::function<void(const ui::NativeChoiceNode&)> walkTree=[&](const ui::NativeChoiceNode& n) {
         for(const auto& c:n.children) { emptyFree&=c.name.trim().isNotEmpty() && !c.empty(); walkTree(c); }
         for(const auto& i:n.items) emptyFree&=i.text.trim().isNotEmpty();
     };
     walkTree(tree);
-    for(const auto& c:tree.children) slashFree&=!c.name.contains("/");
+    for(const auto& c:tree.children) slashFree&=!c.name.contains(" / ") || c.name=="LOGIC / GENERATIVE";
     check(slashFree && emptyFree,"no top-level path labels, no blank category or blank item (the \"CONTROL /\" ghost is gone)");
-    const auto* effects=find(tree,"EFFECTS");
-    check(effects && names(*effects)==juce::StringArray("DYNAMICS","FILTER / EQ","DISTORTION","MODULATION","SPATIAL","TIME","UTILITY") && effects->items.empty(),
-          "EFFECTS > DYNAMICS, FILTER / EQ (one canonical category), DISTORTION, MODULATION, SPATIAL, TIME, UTILITY");
+    const auto* audio=find(tree,"AUDIO");
+    const auto* effects=audio ? find(*audio,"EFFECTS") : nullptr;
+    check(effects && names(*effects)==juce::StringArray("DYNAMICS","FILTER / EQ","DISTORTION","MODULATION","SPECTRAL","SPATIAL","TIME","UTILITY") && effects->items.empty(),
+          "EFFECTS > DYNAMICS, FILTER / EQ (one canonical category), DISTORTION, MODULATION, SPECTRAL, SPATIAL, TIME, UTILITY");
     const auto* control=find(tree,"CONTROL");
-    check(control && names(*control)==juce::StringArray("SOURCES","MATH","SHAPING","UTILITY") && control->items.size()==1 && control->items[0].text=="Parameter...",
-          "CONTROL > [Parameter...] + SOURCES, MATH, SHAPING, UTILITY");
-    const auto* event=find(tree,"EVENT");
-    check(event && names(*event)==juce::StringArray("SOURCES","CONVERSION","LOGIC","STATEFUL","TARGETS") && event->items.empty(),"EVENT > SOURCES, CONVERSION, LOGIC, STATEFUL, TARGETS");
-    const auto* seq=find(tree,"SEQUENCING");
-    check(seq && names(*seq)==juce::StringArray("SEQUENCING","GENERATIVE"),"SEQUENCING > SEQUENCING, GENERATIVE (canonical category names)");
+    check(control && names(*control)==juce::StringArray("MODULATION SOURCES","MATH","SHAPING","UTILITY","UTILITIES"),
+          "CONTROL groups sources, processors, and parameter utility");
+    const auto* event=find(tree,"EVENTS");
+    check(event && names(*event)==juce::StringArray("NOTE / GATE / TRIGGER","TRANSPORT","TARGETS"),"EVENTS groups note, transport, and target nodes");
+    const auto* seq=find(tree,"LOGIC / GENERATIVE");
+    check(seq && names(*seq)==juce::StringArray("CONVERSION","LOGIC","STATEFUL","SEQUENCING","GENERATIVE"),"logic and generative processors are grouped by use");
     int ops=0; for(const auto& i:catalog) ops+=i.id>=ui::FxModuleMenu::controlOperatorBase;
     check(ops==14+21+9,"every catalog node appears exactly once (14 CONTROL + 21 EVENT + 9 SEQUENCING)");
     // 9: search stays flat, with category context.
     page->showNodePalette(fx::FxPoint{600.0f,700.0f});
     auto& palette=page->nodePalette();
     palette.setQuery("prob");
-    check(!palette.results().empty() && palette.results().front().label=="PROBABILITY" && palette.results().front().group=="SEQUENCING > GENERATIVE",
-          "search is flat: \"prob\" -> PROBABILITY directly, with \"SEQUENCING > GENERATIVE\" context");
+    check(!palette.results().empty() && palette.results().front().label=="PROBABILITY" && palette.results().front().group=="LOGIC / GENERATIVE > GENERATIVE",
+          "search is flat: probability has generative context");
     palette.setQuery("distortion");
-    bool drive=false; for(const auto& r:palette.results()) drive|=r.group=="EFFECTS > DISTORTION";
+    bool drive=false; for(const auto& r:palette.results()) drive|=r.group=="AUDIO > EFFECTS > DISTORTION";
     check(drive,"searching a category name finds its modules (EFFECTS > DISTORTION)");
     palette.dismiss();
     // 10: cable-drop filtering before the tree: only compatible, no empty branches.
@@ -3833,15 +3854,47 @@ void nodesMenuHierarchyAudit() {
     page->addControlOperator(T::Sequencer);
     bool disabled=false; juce::String reason;
     const auto after=ui::buildNativeChoiceTree(page->moduleMenuItems(true));
-    if(const auto* family=find(after,"SEQUENCING")) if(const auto* category=find(*family,"SEQUENCING"))
+    if(const auto* family=find(after,"LOGIC / GENERATIVE")) if(const auto* category=find(*family,"SEQUENCING"))
         for(const auto& i:category->items) if(i.text=="SEQUENCER") { disabled=!i.enabled; reason=i.tooltip; }
     check(disabled && reason.contains("one sequencer"),"a second SEQUENCER stays disabled in the tree, with its reason");
+}
+
+// NODES P03: node telemetry is published only while NODES is on screen.
+void nodesTelemetryVisibilityAudit() {
+    using namespace mct::origami;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    fx::FxNodeId gain=fx::invalidFxNodeId;
+    p.getUiFxDocument().edit([&](fx::FxGraph& g){ gain=g.insertEffectBeforeOutput(fx::FxEffectType::Gain); return gain!=fx::invalidFxNodeId; });
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi,none;
+    midi.addEvent(juce::MidiMessage::noteOn(1,60,0.9f),0);
+    const auto block=[&](juce::MidiBuffer& m){ audio.clear(); p.processBlock(audio,m); m.clear(); };
+    const auto sequence=[&]{ return p.consumeUiFxNodeTelemetry(mainBusId,gain).sequence; };
+    block(midi); block(none);
+    check(gain!=fx::invalidFxNodeId && !p.consumeUiFxNodeTelemetry(mainBusId,gain).valid,"no editor: no node telemetry is published");
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::OrigamiHeader* header=nullptr; walk(*editor,[&](juce::Component& c){ if(auto* h=dynamic_cast<ui::OrigamiHeader*>(&c)) header=h; });
+    block(none);
+    check(!p.consumeUiFxNodeTelemetry(mainBusId,gain).valid,"SYNTH page: NODES hidden, nothing published");
+    header->selectMode(2);
+    block(none); const auto first=sequence(); block(none);
+    check(first>0 && sequence()>first,"NODES shown: the node publishes every block");
+    header->selectMode(0);
+    const auto frozen=sequence(); block(none); block(none);
+    check(sequence()==frozen,"NODES hidden again: publication stops");
+    header->selectMode(2); block(none);
+    check(sequence()>frozen,"shown again: publication resumes");
+    editorOwner.reset();
+    const auto closed=sequence(); block(none); block(none);
+    check(sequence()==closed,"closing the editor stops publication (no orphaned telemetry)");
 }
 
 // mct-origami-manual-qa-ui-wavetable-fixes: BEND fields, MAIN IN meters, macro X.
 void manualQaUiAudit() {
     using namespace mct::origami;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
@@ -3968,7 +4021,7 @@ void manualQaUiAudit() {
 void wavetableEditorCommitAudit() {
     using namespace mct::origami;
     using Command=ui::FrameTools::Command;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer none;
@@ -4053,7 +4106,7 @@ void wavetableEditorCommitAudit() {
     // 16: save -> reload keeps the edits.
     juce::MemoryBlock session; p.getStateInformation(session);
     {
-        auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256);
+        auto q=makeLegacyProcessorFixture(); q->prepareToPlay(48000.0,256);
         q->setStateInformation(session.getData(),int(session.getSize()));
         check(q->getUiOscillatorWavetable(osc1).data && q->getUiOscillatorWavetable(osc1).data->samples==structural.samples
               && q->getUiOscillatorWavetable(osc2).data && q->getUiOscillatorWavetable(osc2).data->samples[100]==-0.5f,"edit -> X -> save -> reload preserves both edits");
@@ -4108,7 +4161,7 @@ void contentBrowserAudit() {
     using content::ContentType;
     juce::SharedResourcePointer<ui::UserPreferences> preferences;
     const bool previousCapture=preferences->captureKeyboardInput();
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi,none;
@@ -4154,7 +4207,7 @@ void contentBrowserAudit() {
     check(browser.selectId(murphy.id) && browser.loadSelected() && !editor->contentBrowserOpen(),"select + LOAD loads and closes");
     check(encodeInstrumentState(p.getUiInstrumentState())==murphyState,"browser load reproduces the saved instrument exactly");
     {
-        auto direct=std::make_unique<OrigamiAudioProcessor>(); direct->prepareToPlay(48000.0,256);
+        auto direct=makeLegacyProcessorFixture(); direct->prepareToPlay(48000.0,256);
         juce::MemoryBlock bytes; check(library.loadPresetState(*library.find(murphy.id),bytes),"preset bytes");
         direct->setStateInformation(bytes.getData(),int(bytes.getSize()));
         check(encodeInstrumentState(direct->getUiInstrumentState())==murphyState,"browser load == direct setStateInformation of the same file");
@@ -4166,7 +4219,7 @@ void contentBrowserAudit() {
     auto edited=*library.find(murphy.id); edited.description="Edited words"; edited.tags.add("edited");
     check(library.updateMetadata(edited).wasOk(),"metadata edit");
     { juce::MemoryBlock a; library.loadPresetState(*library.find(murphy.id),a);
-      auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256); q->setStateInformation(a.getData(),int(a.getSize()));
+      auto q=makeLegacyProcessorFixture(); q->prepareToPlay(48000.0,256); q->setStateInformation(a.getData(),int(a.getSize()));
       check(encodeInstrumentState(q->getUiInstrumentState())==murphyState,"favorite / description / tags leave the DSP state unchanged"); }
     // Factory is read-only: SAVE over INIT creates a user preset.
     editor->loadPresetRecord(*library.find(content::ContentLibrary::initPresetId));
@@ -4256,7 +4309,7 @@ void contentBrowserAudit() {
     // Patches stay self-contained: tables travel in the state.
     juce::MemoryBlock session; p.getStateInformation(session);
     {
-        auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256);
+        auto q=makeLegacyProcessorFixture(); q->prepareToPlay(48000.0,256);
         q->setStateInformation(session.getData(),int(session.getSize()));
         check(q->getUiOscillatorWavetable(osc1).data && q->getUiOscillatorWavetable(osc1).data->samples==metal.samples && q->getUiOscillatorWavetable(osc1).contentId==metalId
               && q->getUiOscillatorWavetable(osc2).data && q->getUiOscillatorWavetable(osc2).data->samples==custom.samples,"saved state restores every oscillator's table (no library needed)");
@@ -4399,7 +4452,7 @@ void captureKeyboardInputAudit() {
         { ui::UserPreferences b(temp.getFile()); check(b.captureKeyboardInput(),"ON persists across sessions / instances"); b.setCaptureKeyboardInput(false); }
         { ui::UserPreferences c(temp.getFile()); check(!c.captureKeyboardInput(),"OFF persists too"); }
     }
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
@@ -4461,7 +4514,7 @@ void captureKeyboardInputAudit() {
 // Matrix labels / availability (K) and SYNTH X / Y drops (L).
 void nestedModulationUiAudit() {
     using namespace mct::origami;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     disableExtraOscillators(p);
     juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi;
@@ -4510,7 +4563,7 @@ void nestedModulationUiAudit() {
           "rename reaches the DAW name (parameter info changed), id unchanged");
     juce::MemoryBlock saved; p.getStateInformation(saved);
     {
-        auto qOwner=std::make_unique<OrigamiAudioProcessor>(); auto& q=*qOwner; q.prepareToPlay(48000.0,256);
+        auto qOwner=makeLegacyProcessorFixture(); auto& q=*qOwner; q.prepareToPlay(48000.0,256);
         q.setStateInformation(saved.getData(),int(saved.getSize()));
         bool route=false; for(const auto& r:q.getUiInstrumentState().modulation.routes) route|=r.id==toMacro && r.destination==macroValueAddress(1);
         check(q.getUiMacroName(0)=="Wobble" && q.macroParameter(0)->getName(64)=="Wobble" && std::abs(q.macroParameter(0)->get()-0.3f)<1.0e-6f && route,
@@ -4670,7 +4723,7 @@ void nestedModulationUiAudit() {
 // mct-origami-synth-dynamic-macros
 void synthDynamicMacrosAudit() {
     using namespace mct::origami;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
@@ -4693,11 +4746,11 @@ void synthDynamicMacrosAudit() {
     // mct-origami-nested-modulation-manual-qa: the DAW sees one stable,
     // immutable parameter per macro slot (macro.1 .. macro.16).
     {
-        bool ids=p.getParameters().size()==int(maxMacros);
-        for(int i=0;ids && i<p.getParameters().size();++i)
+        bool ids=p.getParameters().size()==int(maxMacros)+1;
+        for(int i=0;ids && i<int(maxMacros);++i)
             if(auto* withId=dynamic_cast<juce::AudioProcessorParameterWithID*>(p.getParameters()[i])) ids=withId->getParameterID()=="macro."+juce::String(i+1);
             else ids=false;
-        check(ids,"16 host macro parameters with immutable IDs macro.1 .. macro.16");
+        check(ids && p.finalOutputParameter()->getParameterID()=="output.master","stable 16 macro IDs plus independent final output host parameter");
     }
     const auto a5=panel->addMacro();
     check(a5==5 && macroActive(mod(),5) && panel->cardCount()==5,"add MACRO 5");
@@ -4783,12 +4836,12 @@ void synthDynamicMacrosAudit() {
     // ---- save / reload / legacy ---------------------------------------------
     {
         juce::MemoryBlock saved; p.getStateInformation(saved);
-        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256); copy->setStateInformation(saved.getData(),int(saved.getSize()));
+        auto copy=makeLegacyProcessorFixture(); copy->prepareToPlay(48000.0,256); copy->setStateInformation(saved.getData(),int(saved.getSize()));
         const auto r=copy->getUiInstrumentState().modulation;
         bool same=r.macroMask==mod().macroMask && r.macros==mod().macros;
         for(std::size_t i=0;i<r.routes.size();++i) same&=r.routes[i].id==mod().routes[i].id && r.routes[i].source==mod().routes[i].source;
         check(same && encodeInstrumentState(p.getUiInstrumentState())[7]==31,"dynamic macros (set, ids, values, routes) survive save / reload (v31)");
-        auto legacy=std::make_unique<OrigamiAudioProcessor>(); legacy->prepareToPlay(48000.0,256);
+        auto legacy=makeLegacyProcessorFixture(); legacy->prepareToPlay(48000.0,256);
         auto ls=legacy->getUiInstrumentState(); ls.modulation.macros[2]=0.7f;
         ls.modulation.routes[0]={1,true,ModSource::Macro3,{ModDestination::Cutoff,0,0},0.5f,false}; ls.modulation.nextRouteId=2;
         const auto bytes=encodeInstrumentState(ls);
@@ -4801,6 +4854,7 @@ void synthDynamicMacrosAudit() {
         const auto renderWith=[&](std::size_t id,float value) {
             auto e=std::make_unique<OrigamiEngine>(); e->prepare(48000.0,512,2);
             auto s=e->instrumentState().modulation;
+            s.filterEnabled=true; // This macro regression authors a filter destination.
             s.macroMask=std::uint16_t(s.macroMask|(1u<<(id-1))); s.macros[id-1]=value;
             s.routes[0]={1,true,macroSource(id),{ModDestination::Cutoff,0,0},0.8f,false}; s.nextRouteId=2;
             e->setModulationState(s); e->noteOn(60,0.9f);
@@ -4862,7 +4916,7 @@ void synthDynamicMacrosAudit() {
     }
     // ---- cross-view: Init -> add 5 -> assign -> Matrix -> NODES -> amount -> remove -> undo -> save -> reload
     {
-        auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256);
+        auto q=makeLegacyProcessorFixture(); q->prepareToPlay(48000.0,256);
         auto ed=std::unique_ptr<juce::AudioProcessorEditor>(q->createEditor()); ed->setVisible(true);
         auto* qe=dynamic_cast<OrigamiAudioProcessorEditor*>(ed.get());
         ui::MacroPanel* mp=nullptr; ui::ModulationMatrix* mx=nullptr; ui::FxPage* fp=nullptr;
@@ -4917,7 +4971,7 @@ void synthDynamicMacrosAudit() {
 // mct-origami-lfo-editor-controls: TOOLS / FUNC strip, icons, grid, snap.
 void lfoEditorControlsAudit() {
     using namespace mct::origami;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
@@ -4936,7 +4990,7 @@ void lfoEditorControlsAudit() {
     const auto lfo2=[&]{ return mod().lfo2; };
 
     // ---- assets: compiled in, parsed once, tinted in code ------------------
-    for(int i=0;i<static_cast<int>(ui::IconId::Count);++i) {
+    for(int i=0;i<static_cast<int>(ui::IconId::PresetPrevious);++i) {
         const auto id=static_cast<ui::IconId>(i);
         int size=0; const char* data=BinaryData::getNamedResource(ui::iconResourceName(id),size);
         const auto& icon=ui::icon(id);
@@ -5246,7 +5300,7 @@ void lfoEditorControlsAudit() {
 
     // ---- preset compatibility ----------------------------------------------
     {
-        auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256);
+        auto q=makeLegacyProcessorFixture(); q->prepareToPlay(48000.0,256);
         const auto init=encodeInstrumentState(q->getUiInstrumentState());
         auto s=q->getUiInstrumentState();
         s.modulation.lfo1.mode=LfoMode::Loop; s.modulation.lfo1.rateHz=3.3f;
@@ -5263,9 +5317,9 @@ void lfoEditorControlsAudit() {
         qs->lfoStrip().setRateUnit(ui::LfoControlStrip::RateUnit::Beats); qs->lfoStrip().setGrid(32,16);
         check(encodeInstrumentState(q->getUiInstrumentState())==legacy,"opening / browsing the LFO editor leaves an existing preset byte-identical");
         check(init[7]==legacy[7] && init[7]<31,"no new save version");
-        auto r=std::make_unique<OrigamiAudioProcessor>(); r->prepareToPlay(48000.0,256);
+        auto r=makeLegacyProcessorFixture(); r->prepareToPlay(48000.0,256);
         r->setStateInformation(legacy.data(),static_cast<int>(legacy.size()));
-        auto r2=std::make_unique<OrigamiAudioProcessor>(); r2->prepareToPlay(48000.0,256);
+        auto r2=makeLegacyProcessorFixture(); r2->prepareToPlay(48000.0,256);
         r2->setStateInformation(legacy.data(),static_cast<int>(legacy.size()));
         auto ed2=std::unique_ptr<juce::AudioProcessorEditor>(r2->createEditor());
         const auto a=renderNote(*r,60,.8f,4096), b=renderNote(*r2,60,.8f,4096);
@@ -5442,7 +5496,7 @@ std::vector<GlyphRun> recordGlyphs(juce::Component& editor,const std::string& pa
 // mct-origami-ui-legibility-cleanup: macro grid structure + OSC header geometry.
 void macroGridAndOscHeaderAudit() {
     using namespace mct::origami;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
@@ -5544,7 +5598,7 @@ void macroGridAndOscHeaderAudit() {
 
 void typographyAudit() {
     using namespace mct::origami;
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,256);
     auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
@@ -5678,11 +5732,17 @@ void nodesVisualFeedbackAudit() {
     auto range=ui::fxKnobModulationRange(.5f,address,state.modulation,ModSource::Lfo1);
     check(!range.anyRoute && !range.hasDepth,"unmodulated FX knob has no overlay");
     state.modulation.routes[0]={1,true,ModSource::Lfo1,address,.4f,true};
+    const auto previousSelectedSource=ui::modulationUiTelemetry().selectedSource;
+    ui::modulationUiTelemetry().selectedSource=ModSource::Lfo1;
     page->syncFromModel();
+    const auto compiledRange=ui::fxKnobModulationRange(float(knob->getValue()),address,page->visualModulation(),ModSource::Lfo1);
+    check(compiledRange.anyRoute && compiledRange.hasDepth && compiledRange.selected,
+          "FX modulation visual model receives canonical route before pixel audit");
     const double base=knob->getValue();
     const auto slot=modulationSourceSlot(ModSource::Lfo1,state.modulation);
     visual.routeSources[slot]=-1;
     page->refreshVisualFeedback();
+    knob->repaint();
     const auto negative=hash(*knob);
     const auto saveNode=[&](const char* name) {
         if(const char* folder=std::getenv("ORIGAMI_NODES_VISUAL_REPORT")) {
@@ -5694,6 +5754,7 @@ void nodesVisualFeedbackAudit() {
     saveNode("modulation-negative");
     visual.routeSources[slot]=1;
     page->refreshVisualFeedback();
+    knob->repaint();
     check(negative!=bare && negative!=hash(*knob),"FX modulation arc appears and effective dot moves");
     // P01 geometry: modulation must live on a visibly separate outer radial
     // track instead of painting over the authored white magnitude arc.
@@ -5782,10 +5843,207 @@ void nodesVisualFeedbackAudit() {
             }
         }
     }
+    ui::modulationUiTelemetry().selectedSource=previousSelectedSource;
     page->setLookAndFeel(nullptr);
 }
 
+void correctiveViewportAudit() {
+    auto owner=makeLegacyProcessorFixture();auto& p=*owner;
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    ui::OscillatorCard* card=nullptr;
+    walk(*editor,[&](juce::Component& c){if(auto* x=dynamic_cast<ui::OscillatorCard*>(&c)) if(x->id()==1) card=x;});
+    check(card!=nullptr,"viewport renderer available");
+    juce::Image image(juce::Image::ARGB,card->getWidth(),card->getHeight(),true);juce::Graphics g(image);
+    auto m=p.getUiOscillatorState(1);m.processCount=1;m.nextProcessId=2;
+    auto previousTelemetry=ui::modulationUiTelemetry();ui::modulationUiTelemetry()={};
+    for(const auto type:{dsp::OscProcessType::RandAmp,dsp::OscProcessType::RandSparse}) {
+        for(int boundary:{1,3,8,16,24,31}) {
+            const auto paintAmount=[&](float amount) {
+                m.processes[0]={1,type,amount,0xabcdefu,true};check(p.setUiOscillatorState(1,m),"viewport process amount accepted");
+                rack(*editor).syncFromModel();card->paintEntireComponent(g,true);
+                check(card->viewportProcessPlan().stages[0].amount==amount,"viewport uses continuous canonical amount");
+                return card->viewportWaveform();
+            };
+            const float amount=float(boundary)/32;
+            const auto left=paintAmount(amount-1e-5f),right=paintAmount(amount+1e-5f);
+            float delta=0;for(std::size_t i=0;i<left.size();++i) delta=std::max(delta,std::abs(left[i]-right[i]));
+            check(delta<.002f,"painted viewport does not snap across spectral preparation boundaries");
+        }
+    }
+    m.processCount=0;check(p.setUiOscillatorState(1,m),"viewport bare saw fixture");rack(*editor).syncFromModel();card->paintEntireComponent(g,true);
+    juce::Path::Iterator it(card->viewportStroke());int moves=0,lines=0,closes=0;float previousY=0,lastJump=0;
+    while(it.next()) {
+        if(it.elementType==juce::Path::Iterator::startNewSubPath) {++moves;previousY=it.y1;}
+        else if(it.elementType==juce::Path::Iterator::lineTo) {++lines;lastJump=std::abs(it.y1-previousY);previousY=it.y1;}
+        else if(it.elementType==juce::Path::Iterator::closePath) ++closes;
+    }
+    check(moves==1 && lines==383 && closes==0,"visible waveform stroke has exactly the sample polyline and no closing geometry");
+    check(lastJump<float(card->getHeight())*.02f,"visible saw has no artificial terminal jump to phase zero/baseline");
+    ui::modulationUiTelemetry()=previousTelemetry;
+}
+
+void correctivePassUiAudit() {
+    auto owner=makeLegacyProcessorFixture();auto& p=*owner;
+    check(!p.getUiInstrumentState().modulation.filterEnabled,"fresh plugin has no filter module");
+    auto m=p.getUiInstrumentState().modulation;
+    std::vector<ModSource> sources;
+    for(const auto family:{SourceFamily::Envelope,SourceFamily::Lfo,SourceFamily::Random})
+        for(int n=0;n<6;++n) sources.push_back(addSourceInstance(m,family));
+    check(p.setUiModulationState(m),"many independent sources accepted by plugin");
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    ui::ModulationPanel* panel=nullptr;
+    walk(*editor,[&](juce::Component& c){if(auto* x=dynamic_cast<ui::ModulationPanel*>(&c)) panel=x;});
+    check(panel!=nullptr,"source editor available");panel->syncFromModel();
+    for(const auto source:sources) {
+        check(panel->sourceRow(source)!=nullptr,"every instance has an identity-bearing source row");
+        check(panel->selectSource(source),"every additional source selects its family editor");
+    }
+    const auto lfo=sources[6];check(panel->selectSource(lfo),"additional LFO selected");
+    panel->lfoStrip().rateKnob().setValue(4.0,juce::sendNotificationSync);
+    const auto edited=p.getUiInstrumentState().modulation;
+    check(edited.lfo1.rateHz==m.lfo1.rateHz,"instance editor preserves legacy LFO settings");
+    check(findSourceInstance(edited,lfo)->lfo.rateHz!=m.instances[6].lfo.rateHz,"instance editor writes only selected identity");
+    const auto added=panel->addSource(SourceFamily::Envelope);
+    check(added!=ModSource::None && panel->sourceRow(added) && panel->selectSource(added),"plus action instantiates another ENV with a usable row/editor");
+    ui::FxPage* nodesPage=nullptr;walk(*editor,[&](juce::Component& c){if(auto* x=dynamic_cast<ui::FxPage*>(&c)) nodesPage=x;});
+    check(nodesPage && nodesPage->addControlSource(added),"Nodes accepts a new source instance");
+    const auto connected=nodesPage->connectControl(added,{ModDestination::Level,1,0});
+    check(connected.result==nodes::ControlLinkResult::Ok,"new ENV connects to oscillator level in Nodes");
+    auto op=nodesPage->addControlOperator(ControlOpType::Add);
+    check(op && nodesPage->connectControlEdge(nodes::ControlEndpoint::fromSource(lfo),nodes::ControlEndpoint::toInput(*op,0)).result==nodes::ControlLinkResult::Ok,"new LFO feeds a Nodes operator");
+    // A user-authored filter remains persistent and Init clears it.
+    auto filter=p.getUiInstrumentState().modulation;filter.filterEnabled=true;check(p.setUiModulationState(filter),"manual filter addition works");
+    juce::MemoryBlock saved;p.getStateInformation(saved);
+    check(p.loadUiInitPreset() && !p.getUiInstrumentState().modulation.filterEnabled,"Init contains no filters");
+    p.setStateInformation(saved.getData(),int(saved.getSize()));
+    check(p.getUiInstrumentState().modulation.filterEnabled,"saved patch restores authored filter");
+    panel->syncFromModel();check(panel->selectSource(lfo),"instance editor survives save/reload");
+    const auto restored=p.getUiInstrumentState().modulation;
+    bool hasCable=false;for(const auto& r:restored.routes) hasCable|=r.id && r.source==added && r.destination==ModAddress{ModDestination::Level,1,0};
+    check(hasCable && findControlOperator(restored,*op)->inputs[0].source==lfo,"new instance Nodes cables survive plugin save/reload");
+    auto full=restored;while(addSourceInstance(full,SourceFamily::Random)!=ModSource::None) {}
+    check(p.setUiModulationState(full),"UI pool capacity fixture installed");panel->syncFromModel();
+    for(const auto& item:panel->sourceMenuItems()) if(item.id<=7) check(!item.enabled && item.tooltip.contains("capacity"),"full pool add menu explains the engine maximum");
+    check(panel->addSource(SourceFamily::Envelope)==ModSource::None,"full pool add action returns an explicit failure");
+
+}
+
+void emergencyPanicAudit() {
+    auto owner=makeLegacyProcessorFixture(); auto& p=*owner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    check(p.setUiParameter(ParameterId::Sustain,1.0f),"panic sustain setup");
+    const auto patch=encodeInstrumentState(p.getUiInstrumentState());
+    juce::AudioBuffer<float> audio(2,256);
+    juce::MidiBuffer midi;
+    midi.addEvent(juce::MidiMessage::noteOn(1,60,.9f),0);
+    for(int i=0;i<8;++i) { audio.clear(); p.processBlock(audio,midi); midi.clear(); }
+    check(magnitude(audio)>1.0e-4f,"panic test has active voice");
+    p.requestPanic();
+    midi.addEvent(juce::MidiMessage::noteOn(1,62,.9f),0);
+    pluginAllocations.store(0,std::memory_order_relaxed);
+    pluginGuardAllocations.store(true,std::memory_order_release);
+    audio.clear(); p.processBlock(audio,midi);
+    pluginGuardAllocations.store(false,std::memory_order_release);
+    check(pluginAllocations.load(std::memory_order_relaxed)==0,"panic callback allocates nothing");
+    check(magnitude(audio)==0.0f && p.panicCount()==1,"panic silences callback and acknowledges reset");
+    check(encodeInstrumentState(p.getUiInstrumentState())==patch,"panic preserves patch");
+    midi.clear(); audio.clear(); p.processBlock(audio,midi);
+    check(magnitude(audio)==0.0f,"panic kills existing voices");
+    midi.addEvent(juce::MidiMessage::noteOn(1,64,.9f),0);
+    for(int i=0;i<8;++i) { audio.clear(); p.processBlock(audio,midi); midi.clear(); }
+    check(magnitude(audio)>1.0e-4f,"new notes work after panic");
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    juce::Button* stop=nullptr;
+    walk(*editor,[&](juce::Component& c) {
+        if(auto* button=dynamic_cast<juce::Button*>(&c))
+            if(button->getName()=="Emergency DSP reset") stop=button;
+    });
+    check(stop!=nullptr && bool(stop->onClick),"identity exposes emergency reset on every page");
+    check(stop->getBounds()==juce::Rectangle<int>(10,4,286,64),"panic occupies full identity area and is absent from right utilities");
+    check(stop->getWantsKeyboardFocus(),"panic retains keyboard button semantics");
+    stop->onClick();
+    audio.clear();p.processBlock(audio,midi);
+    check(magnitude(audio)==0.0f && p.panicCount()==2,"header STOP reaches emergency reset");
+}
+
+// Wave 1 PANIC under load: many voices, delay + reverb tails, live modulation
+// routes and a NODES operator. Runtime clears; the creative state does not.
+void panicDragFocusAudit() {
+    juce::DocumentWindow window("Origami drag lifecycle regression",juce::Colours::black,0);juce::Component root;ui::OrigamiHeader header;juce::Component source;
+    root.setSize(900,350);root.addAndMakeVisible(header);header.setBounds(0,0,900,72);source.setWantsKeyboardFocus(true);root.addAndMakeVisible(source);source.setBounds(400,100,100,100);window.setContentNonOwned(&root,true);window.setTopLeftPosition(300,300);window.setVisible(true);window.toFront(true);
+    juce::Button* panic=nullptr;walk(header,[&](auto& c){if(c.getName()=="Emergency DSP reset") panic=dynamic_cast<juce::Button*>(&c);});check(panic!=nullptr,"Panic lifecycle owns identity button");source.grabKeyboardFocus();
+    check(!header.panicVisibleForPointer(false) && header.panicVisibleForPointer(true),"physical pointer outside hides; entering reveals");check(!header.panicVisibleForPointer(false),"leaving restores branding");
+    for(const char* kind:{"ENV","LFO","MACRO","FILTER","CANCEL","VALID DROP"}) {
+        source.setName(kind);source.grabKeyboardFocus();header.assignmentDragStarted();check(!header.panicVisibleForPointer(false),"shared source drag starts without false reveal");
+        auto overlay=std::make_unique<juce::Component>();overlay->setWantsKeyboardFocus(true);root.addAndMakeVisible(*overlay);overlay->setBounds(400,220,100,50);overlay->grabKeyboardFocus();header.assignmentDragEnded();overlay.reset();
+        check(panic->hasKeyboardFocus(false) && !header.panicVisibleForPointer(false),"real drag-image focus handoff cannot reveal gray Panic");header.reconcileAssignmentDragFocus();check(!panic->hasKeyboardFocus(false) && !header.panicVisibleForPointer(false),"deferred reconciliation releases transient focus for cancelled and valid drops");
+    }
+    panic->grabKeyboardFocus();static_cast<juce::Component*>(panic)->focusGained(juce::Component::focusChangedByTabKey);check(header.panicVisibleForPointer(false),"intentional keyboard focus reveals Panic");header.assignmentDragStarted();auto overlay=std::make_unique<juce::Component>();overlay->setWantsKeyboardFocus(true);root.addAndMakeVisible(*overlay);overlay->grabKeyboardFocus();header.assignmentDragEnded();overlay.reset();header.reconcileAssignmentDragFocus();check(panic->hasKeyboardFocus(false) && header.panicVisibleForPointer(false),"legitimate keyboard accessibility focus survives drag lifecycle");
+    source.grabKeyboardFocus();check(!header.panicVisibleForPointer(false),"focus lost hides Panic");unsigned clicks=0;header.onPanicRequested=[&]{++clicks;};panic->onClick();check(clicks==1,"Panic activation invokes existing command exactly once");window.setVisible(false);window.clearContentComponent();
+}
+
+void panicUnderLoadAudit() {
+    auto owner=makeLegacyProcessorFixture(); auto& p=*owner;
+    p.prepareToPlay(48000.0,256);
+    p.setUiParameter(ParameterId::Sustain,1.0f);
+    auto& doc=p.getUiFxDocument();
+    doc.edit([](fx::FxGraph& g){ return g.insertEffectBeforeOutput(fx::FxEffectType::Delay)!=fx::invalidFxNodeId; });
+    doc.edit([](fx::FxGraph& g){ return g.insertEffectBeforeOutput(fx::FxEffectType::Reverb)!=fx::invalidFxNodeId; });
+    auto m=p.getUiInstrumentState().modulation;
+    m.lfo1.mode=LfoMode::Free; m.lfo1.rateHz=3.0f;
+    m.routes[0]={m.nextRouteId++,true,ModSource::Lfo1,{ModDestination::Cutoff,0,0},0.3f,true};
+    m.operators[0]=makeControlOperator(ControlOpType::ScaleOffset,m.nextOperatorId++);
+    m.operators[0].inputs[0]={ControlInput::Kind::Source,ModSource::Lfo2,0};
+    check(p.setUiModulationState(m),"panic rig: routes + NODES operator");
+    const auto patch=encodeInstrumentState(p.getUiInstrumentState());
+    const auto graph=doc.graph();
+    const auto level=p.getUiParameter(ParameterId::OscLevel);
+    juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi,none;
+    for(int n=0;n<8;++n) midi.addEvent(juce::MidiMessage::noteOn(1,48+n*3,.9f),0);
+    for(int i=0;i<40;++i) { audio.clear(); p.processBlock(audio,i==0 ? midi : none); }
+    check(magnitude(audio)>1.0e-3f,"8 voices with delay + reverb are sounding");
+    p.requestPanic();
+    audio.clear(); p.processBlock(audio,none);
+    check(magnitude(audio)==0.0f,"PANIC: the very next block is silent");
+    float after=0.0f;
+    for(int i=0;i<200;++i) { audio.clear(); p.processBlock(audio,none); after=std::max(after,magnitude(audio)); }
+    check(after==0.0f,"delay / reverb tails and voices stay cleared (no resurging feedback)");
+    check(encodeInstrumentState(p.getUiInstrumentState())==patch && doc.graph()==graph && p.getUiParameter(ParameterId::OscLevel)==level,
+          "patch, routes, NODES operators, FX graph and parameters are intact");
+    midi.clear(); midi.addEvent(juce::MidiMessage::noteOn(1,60,.9f),0);
+    float played=0.0f;
+    for(int i=0;i<20;++i) { audio.clear(); p.processBlock(audio,i==0 ? midi : none); played=std::max(played,magnitude(audio)); }
+    check(played>1.0e-3f,"a new note plays normally after PANIC (with its delay / reverb)");
+    midi.clear(); midi.addEvent(juce::MidiMessage::noteOff(1,60),0);
+    audio.clear(); p.processBlock(audio,midi);
+    p.requestPanic(); p.requestPanic(); // coalesced
+    audio.clear(); p.processBlock(audio,none);
+    audio.clear(); p.processBlock(audio,none);
+    check(magnitude(audio)==0.0f && p.panicCount()==2,"repeated requests coalesce into one reset per callback");
+}
+
+void declarativeThemeAudit() {
+    using namespace mct::origami::ui;
+    const auto original=gTheme;
+    ThemeDefinition invalid=original;
+    invalid.background=juce::Colours::white;
+    setDeclarativeTheme(invalid);
+    check(Palette::background()==original.background && signalSourceColour()==original.signal,
+          "invalid theme falls back to Origami default");
+    ThemeDefinition valid=original;
+    valid.signal=juce::Colour(0xff40aaff);
+    setDeclarativeTheme(valid);
+    check(signalSourceColour()==valid.signal,"declarative signal token drives visual accent");
+    setDeclarativeTheme(original);
+}
+
 void run() {
+    declarativeThemeAudit();
+    correctiveViewportAudit();
+    correctivePassUiAudit();
+    panicDragFocusAudit();emergencyPanicAudit();
+    panicUnderLoadAudit();
     nodesVisualFeedbackAudit();
     fxPageAudit();
     fxGraphUxAudit();
@@ -5808,6 +6066,7 @@ void run() {
     contentBrowserAudit();
     wavetableEditorCommitAudit();
     manualQaUiAudit();
+    nodesTelemetryVisibilityAudit();
     lfoEditorControlsAudit();
     typographyAudit();
     macroGridAndOscHeaderAudit();
@@ -5837,7 +6096,7 @@ void run() {
     telemetryBoundaryAudit();
     playabilityAudit();
 
-    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;check(p.getUiInstrumentState().oscillators[3].id==4,"processor owns initial four modules");
+    auto pOwner=makeLegacyProcessorFixture(); auto& p=*pOwner;check(p.getUiInstrumentState().oscillators[3].id==4,"processor owns initial four modules");
     check(p.getUiVisualizationMask()==ui::visualizationBit(ui::VisualizationEffect::Chaos),
           "visualization defaults enable only Chaos");
     const auto customVisualMask=ui::visualizationBit(ui::VisualizationEffect::Env) |
@@ -6029,7 +6288,7 @@ void run() {
     p.removeUiOscillator(2);p.setUiOscillatorEnabled(1,false);p.setUiOscillatorEnabled(3,false);
     auto m=p.getUiOscillatorState(4);m.wtPosition=.375f;m.pan=-.75f;m.level=.25f;p.setUiOscillatorState(4,m);
     juce::MemoryBlock bytes;p.getStateInformation(bytes);
-    auto restoredOwner=std::make_unique<OrigamiAudioProcessor>(); auto& restored=*restoredOwner;restored.setStateInformation(bytes.getData(),static_cast<int>(bytes.getSize()));
+    auto restoredOwner=makeLegacyProcessorFixture(); auto& restored=*restoredOwner;restored.setStateInformation(bytes.getData(),static_cast<int>(bytes.getSize()));
     check(restored.getUiVisualizationMask()==customVisualMask,"plugin state restores visualization preferences");
     juce::MemoryBlock again;restored.getStateInformation(again);check(bytes==again,"processor state round trip");
     auto restoredEditor=std::unique_ptr<juce::AudioProcessorEditor>(restored.createEditor());
@@ -6061,14 +6320,1195 @@ void run() {
     check(observedWaveform,"oscillator viewport telemetry contains audio-rendered samples");
 }
 }
+void synthFilterCompletionUi() {
+    auto owner=makeLegacyProcessorFixture();auto& p=*owner;p.prepareToPlay(48000,256);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;ui::OscillatorCard* card=nullptr;ui::FxPage* page=nullptr;
+    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;if(auto* osc=dynamic_cast<ui::OscillatorCard*>(&c)) if(osc->id()==1) card=osc;if(auto* fx=dynamic_cast<ui::FxPage*>(&c)) page=fx;});
+    check(panel && card,"Synth routing surfaces exist");check(panel->typeChoices().size()==dsp::filterTypes.size(),"Synth menu uses the canonical Nodes catalog");for(std::size_t i=0;i<dsp::filterTypes.size();++i) check(panel->typeChoices()[i]==dsp::filterTypes[i].name,"shared type names and persistent ordering");check(!panel->setFilterType(dsp::FilterType::Comb),"no type can be selected without a Synth filter identity");check(p.getUiInstrumentState().modulation.synthFilters.nextId==1,"fresh UI has zero explicit filters");
+    const auto bus=p.addUiBus();auto osc=p.getUiOscillatorState(1);osc.busRoutes[0]={bus,1};check(p.setUiOscillatorState(1,osc),"OSC previous destination authors bus");
+    const auto f=panel->addFilter();check(f && card->dropSynthFilter(f),"Filter -> oscillator invokes canonical insertion");
+    auto state=p.getUiInstrumentState();check(state.modulation.synthFilters.filters[0].buses[0].bus==mainBusId && oscillatorOutputRouting(state.modulation,state.oscillators[0]).busRoutes[0].level==0,"UI drop is exclusive and preserves filter output");
+    const auto second=panel->addFilter();check(card->addOutputRoute(second,true),"Add Route chooses neutral filter destination");{const auto st=p.getUiInstrumentState();const auto r=oscillatorOutputRouting(st.modulation,st.oscillators[0]);check(r.busRoutes[r.busRouteCount-1].level==0 && r.busRoutes[1].level==1,"neutral addition preserves existing gains");}check(second && panel->dropFilterOnOscillator(second,1),"reverse oscillator -> filter uses same insertion command");
+    const auto third=panel->addFilter();check(third && panel->dropFilterAfter(third,f),"explicit AFTER insertion preserves chain");
+    state=p.getUiInstrumentState();check(!state.modulation.synthFilters.filters[1].next && state.modulation.synthFilters.filters[0].next==third,"UI serial routing is canonical engine state");
+    auto mod=state.modulation;const auto env=addSourceInstance(mod,SourceFamily::Envelope);const auto random=addSourceInstance(mod,SourceFamily::Random);
+    mod.routes[0]={mod.nextRouteId++,true,env,{ModDestination::SynthCutoff,0,f},-.5f,false};mod.routes[1]={mod.nextRouteId++,true,random,{ModDestination::SynthDrive,0,f},.2f,true};check(p.setUiModulationState(mod),"scalable sources modulate filter knobs");
+    auto catalog=ui::modulationDestinationCatalog(p.getUiInstrumentState(),{});check(std::count_if(catalog.begin(),catalog.end(),[](const auto& entry){return isSynthFilterDestination(entry.address.parameter);})==15,"Nodes/Matrix canonical catalog has five destinations per filter");
+    const ModAddress resonance{ModDestination::SynthResonance,0,f};
+    check(page && page->addParameterNode(resonance) && page->connectControl(ModSource::Lfo2,resonance).creatable(),"Nodes authors same per-voice filter destination");
+    panel->syncFromModel();bool tagged=false;walk(*panel,[&](auto& c){if(auto* knob=dynamic_cast<juce::Slider*>(&c)) if(knob->getProperties().contains("mct.mod.itemId")) {check(int(knob->getProperties()["mct.mod.itemId"])==int(third),"knob assignment targets selected stable filter identity");tagged=true;}});check(tagged,"filter knob assignments tagged");
+    // The source-card chrome and all rail metrics are the modulation reference.
+    std::vector<ui::SourceEntityButton*> rows;juce::TextButton* add=nullptr;juce::TextButton* remove=nullptr;
+    walk(*panel,[&](auto& c){if(auto* row=dynamic_cast<ui::SourceEntityButton*>(&c)) if(row->isVisible()) rows.push_back(row);if(auto* b=dynamic_cast<juce::TextButton*>(&c)) {if(b->getButtonText()=="+") add=b;if(b->getButtonText()=="-") remove=b;}});
+    check(rows.size()==3 && add && remove,"filter rail uses shared source-card primitive and collection buttons");
+    rows[0]->onClick();check(panel->selectedFilter()==f && rows[0]->getToggleState() && !rows[1]->getToggleState(),"rail selection preserves stable FilterId");
+    juce::Slider* cutoff=nullptr;walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)) if(k->getName()=="CUTOFF") cutoff=k;});
+    check(cutoff->getTextFromValue(8000)=="8.00 kHz" && cutoff->getTextFromValue(20000)=="20.0 kHz" && cutoff->getDoubleClickReturnValue()==8000,"cutoff units and canonical default reset");cutoff->setValue(1300,juce::sendNotificationSync);check(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.cutoff==1300 && p.getUiInstrumentState().modulation.synthFilters.filters[1].values.cutoff==8000,"selected row edits its own working cutoff control");
+    rows[2]->onClick();
+    ui::ModulationSourceRow reference(ModSource::Lfo1,"FILTER 1","MOD SOURCE TAB LFO 1");reference.setLookAndFeel(&panel->getLookAndFeel());
+    for(bool selected:{false,true}) {
+        reference.setSize(100,ui::SourceEntityButton::baseHeight-ui::sourceRowGap);reference.setToggleState(selected,juce::dontSendNotification);
+        ui::SourceEntityButton filterRow("FILTER 1");filterRow.setName("MOD SOURCE TAB FILTER");filterRow.setLookAndFeel(&panel->getLookAndFeel());filterRow.setSize(reference.getWidth(),reference.getHeight());filterRow.setToggleState(selected,juce::dontSendNotification);
+        for(bool hover:{false,true}) {juce::Image a(juce::Image::ARGB,100,34,true),b(juce::Image::ARGB,100,34,true);juce::Graphics ga(a),gb(b);reference.paintButton(ga,hover,false);filterRow.paintButton(gb,hover,false);bool same=true;for(int y=0;y<34;++y) for(int x=0;x<100;++x) same &= a.getPixelAt(x,y)==b.getPixelAt(x,y);check(same,"filter/modulation chrome, typography, grip and selection/hover paint identically");}
+    }
+    const auto paintPanel=[&](int width,int height,const char* path) {
+        panel->setSize(width,height);const auto layout=ui::sourceRailLayout(panel->contentBounds());
+        check(panel->sourceRailBounds()==layout.rail && layout.rail.getWidth()==116,"persistent filter rail uses canonical Modulation width");
+        for(auto* row:rows) check(row->getWidth()==layout.list.getWidth() && row->getHeight()==ui::ModulationSourceRow::baseHeight-ui::sourceRowGap,"filter row geometry matches unrouted Modulation row");
+        bool contained=true;walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)) if(k->isVisible()) contained &= layout.editor.contains(k->getBounds());});check(contained && panel->responseBounds().getHeight()>30,"right editor contains knobs and a usable graph");
+        juce::Image image(juce::Image::ARGB,width,height,true);juce::Graphics g(image);panel->paintEntireComponent(g,true);
+        const auto response=panel->responseBounds();check(image.getPixelAt(response.getCentreX(),response.getBottom()-2)!=ui::signalSourceColour(),"graph floor has no saturated accent line");
+        juce::File file(path);file.deleteFile();if(auto out=file.createOutputStream()) {juce::PNGImageFormat png;png.writeImageToStream(image,*out);}
+    };
+    paintPanel(662,355,"/tmp/origami-synth-filter-ui.png");paintPanel(532,300,"/tmp/origami-synth-filter-ui-compact.png");
+    const auto originalTheme=ui::gTheme;auto alternate=originalTheme;alternate.signal=juce::Colour(0xff40aaff);ui::setDeclarativeTheme(alternate);paintPanel(662,355,"/tmp/origami-synth-filter-ui-blue.png");ui::setDeclarativeTheme(originalTheme);
+    juce::MemoryBlock saved;p.getStateInformation(saved);OrigamiAudioProcessor restored{origami_test::authorized()};restored.setStateInformation(saved.getData(),int(saved.getSize()));
+    auto decoded=restored.getUiInstrumentState();check(decoded.modulation.synthFilters.filters[0].next==third && decoded.modulation.routes[0].destination.itemId==f,"plugin binary wrapper restores serial chain and modulation");
+    check(restored.getUiControlLayout().find(nodes::parameterKey(resonance))!=nullptr,"placed Synth parameter node survives wrapper restore");
+    check(panel->removeFilter(f),"UI removal splices filter");state=p.getUiInstrumentState();check(!state.modulation.synthFilters.filters[1].next && !state.modulation.routes[0].id,"UI splice preserves downstream and prunes destinations");
+    page->syncFromModel();check(!p.getUiControlLayout().find(nodes::parameterKey(resonance)) && !page->controlGraph().find(nodes::parameterKey(resonance)),"deleted filter leaves no placed Nodes destination or cable");
+    check(p.removeUiBus(bus),"bus deletion handles Synth filter output");check(validInstrumentState(p.getUiInstrumentState()),"no dangling Synth bus destination");
+    check(p.removeUiOscillator(2),"oscillator deletion preserves valid filter model");
+    for(int n=2;n<8;++n) {add->onClick();check(panel->selectedFilter()!=0,"Add creates and selects a stable filter");}
+    check(!add->isEnabled() && add->getTooltip().contains("8") && panel->addFilter()==0,"eight-filter capacity disables Add truthfully");
+    for(int n=0;n<7;++n) check(p.addUiBus()!=0,"maximum route UI adds remaining buses");
+    {const auto st=p.getUiInstrumentState();for(std::size_t b=0;b<st.buses.count;++b) card->addOutputRoute(st.buses.buses[b].id,false);for(const auto& filter:st.modulation.synthFilters.filters) if(filter.id) card->addOutputRoute(filter.id,true);}
+    card->setSize(662,355);card->syncFromModel();juce::TextButton* routingButton=nullptr;walk(*card,[&](auto& c){if(auto* button=dynamic_cast<juce::TextButton*>(&c)) if(button->getBounds()==card->headerLayout().selectors[2]) routingButton=button;});check(routingButton!=nullptr,"route header opens workspace");routingButton->onClick();
+    juce::Viewport* routeView=nullptr;walk(*card,[&](auto& c){if(auto* viewport=dynamic_cast<juce::Viewport*>(&c)) if(viewport->isVisible() && viewport->getViewedComponent()) {for(auto* child:viewport->getViewedComponent()->getChildren()) if(child->getName().startsWith("Output route level")) routeView=viewport;}});
+    check(routeView && routeView->getViewedComponent()->getHeight()>=16*48,"maximum destinations live in scrollable route list");routeView->setViewPosition(0,16*48);check(routeView->getViewPositionY()>0,"last destination remains reachable by scrolling");
+    {juce::Image image(juce::Image::ARGB,662,355,true);juce::Graphics g(image);card->paintEntireComponent(g,true);juce::File file("/tmp/origami-route-mixer-max.png");file.deleteFile();if(auto out=file.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(image,*out);}}
+    const auto selected=panel->selectedFilter();remove->onClick();check(synthFilterSlot(p.getUiInstrumentState().modulation.synthFilters,selected)==maxSynthFilters && add->isEnabled() && panel->selectedFilter()!=selected,"Remove splices selected filter and leaves valid selection/capacity");
+    check(p.loadUiInitPreset(),"Init loads after explicit filter patch");for(const auto& filter:p.getUiInstrumentState().modulation.synthFilters.filters) check(!filter.id,"Init contains zero Synth instances");
+}
+
+void synthFilterEditorTypeAudit() {
+    auto owner=makeLegacyProcessorFixture();auto& p=*owner;p.prepareToPlay(48000,256);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;
+    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;});check(panel!=nullptr,"actual multimode editor exists");
+    const auto* descriptor=fx::findFxEffect(fx::FxEffectType::Filter);const auto* typeParameter=descriptor?fx::findFxParameter(*descriptor,5):nullptr;check(typeParameter && typeParameter->choiceLabels==dsp::filterTypeLabels.data() && typeParameter->choices==int(dsp::filterTypes.size()),"Nodes descriptor directly references shared canonical labels");
+    const auto id=panel->addFilter();panel->setSize(662,355);juce::Slider *cutoff=nullptr,*resonance=nullptr,*gain=nullptr;
+    walk(*panel,[&](auto& c){if(auto* k=dynamic_cast<juce::Slider*>(&c)){if(k->getName()=="CUTOFF") cutoff=k;if(k->getName()=="RESONANCE") resonance=k;if(k->getName()=="GAIN") gain=k;}});
+    check(cutoff && resonance && gain,"canonical parameter controls exist");
+    const auto save=[&](const juce::String& name){const auto image=panel->createComponentSnapshot(panel->getLocalBounds(),true,2.f);juce::File file("/tmp/origami-filter-editor-"+name+".png");file.deleteFile();if(auto out=file.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(image,*out);}};
+    for(const auto& info:dsp::filterTypes) if(info.synth) {
+        check(panel->setFilterType(info.id),"supported type edits canonical state");check(p.getUiInstrumentState().modulation.synthFilters.filters[0].type==info.id,"type persists selected stable filter");
+        check(gain->isVisible() && gain->isEnabled()==info.gain,"Gain has a stable slot and only gain-bearing types enable it");
+        if(info.gain) {gain->setValue(6,juce::sendNotificationSync);check(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.gain==6,"Gain writes canonical state");}
+        cutoff->setValue(1000,juce::sendNotificationSync);resonance->setValue(.6,juce::sendNotificationSync);
+        const auto plot=panel->editorRegions().plot.toFloat();const dsp::FilterResponseAxis axis{48000};auto handle=panel->responseHandle();check(std::abs(handle.x-(plot.getX()+float(axis.x(1000))*plot.getWidth()))<.1f,"knob drives canonical response handle");
+        const juce::Point<float> target{plot.getX()+float(axis.x(5000))*plot.getWidth(),handle.y+.3f*plot.getHeight()};check(panel->editResponseHandle(target),"response handle accepts parameter edit");const auto values=p.getUiInstrumentState().modulation.synthFilters.filters[0].values;
+        check(std::abs(values.cutoff-(info.id==dsp::FilterType::Comb?2000:5000))<2 && (info.gain ? std::abs(values.resonance-.6f)<.001f && std::abs(values.gain+22.8f)<.01f : std::abs(values.resonance-(info.id==dsp::FilterType::AllPass?.6f:.3f))<.001f) && std::abs(cutoff->getValue()-values.cutoff)<1,"handle updates canonical state and matching knobs");
+        juce::MemoryBlock bytes;p.getStateInformation(bytes);OrigamiAudioProcessor restored{origami_test::authorized()};restored.setStateInformation(bytes.getData(),int(bytes.getSize()));const auto f=restored.getUiInstrumentState().modulation.synthFilters.filters[0];check(f.id==id && f.type==info.id && f.values.gain==values.gain,"each selectable type and Gain survive processor wrapper restore");save("type-"+juce::String(int(info.id)));
+    }
+    check(panel->setFilterType(dsp::FilterType::LowPass),"visual sweep returns to low pass");resonance->setValue(.1,juce::sendNotificationSync);
+    for(int hz:{100,1000,5000,10000,20000}) {cutoff->setValue(hz,juce::sendNotificationSync);save("cutoff-"+juce::String(hz));}
+    const auto second=panel->addFilter();check(second!=id && p.getUiInstrumentState().modulation.synthFilters.filters[1].type==dsp::FilterType::LowPass,"switching filter selection uses its own type");check(panel->setFilterType(dsp::FilterType::HighPass),"second filter authors independent type");check(p.getUiInstrumentState().modulation.synthFilters.filters[0].type==dsp::FilterType::LowPass,"type switch cannot change previous filter");
+}
+
+void synthFilterPrecisionVisualAudit() {
+    auto owner=makeLegacyProcessorFixture();auto& p=*owner;p.prepareToPlay(48000,256);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;ui::ModulationPanel* lfo=nullptr;
+    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) panel=f;if(auto* m=dynamic_cast<ui::ModulationPanel*>(&c)) lfo=m;});check(panel && lfo,"precision fixtures use actual FilterPanel and LFO reference");
+    check(lfo->selectSource(ModSource::Lfo1),"proportion reference selects existing LFO");lfo->lfoStrip().setPage(ui::LfoControlStrip::Page::Func);
+    {auto image=lfo->createComponentSnapshot(lfo->getLocalBounds(),true,2.f);juce::File file("/tmp/origami-filter-proportion-lfo.png");file.deleteFile();if(auto stream=file.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(image,*stream);}}
+
+    panel->addFilter();panel->setSize(662,355);const auto theme=ui::gTheme;
+    const auto start=panel->responseHandle();auto down=event(*panel).withNewPosition(start);static_cast<juce::Component*>(panel)->mouseDown(down);
+    check(std::abs(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.resonance-.1f)<.001f,"grabbing curve handle does not jump resonance");
+    const auto plot=panel->editorRegions().plot.toFloat();const dsp::FilterResponseAxis gestureAxis{48000};auto drag=down.withNewPosition(juce::Point<float>{plot.getX()+float(gestureAxis.x(5000))*plot.getWidth(),start.y-.2f*plot.getHeight()});static_cast<juce::Component*>(panel)->mouseDrag(drag);static_cast<juce::Component*>(panel)->mouseUp(drag);
+    const auto gestureValues=p.getUiInstrumentState().modulation.synthFilters.filters[0].values;check(std::abs(gestureValues.cutoff-5000)<2 && std::abs(gestureValues.resonance-.3f)<.001f,"anchored horizontal and vertical gestures update the canonical knobs");
+    const auto set=[&](dsp::FilterType type,float cutoff,float resonance,float mix=1.f,float gain=6.f) {auto m=p.getUiInstrumentState().modulation;auto& f=m.synthFilters.filters[synthFilterSlot(m.synthFilters,panel->selectedFilter())];f.type=type;f.values={cutoff,resonance,0,mix,0,dsp::filterTypeInfo(type)->gain?gain:0.f};check(p.setUiModulationState(m),"visual fixture edits only canonical filter values");panel->syncFromModel();};
+    const auto render=[&](const juce::String& name) {
+        const auto r=panel->editorRegions();const auto rail=ui::sourceRailLayout(panel->contentBounds());
+        check(!rail.rail.intersects(r.header) && !rail.rail.intersects(r.response) && !rail.rail.intersects(r.parameters),"rail and editor never overlap");
+        check(r.header.getCentreY()==rail.header.getCentreY() && r.header.getX()==r.response.getX() && r.header.getRight()==r.parameters.getRight(),"shared editor alignment and SOURCE header centerline");
+        if(panel->getWidth()==662) check(r.response.getHeight()==189 && r.parameters.getHeight()==80 && r.parameterBank.getWidth()>=468 && r.parameterBank.getY()>=271,"graph dominates a shallow, low, widely spaced control footer");
+        check(r.response.contains(r.plot) && r.response.contains(r.frequencyAxis) && r.response.contains(r.levelAxis) && !r.plot.intersects(r.frequencyAxis) && !r.plot.intersects(r.levelAxis),"dedicated axes remain contained outside plot");
+        const auto h=panel->responseHandle();check(r.response.toFloat().contains(juce::Rectangle<float>(8,8).withCentre(h)),"cutoff handle remains inside graph perimeter");
+        const auto st=p.getUiInstrumentState();const auto& f=st.modulation.synthFilters.filters[synthFilterSlot(st.modulation.synthFilters,panel->selectedFilter())];dsp::LowPassCoefficientTable table;table.prepare(48000);const dsp::FilterResponseAxis axis{48000,dsp::filterTypeInfo(f.type)->gain?36.:18.};
+        const float expectedY=r.plot.getY()+float(axis.y(dsp::filterResponseMagnitude(f.type,table.make(f.values.cutoff,f.values.resonance),f.values.cutoff,f.values.resonance,f.values.gain,std::min(f.values.cutoff,f.type==dsp::FilterType::Comb?2000.f:20000.f),48000,f.values.mix)))*r.plot.getHeight();check(std::abs(h.y-expectedY)<.1f,"handle lies on actual response including resonance, type and Mix");
+        int knobY=-1,labelY=-1,valueY=-1,valueHeight=-1;walk(*panel,[&](auto& comp){
+            if(auto* knob=dynamic_cast<juce::Slider*>(&comp)) if(knob->isVisible()) {check(r.parameterBank.contains(knob->getBounds()),"parameter control stays inside coherent bank");check(knob->getHeight()==54,"parameter stacks use compact common slider height");if(knobY<0) knobY=knob->getY();check(knob->getY()==knobY,"knobs share identical vertical baseline");for(auto* child:knob->getChildren()) if(auto* value=dynamic_cast<juce::Label*>(child)) {if(valueY<0){valueY=value->getY();valueHeight=value->getHeight();}check(value->getY()==valueY && value->getHeight()==valueHeight && knob->getLocalBounds().contains(value->getBounds()),"editable value boxes align and remain contained");}}
+            if(auto* label=dynamic_cast<juce::Label*>(&comp)) if(label->getParentComponent()==panel && label->isVisible()) {check(r.parameterBank.contains(label->getBounds()),"parameter labels stay inside bank");if(labelY<0) labelY=label->getY();check(labelY==label->getY(),"parameter label baselines agree");check(label->getWidth()>=60,"supported parameter labels retain readable width");}
+            if(auto* button=dynamic_cast<juce::Button*>(&comp)) if(button->getName()=="Synth filter type" || button->getName()=="Synth filter output" || button->getName()=="Power Synth Filter") check(r.header.contains(button->getBounds()) && button->getHeight()>=24 && button->getWantsKeyboardFocus(),"compact selectors and power retain accessible hit areas");
+        });
+        juce::Image image=panel->createComponentSnapshot(panel->getLocalBounds(),true,2.f);juce::File file("/tmp/origami-filter-polish-"+name+".png");file.deleteFile();if(auto out=file.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(image,*out);}
+    };
+    for(float gain:{0.f,12.f,-12.f}) for(float res:gain==0?std::vector<float>{0.f,.547f}:std::vector<float>{0.f,1.f}) {
+        set(dsp::FilterType::Bell,370,res,1,gain);render("peak-"+juce::String(gain,0)+"-"+juce::String(res,3));
+    }
+    set(dsp::FilterType::Bell,370,.547f,1,0);const auto peakStart=panel->responseHandle();auto peakDown=event(*panel).withNewPosition(peakStart);static_cast<juce::Component*>(panel)->mouseDown(peakDown);
+    check(std::abs(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.gain)<.001f,"grabbing PEAK at unity does not jump Gain");
+    auto peakDrag=peakDown.withNewPosition(peakStart.translated(0,-panel->editorRegions().plot.getHeight()/8.f));static_cast<juce::Component*>(panel)->mouseDrag(peakDrag);static_cast<juce::Component*>(panel)->mouseUp(peakDrag);
+    check(std::abs(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.gain-12)<.001f && std::abs(p.getUiInstrumentState().modulation.synthFilters.filters[0].values.resonance-.547f)<.001f,"PEAK upward drag edits Gain and preserves bandwidth");
+    for(int hz:{100,1000,5000,8000,10000,20000}) {set(dsp::FilterType::LowPass,float(hz),.1f);render("lp-"+juce::String(hz));}
+    for(float res:{0.f,.6f,1.f}) {set(dsp::FilterType::LowPass,8000,res);render("res-"+juce::String(res,1));}
+    for(float mix:{0.f,.25f,.5f,.75f,1.f}) {set(dsp::FilterType::LowPass,8000,.6f,mix);render("mix-"+juce::String(mix,2));}
+    for(const auto& info:dsp::filterTypes) if(info.synth && info.id!=dsp::FilterType::LowPass) {set(info.id,5000,.6f);render("type-"+juce::String(int(info.id)));}
+    set(dsp::FilterType::LowPass,8000,.1f);
+    for(const auto& entry:std::array<std::pair<const char*,juce::Colour>,3>{{{"red",theme.signal},{"cool",juce::Colour(0xff40aaff)},{"bright",juce::Colour(0xffffd040)}}}) {auto t=theme;t.signal=entry.second;ui::setDeclarativeTheme(t);render("theme-"+juce::String(entry.first));}ui::setDeclarativeTheme(theme);
+    int count=1;for(int desired:{1,3,8}) {while(count<desired){panel->addFilter();++count;}set(dsp::FilterType::LowPass,8000,.1f);render("count-"+juce::String(desired));}
+    juce::Button* power=nullptr;juce::Button* out=nullptr;walk(*panel,[&](auto& c){if(auto* b=dynamic_cast<juce::Button*>(&c)){if(b->getName()=="Power Synth Filter") power=b;if(b->getName()=="Synth filter output") out=b;}});check(power && out && bool(out->onClick),"routing and power retain live canonical callbacks");power->onClick();check(!p.getUiInstrumentState().modulation.synthFilters.filters[7].power && !power->getToggleState(),"compact power bypass writes state");power->onClick();check(p.getUiInstrumentState().modulation.synthFilters.filters[7].power && power->getToggleState(),"compact power restores canonical state");
+    check(panel->dropFilterAfter(panel->selectedFilter(),p.getUiInstrumentState().modulation.synthFilters.filters[0].id),"existing serial drop remains canonical");panel->syncFromModel();
+    panel->setSize(532,300);render("compact");panel->setSize(662,355);
+    editor->setSize(ui::EditorLayout::minWidth,ui::EditorLayout::minHeight);editor->resized();check(panel->getWidth()==662 && panel->getHeight()==355,"supported minimum scales canonical design rather than collapsing controls");editor->setSize(ui::EditorLayout::defaultWidth,ui::EditorLayout::defaultHeight);
+    juce::Image whole=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.f);juce::File wholeFile("/tmp/origami-filter-polish-whole.png");wholeFile.deleteFile();if(auto outStream=wholeFile.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(whole,*outStream);}
+}
+
+void synthCombRestoreRealtimeAudit() {
+    auto owner=makeLegacyProcessorFixture();auto& p=*owner;p.prepareToPlay(48000,256);auto mod=p.getUiInstrumentState().modulation;const auto id=addSynthFilter(mod);auto& f=mod.synthFilters.filters[0];f.type=dsp::FilterType::Comb;f.values={370,.85f,3,.5f,.4f,0};auto state=p.getUiInstrumentState();check(insertSynthFilter(mod,state.oscillators,id,1),"Comb restore fixture keeps canonical routing");mod.routes[0]={mod.nextRouteId++,true,ModSource::Lfo1,{ModDestination::SynthResonance,0,id},.1f,false};check(p.setUiModulationState(mod),"Comb authored parameters and existing modulation accepted");juce::MemoryBlock bytes;p.getStateInformation(bytes);
+    auto restored=makeLegacyProcessorFixture();restored->setStateInformation(bytes.getData(),int(bytes.getSize()));restored->prepareToPlay(96000,256);
+    const auto decoded=restored->getUiInstrumentState();check(decoded.modulation.synthFilters.filters[0].id==id && decoded.modulation.synthFilters.filters[0].type==dsp::FilterType::Comb && decoded.modulation.synthFilters.filters[0].values.cutoff==370 && decoded.modulation.routes[0].destination.itemId==id,"Comb state restores exact parameters, stable ID, routing and modulation without schema bump");
+    juce::AudioBuffer<float> audio(2,256);juce::MidiBuffer notes,empty;notes.ensureSize(65536);empty.ensureSize(65536);notes.addEvent(juce::MidiMessage::noteOn(1,60,.1f),0);
+    pluginAllocations.store(0);pluginFrees.store(0);pluginGuardAllocations.store(true);restored->processBlock(audio,notes);for(int n=0;n<8;++n) restored->processBlock(audio,empty);restored->requestPanic();restored->processBlock(audio,empty);pluginGuardAllocations.store(false);
+#ifndef ORIGAMI_SANITIZED
+    check(!pluginAllocations.load() && !pluginFrees.load(),"queued Comb restore, first notes and Panic allocate/free nothing in callback");
+#endif
+    for(int ch=0;ch<2;++ch) for(int n=0;n<256;++n) check(std::isfinite(audio.getSample(ch,n)),"restored Comb produces finite audio at new sample rate");
+}
+
+void synthAllTypeVisualAudit() {
+    auto owner=makeLegacyProcessorFixture();auto& p=*owner;p.prepareToPlay(48000,256);auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());ui::FilterPanel* panel=nullptr;
+    walk(*editor,[&](auto& component){if(auto* f=dynamic_cast<ui::FilterPanel*>(&component)) panel=f;});check(panel,"all-type visual audit uses actual FilterPanel");panel->addFilter();panel->setSize(662,355);
+    const auto bank=panel->editorRegions().parameterBank;const auto rail=panel->sourceRailBounds();
+    for(const auto& info:dsp::filterTypes) if(info.synth) for(int f=0;f<3;++f) for(int r=0;r<3;++r) {
+        const float frequencies[]{100,1000,8000},combFrequencies[]{40,370,2000},resonances[]{0,.5,1},mixes[]{0,.5,1},gains[]{-12,0,12};
+        auto mod=p.getUiInstrumentState().modulation;auto& filter=mod.synthFilters.filters[0];filter.type=info.id;filter.values={info.id==dsp::FilterType::Comb?combFrequencies[f]:frequencies[f],resonances[r],0,mixes[(f+r)%3],0,info.gain?gains[(f+2*r)%3]:0};
+        check(p.setUiModulationState(mod),"all-type visual fixture preserves existing filter identity and routing");panel->syncFromModel();check(panel->editorRegions().parameterBank==bank && panel->sourceRailBounds()==rail,"type switching keeps stable six-control geometry and source rail");
+        const auto image=panel->createComponentSnapshot(panel->getLocalBounds(),true,2.f);juce::File file("/tmp/origami-all-type-"+juce::String(int(info.id))+"-"+juce::String(f)+"-"+juce::String(r)+".png");file.deleteFile();if(auto stream=file.createOutputStream()){juce::PNGImageFormat png;png.writeImageToStream(image,*stream);}
+        const auto plot=panel->editorRegions().plot;const double rate=48000;dsp::LowPassCoefficientTable table;table.prepare(rate);const auto& values=filter.values;const dsp::FilterResponseAxis axis{rate,info.gain?36.:18.};const int x=plot.getX()+17;const auto hz=axis.frequency(double(x-plot.getX())/plot.getWidth());const auto curveY=plot.getY()+axis.y(dsp::filterResponseMagnitude(info.id,table.make(values.cutoff,values.resonance),values.cutoff,values.resonance,values.gain,hz,rate,values.mix))*plot.getHeight();
+        const auto pixel=image.getPixelAt(x*2,(plot.getBottom()-3)*2);if(curveY<plot.getBottom()-6) check(pixel!=ui::Palette::inset(),"every type fills beneath its actual response to graph bottom");
+    }
+}
+
+void synthPeakEffectiveResponseAudit() {
+    InstrumentState state;const auto id=addSynthFilter(state.modulation);auto& filter=state.modulation.synthFilters.filters[0];filter.type=dsp::FilterType::Bell;filter.values={370,.547f,0,1,0,0};
+    RuntimeVisualizationSnapshot observed;observed.sampleRate=48000;observed.synthFilterIds[0]=id;observed.synthFilters[0]=filter.values;
+    ui::ModulationBindings bindings;bindings.snapshot=[&]{return state;};bindings.visualization=[&]{return observed;};
+    ui::FilterPanel panel({}, {},bindings);panel.setSize(662,355);const auto plot=panel.editorRegions().plot;const dsp::FilterResponseAxis axis{48000,36};
+    const auto render=[&]{return panel.createComponentSnapshot(panel.getLocalBounds(),true,1.f);};
+    auto unity=render();const auto unityHandle=panel.responseHandle();
+    juce::Colour grid;for(double hz:{100.,1000.,10000.}) {const int x=juce::roundToInt(plot.getX()+axis.x(hz)*plot.getWidth());const auto colour=unity.getPixelAt(x,plot.getY()+10);if(hz==100) grid=colour;check(colour==grid && colour.getBrightness()<.25f,"all major frequency lines use consistent subdued neutral grid colour");}
+    dsp::LowPassCoefficientTable table;table.prepare(48000);
+    for(const auto& info:dsp::filterTypes) if(info.synth) {
+        filter.type=info.id;filter.values={370,.547f,0,1,0,info.gain?12.f:0.f};panel.syncFromModel();observed.synthFilters[0]=filter.values;
+        for(float res:{0.f,1.f}) {
+            observed.synthFilters[0].resonance=res;observed.synthFilters[0].cutoff=1000;
+            const auto image=render();const auto values=observed.synthFilters[0];const dsp::FilterResponseAxis typeAxis{48000,info.gain?36.:18.};
+            const auto handle=panel.responseHandle();const float y=plot.getY()+typeAxis.y(dsp::filterResponseMagnitude(info.id,table.make(values.cutoff,res),values.cutoff,res,values.gain,1000,48000))*plot.getHeight();
+            check(std::abs(handle.y-y)<.1f && std::abs(handle.x-(plot.getX()+typeAxis.x(1000)*plot.getWidth()))<.1f,"every type handle reads effective frequency/resonance/gain telemetry");
+            const double hz=1500;const int x=juce::roundToInt(plot.getX()+typeAxis.x(hz)*plot.getWidth()),curveY=juce::roundToInt(plot.getY()+typeAxis.y(dsp::filterResponseMagnitude(info.id,table.make(values.cutoff,res),values.cutoff,res,values.gain,hz,48000))*plot.getHeight());float brightness=0;
+            for(int dx=-2;dx<=2;++dx) for(int dy=-3;dy<=3;++dy) if(plot.contains(x+dx,curveY+dy)) brightness=std::max(brightness,image.getPixelAt(x+dx,curveY+dy).getBrightness());
+            check(brightness>.6f,"effective type-specific parameters update analytical response stroke immediately");
+            check(filter.values.cutoff==370 && filter.values.resonance==.547f,"effective graph never overwrites authored values");
+        }
+    }
+    filter.type=dsp::FilterType::Bell;panel.syncFromModel();observed.synthFilters[0]={370,1,0,1,0,12};const auto boostHandle=panel.responseHandle();
+    check(boostHandle.y<unityHandle.y,"effective PEAK Gain lifts the truthful response handle");
+    observed.synthFilters[0].gain=-12;check(panel.responseHandle().y>unityHandle.y,"effective PEAK cut lowers the response handle");
+}
+
+void synthResponseFillAudit() {
+    InstrumentState state;const auto f=addSynthFilter(state.modulation);RuntimeVisualizationSnapshot observed;observed.sampleRate=48000;observed.synthFilterIds[0]=f;observed.synthFilters[0]={1200,.1f,0,1,0};
+    ui::ModulationBindings bindings;bindings.snapshot=[&]{return state;};bindings.visualization=[&]{return observed;};
+    ui::FilterPanel panel({}, {},bindings);panel.setSize(662,355);const auto plot=panel.editorRegions().plot;
+    const auto render=[&] {juce::Image image(juce::Image::ARGB,662,355,true);juce::Graphics g(image);panel.paintEntireComponent(g,true);return image;};
+    const auto theme=ui::gTheme;auto red=render();auto blueTheme=theme;blueTheme.signal=juce::Colour(0xff40aaff);ui::setDeclarativeTheme(blueTheme);auto blue=render();
+    const int x=plot.getX()+12,above=plot.getY()+20,below=plot.getBottom()-5;
+    check(red.getPixelAt(x,above)==blue.getPixelAt(x,above),"theme does not flood area above curve");
+    check(red.getPixelAt(x,below)!=blue.getPixelAt(x,below),"accent fill reaches graph floor below curve and follows theme");
+    // At 2 kHz, 300 Hz and 8 kHz responses must move BOTH stroke and fill.
+    observed.synthFilters[0].cutoff=300;auto low=render();const auto lowHandle=panel.responseHandle();observed.synthFilters[0].cutoff=8000;auto high=render();check(panel.responseHandle().x>lowHandle.x && state.modulation.synthFilters.filters[0].values.cutoff==8000,"modulation telemetry moves handle without overwriting authored knobs");
+    dsp::LowPassCoefficientTable table;table.prepare(48000);const int i=170;const double hz=20*std::pow(1000.,double(i)/255);const int column=plot.getX()+juce::roundToInt(float(i)/255*float(plot.getWidth()));
+    const auto curveY=[&](float cutoff) {const double magnitude=dsp::lowPassMagnitude(table.make(cutoff,.1f),hz,48000,1);return plot.getY()+juce::roundToInt(float(dsp::FilterResponseAxis{48000}.y(magnitude))*float(plot.getHeight()));};
+    const int lowY=curveY(300),highY=curveY(8000),middle=(lowY+highY)/2;
+    check(lowY-highY>20 && low.getPixelAt(column,middle)!=high.getPixelAt(column,middle),"observed cutoff moves fill boundary with truthful response");
+    const auto whiteNear=[&](const juce::Image& img,int y) {float brightness=0;for(int dy=-2;dy<=2;++dy) brightness=std::max(brightness,img.getPixelAt(column,y+dy).getBrightness());return brightness;};
+    check(whiteNear(low,lowY)>.65f && whiteNear(high,highY)>.65f,"response stroke follows actual coefficient magnitudes");ui::setDeclarativeTheme(theme);
+}
+
+void synthFilterVisualComposition() {
+    auto owner=makeLegacyProcessorFixture();auto& p=*owner;p.prepareToPlay(48000,256);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    ui::FilterPanel* filter=nullptr;ui::ModulationPanel* modulation=nullptr;
+    walk(*editor,[&](auto& c){if(auto* f=dynamic_cast<ui::FilterPanel*>(&c)) filter=f;if(auto* m=dynamic_cast<ui::ModulationPanel*>(&c)) modulation=m;});
+    check(filter && modulation,"visual composition uses actual Synth panels");
+    filter->setSize(662,355);modulation->setSize(778,355);
+    const auto save=[](const juce::Image& image,const juce::String& name){juce::File file("/tmp/"+name);file.deleteFile();if(auto out=file.createOutputStream()) {juce::PNGImageFormat png;png.writeImageToStream(image,*out);}};
+    int authored=0;
+    for(int count:{1,3,8}) {
+        while(authored<count) {check(filter->addFilter()!=0,"visual fixture adds canonical filter");++authored;}
+        check(filter->dropFilterOnOscillator(filter->selectedFilter(),1),"visual fixture exposes actual oscillator input and preserved serial output");
+        const auto r=filter->editorRegions();
+        check(r.routing.isEmpty() && r.header.getBottom()<r.response.getY() && r.response.getBottom()<r.parameters.getY(),"header/response/parameters are ordered without redundant input-topology row");
+        check(r.response.getHeight()>=180 && r.response.getHeight()<=198 && r.parameters.getHeight()==ui::FilterPanel::EditorMetrics::parameterHeight && filter->contentBounds().getBottom()-r.parameters.getBottom()>=4,"graph proportion and parameter breathing room are bounded");
+        bool selectedVisible=false,footerContains=true,controlsContained=true;juce::Viewport* viewport=nullptr;
+        walk(*filter,[&](auto& c){if(auto* v=dynamic_cast<juce::Viewport*>(&c)) viewport=v;});
+        const auto rail=ui::sourceRailLayout(filter->contentBounds());
+        walk(*filter,[&](auto& c){
+            if(auto* row=dynamic_cast<ui::SourceEntityButton*>(&c)) if(row->isVisible() && row->getToggleState()) selectedVisible=viewport->getBounds().contains(filter->getLocalArea(row,row->getLocalBounds()));
+            if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="+" || b->getButtonText()=="-") footerContains &= rail.rail.contains(b->getBounds()) && b->getY()>viewport->getBottom();
+            if(auto* k=dynamic_cast<juce::Slider*>(&c)) if(k->isVisible()) controlsContained &= r.parameters.contains(k->getBounds());
+        });
+        check(selectedVisible && footerContains && controlsContained,"selected row remains visible without footer/parameter collisions at each capacity");
+        if(count==8) {
+            const int selectedScroll=viewport->getViewPositionY();check(selectedScroll>0,"full filter rail scrolls selected last row into view");
+            viewport->setViewPosition(0,0);filter->syncFromModel();check(viewport->getViewPositionY()==0,"model polling preserves deliberate user scroll away from selection");viewport->setViewPosition(0,selectedScroll);
+        }
+        juce::Image panel(juce::Image::ARGB,662,355,true);juce::Graphics gp(panel);filter->paintEntireComponent(gp,true);
+        save(panel,"origami-filter-ui2-"+juce::String(count)+".png");
+        juce::Image comparison(juce::Image::ARGB,1440,355,true);juce::Graphics gc(comparison);modulation->paintEntireComponent(gc,true);gc.setOrigin(778,0);filter->paintEntireComponent(gc,true);
+        save(comparison,"origami-filter-ui2-comparison-"+juce::String(count)+".png");
+    }
+    walk(*editor,[&](auto& c){if(auto* rack=dynamic_cast<ui::OscillatorRack*>(&c)) rack->syncFromModel();});
+    // The actual whole Synth canvas also proves the lower regions stay above keys.
+    juce::Image canvas(juce::Image::ARGB,editor->getWidth(),editor->getHeight(),true);juce::Graphics g(canvas);editor->paintEntireComponent(g,true);save(canvas,"origami-filter-ui2-synth.png");
+}
+
+void canonicalInitPluginAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;
+    const auto expected=encodeInstrumentState(canonicalInitState());
+    check(encodeInstrumentState(p.getUiInstrumentState())==expected,"product startup equals canonical Init");
+    p.prepareToPlay(48000,256);
+    const auto second=p.addUiOscillator();check(second==2,"dirty patch adds oscillator");
+    auto table=content::basicShapes();table.name="Dirty table";for(auto& x:table.samples)x*=.3f;
+    check(p.setUiOscillatorWavetable(1,table,"dirty.table"),"dirty Init-reset custom wavetable");
+    p.setUiParameter(ParameterId::Attack,.3f);p.setUiParameter(ParameterId::Release,2);p.setUiParameter(ParameterId::MasterGain,.13f);
+    auto state=p.getUiInstrumentState();auto mod=state.modulation;const auto filter=addSynthFilter(mod);
+    check(insertSynthFilter(mod,state.oscillators,filter,1),"dirty reset Synth filter routing");
+    mod.routes[0]={mod.nextRouteId++,true,ModSource::Lfo1,{ModDestination::Level,1},.4f,false};
+    check(p.setUiModulationState(mod),"dirty reset modulation");
+    p.getUiFxDocument().edit([](fx::FxGraph& g){return g.insertEffectBeforeOutput(fx::FxEffectType::Compressor)!=0;});
+    juce::MemoryBlock oldPatch;p.getStateInformation(oldPatch);const auto dirty=encodeInstrumentState(p.getUiInstrumentState());
+    check(p.loadUiInitPreset(),"explicit Init reset loads");check(encodeInstrumentState(p.getUiInstrumentState())==expected,"reset clears dirty authored topology and values");
+    check(p.getUiFxDocument().graph()==fx::makeDefaultFxGraph(),"reset clears dirty FX topology");
+    juce::AudioBuffer<float> audio(2,256);juce::MidiBuffer midi;p.processBlock(audio,midi);
+    check(encodeInstrumentState(p.getUiInstrumentState())==expected,"Init stays exact after audio adoption");
+    check(p.loadUiPresetState(oldPatch,"historical.test","Historical"),"historical authored patch loads");
+    check(encodeInstrumentState(p.getUiInstrumentState())==dirty && p.getUiParameter(ParameterId::MasterGain)==.13f,"saved patch values remain authoritative");
+    check(p.loadUiInitPreset(),"Init reload deterministic");
+    double peak=0,power=0;int samples=0;
+    for(int block=0;block<188;++block){audio.clear();midi.clear();if(block==0)midi.addEvent(juce::MidiMessage::noteOn(1,60,juce::uint8(127)),0);p.processBlock(audio,midi);if(block>93)for(int sample=0;sample<256;++sample){const float x=audio.getSample(0,sample);check(std::isfinite(x) && x==audio.getSample(1,sample),"published Init processor finite and symmetric");peak=std::max(peak,double(std::abs(x)));power+=x*x;++samples;}}
+    check(20*std::log10(peak)>-11.2 && 20*std::log10(peak)<-10.2,"actual final processor Init peak target");
+    std::cout<<"Init final processor peak="<<peak<<" dB="<<20*std::log10(peak)<<" RMS="<<std::sqrt(power/samples)<<'\n';
+    check(p.loadUiInitPreset(),"Init clears held voice before UI audit");p.processBlock(audio,midi);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());editor->setVisible(true);
+    check(rack(*editor).count()==1,"Init editor contains exactly one oscillator");
+    for(auto size:{juce::Point<int>{1100,760},juce::Point<int>{1440,900}}) {editor->setSize(size.x,size.y);editor->resized();check(rack(*editor).count()==1,"Init responsive rack count");}
+    if(const char* folder=std::getenv("ORIGAMI_INIT_AUDIO_REPORT")) {auto image=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.f);juce::FileOutputStream out(juce::File(juce::String(folder)+"/init-synth.png"));juce::PNGImageFormat{}.writeImageToStream(image,out);}
+}
+void audioCardLayoutAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());editor->setVisible(true);
+    ui::FxPage* page=nullptr;juce::TextButton* nodes=nullptr;
+    walk(*editor,[&](auto& c){if(auto* x=dynamic_cast<ui::FxPage*>(&c))page=x;if(auto* b=dynamic_cast<juce::TextButton*>(&c))if(b->getButtonText()=="NODES" && !nodes)nodes=b;});
+    check(page && nodes,"audio layout Nodes page exists");nodes->onClick();
+    for(const auto& d:fx::fxEffectCatalog()) {
+        if(!d.processesAudio || d.type==fx::FxEffectType::SpectralTune)continue; // separate keyboard/spectrum card audit
+        fx::FxNodeId id=0;
+        page->document().replace(fx::makeDefaultFxGraph());
+        page->document().edit([&](fx::FxGraph& g){id=g.insertEffectBeforeOutput(d.type);return id!=0;});page->syncFromModel();
+        ui::FxNodeComponent* node=nullptr;walk(*page,[&](auto& c){if(auto* x=dynamic_cast<ui::FxNodeComponent*>(&c))if(x->id()==id)node=x;});check(node,"catalog effect card exists");
+        int count=0;for(auto* child:node->getChildren())count+=dynamic_cast<juce::Slider*>(child)!=nullptr;
+        std::cout<<"Audio card "<<d.key<<" quick="<<count<<" total="<<d.parameterCount<<" visual="<<int(d.visual)<<'\n';
+        check(node->getWidth()==216 && node->getHeight()==180,"audio outer card unchanged");
+        const auto layout=ui::AudioCardLayout::forBounds(node->getLocalBounds(),count);
+        check(layout.viewport==juce::Rectangle<int>(12,40,192,72),"audio viewport shares enlarged 72px bounds");
+        check(layout.labels==juce::Rectangle<int>(12,158,192,22),"audio labels retain original low bounds");
+        int i=0;for(auto* child:node->getChildren())if(auto* slider=dynamic_cast<juce::Slider*>(child)) {
+            check(slider->getBounds()==layout.knob(i++,count) && slider->getHeight()==46 && slider->getBounds().getCentreY()==135,"audio knobs lowered with unchanged hit size");
+            check(node->getComponentAt(slider->getBounds().getCentre())==slider,"lower knob center hit targets slider");
+            const auto pid=fx::FxParameterId(int(slider->getName().fromLastOccurrenceOf("P",false,false).getIntValue()));
+            slider->setValue(.62,juce::sendNotificationSync);check(std::abs(page->graph().findNode(id)->parameter(pid).value_or(-1)-.62f)<.002f,"audio knob still writes canonical parameter");
+        }
+        check(i==count,"all quick controls audited");
+        page->selectNode(id);
+        auto* inspector=page->inspectorViewport().getViewedComponent();
+        check(inspector,"all audio types have unified effect inspector");
+        int inspectorCount=0;
+        walk(*inspector,[&](auto& component){if(auto* k=dynamic_cast<juce::Slider*>(&component)) {
+            ++inspectorCount;auto* parent=k->getParentComponent();
+            check(parent->getLocalBounds().contains(k->getBounds()),"inspector parameter bounds stay in scroll content");
+            check(parent->getComponentAt(k->getBounds().getCentre())==k,"inspector slider center hit targets parameter");
+        }});
+        check(inspectorCount>0,"unified inspector exposes effect parameters");
+        if(const char* folder=std::getenv("ORIGAMI_INIT_AUDIO_REPORT")){auto image=inspector->createComponentSnapshot(inspector->getLocalBounds(),true,2.f);juce::FileOutputStream out(juce::File(juce::String(folder)+"/"+d.key+"-inspector.png"));juce::PNGImageFormat{}.writeImageToStream(image,out);}
+        for(float scale:{.75f,1.f,1.5f,2.f}) {const auto image=node->createComponentSnapshot(node->getLocalBounds(),true,scale);check(image.isValid(),"audio scale render valid");if(const char* folder=std::getenv("ORIGAMI_INIT_AUDIO_REPORT")){juce::FileOutputStream out(juce::File(juce::String(folder)+"/"+d.key+"-"+juce::String(scale,2)+".png"));juce::PNGImageFormat{}.writeImageToStream(image,out);}}
+    }
+    // The canonical catalog currently exposes 1-3 quick controls; future counts
+    // also use equal cells without changing parameter order or adding a row.
+    for(int count:{1,2,3,4,5})for(auto size:{juce::Point<int>{216,180},juce::Point<int>{280,220}}){auto layout=ui::AudioCardLayout::forBounds({0,0,size.x,size.y},count);juce::Rectangle<int> previous;for(int i=0;i<count;++i){auto knob=layout.knob(i,count);check(!knob.intersects(layout.viewport) && !knob.intersects(layout.labels) && !knob.intersects(previous),"shared audio 1-5 control bounds do not overlap");previous=knob;}}
+}
+
+void spectralTunePluginAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,128);
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());editor->setVisible(true);
+    ui::FxPage* page=nullptr;juce::TextButton* nodes=nullptr;
+    walk(*editor,[&](auto& c){if(auto* x=dynamic_cast<ui::FxPage*>(&c))page=x;if(auto* b=dynamic_cast<juce::TextButton*>(&c))if(b->getButtonText()=="NODES" && !nodes)nodes=b;});check(page && nodes,"Spectral Nodes page");nodes->onClick();
+    bool listed=false;for(const auto& item:page->moduleMenuItems(false))if(item.id==int(fx::FxEffectType::SpectralTune))listed=item.path.contains("SPECTRAL");check(listed,"Spectral category canonical menu");
+    fx::FxNodeId id=0;page->document().edit([&](fx::FxGraph& g){id=g.insertEffectBeforeOutput(fx::FxEffectType::SpectralTune);return id!=0;});page->syncFromModel();page->selectNode(id);
+    check(p.getLatencySamples()==2046,"host reports Spectral latency");
+    ui::FxNodeComponent* node=nullptr;walk(*page,[&](auto& c){if(auto* x=dynamic_cast<ui::FxNodeComponent*>(&c))if(x->id()==id)node=x;});check(node && node->getWidth()==300 && node->getHeight()==260,"Spectral card has compact keyboard footprint");
+    int keys=0,knobs=0;std::vector<juce::Rectangle<int>> bounds;
+    for(auto* child:node->getChildren()) {
+        if(auto* key=dynamic_cast<juce::TextButton*>(child))if(key->getName().startsWith("Spectral Tune note ")) { ++keys;check(node->getComponentAt(key->getBounds().getCentre())==key,"Spectral key hit target");for(auto b:bounds)check(!b.intersects(key->getBounds()),"Spectral keys do not overlap");bounds.push_back(key->getBounds()); }
+        if(auto* knob=dynamic_cast<juce::Slider*>(child)){++knobs;check(knob->getHeight()==46 && knob->getY()==192,"Spectral footer controls retain hit size and low placement");check(int(knob->getProperties()["mct.mod.destination"])==int(ModDestination::FxParameter),"Spectral canonical modulation destination");}
+    }
+    check(keys==12 && knobs==4,"Spectral twelve keys and four primary controls");
+    auto named=[&](const juce::String& name)->juce::TextButton* {juce::TextButton* found=nullptr;for(auto* c:node->getChildren())if(auto* b=dynamic_cast<juce::TextButton*>(c))if(b->getName()==name)found=b;check(found,"Spectral named control exists");return found;};
+    named("Spectral Tune note C")->onClick();check(std::round(*page->graph().findNode(id)->parameter(fx::spectral::Mask)*4095)==4094 && *page->graph().findNode(id)->parameter(fx::spectral::Scale)==1,"key edit canonical Custom mask");
+    named("Spectral Tune clear notes")->onClick();check(*page->graph().findNode(id)->parameter(fx::spectral::Mask)==0,"clear mask");named("Spectral Tune invert notes")->onClick();check(*page->graph().findNode(id)->parameter(fx::spectral::Mask)==1,"invert mask");named("Spectral Tune all notes")->onClick();
+    page->setParameter(id,fx::spectral::Scale,.2f);page->setParameter(id,fx::spectral::Root,3.f/11);page->setParameter(id,fx::spectral::Snap,.63f);
+    for(auto source:{ModSource::Env1,ModSource::Lfo1,ModSource::Random}){const auto routeId=p.addUiRoute();ModRoute route{routeId,true,source,fxParameterAddress(mainBusId,id,fx::spectral::Snap),.1f,false};check(p.setUiRoute(route),"Spectral ENV/LFO/Random routes");}
+    p.setUiFxNodeTelemetryEnabled(mainBusId,true);juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;for(int i=0;i<80;++i){audio.clear();midi.clear();if(i==0)midi.addEvent(juce::MidiMessage::noteOn(1,60,juce::uint8(100)),0);p.processBlock(audio,midi);check(std::isfinite(magnitude(audio)),"Spectral actual engine graph output finite");}
+    page->syncFromModel();page->refreshVisualFeedback();const auto telemetry=page->nodeTelemetry(id);check(telemetry.hasSpectrum,"Spectral live DSP telemetry reaches UI");
+    // Offscreen test editors have no desktop peer, so their visibility-gated
+    // timer does not run. Feed the real host snapshot through the card API.
+    node->setTelemetry(telemetry);check(*std::max_element(telemetry.spectrum.input.begin(),telemetry.spectrum.input.end())>0 && *std::max_element(telemetry.spectrum.output.begin(),telemetry.spectrum.output.end())>0,"Spectral captures contain actual nonzero input and mapped spectra");
+    if(const char* folder=std::getenv("ORIGAMI_SPECTRAL_REPORT"))for(float scale:{.75f,1.f,1.5f,2.f}){const auto image=node->createComponentSnapshot(node->getLocalBounds(),true,scale);juce::FileOutputStream out(juce::File(juce::String(folder)+"/spectral-card-"+juce::String(scale,2)+".png"));out.setPosition(0);out.truncate();juce::PNGImageFormat{}.writeImageToStream(image,out);}
+    for(auto size:{juce::Point<int>{1100,760},juce::Point<int>{1440,900}}){editor->setSize(size.x,size.y);editor->resized();check(node->getLocalBounds().contains(named("Spectral Tune scale")->getBounds()),"responsive scale selector remains in card");if(const char* folder=std::getenv("ORIGAMI_SPECTRAL_REPORT")){auto image=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.f);juce::FileOutputStream out(juce::File(juce::String(folder)+"/spectral-editor-"+juce::String(size.x)+".png"));out.setPosition(0);out.truncate();juce::PNGImageFormat{}.writeImageToStream(image,out);}}
+    juce::MemoryBlock state;p.getStateInformation(state);auto restored=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());restored->prepareToPlay(48000,128);restored->setStateInformation(state.getData(),int(state.getSize()));check(restored->getUiFxDocument().graph()==page->graph() && restored->getLatencySamples()==2046,"Spectral processor save/load exact graph and host latency");
+    int routes=0;for(const auto& route:restored->getUiInstrumentState().modulation.routes)routes+=route.id && isFxDestination(route.destination.parameter);check(routes==3,"Spectral modulation routes survive state restore");
+    check(page->deleteNode(id),"Spectral canonical delete");for(const auto& route:p.getUiInstrumentState().modulation.routes)check(!route.id || !isFxDestination(route.destination.parameter),"Spectral deletion cleans modulation routes");check(p.getLatencySamples()==0,"deleting final spectral node clears host latency");
+    std::cout<<"PASS Spectral Tune plugin/UI audit\n";
+}
+
+void unisonPluginAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,128);
+    check(p.getUiParameter(ParameterId::OscUnison)==1,"Unison Init count is one");
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());
+    juce::Slider* count=nullptr;
+    walk(*editor,[&](auto& c){if(auto* card=dynamic_cast<ui::OscillatorCard*>(&c))if(card->id()==1)walk(*card,[&](auto& child){if(auto* slider=dynamic_cast<juce::Slider*>(&child))if(slider->getName()=="OSC UNISON")count=slider;});});
+    check(count && count->getMinimum()==1 && count->getMaximum()==16 && count->getInterval()==1,"existing Unison control has discrete 1..16 range");
+    check(!count->getProperties().contains("mct.mod.destination"),"Unison topology is not an internal modulation destination");
+    check(count->getTextFromValue(8)=="8","Unison displays an integer");
+    p.clearUiHistory();check(bool(count->onDragStart) && bool(count->onDragEnd),"Unison uses centralized gesture hooks");
+    count->onDragStart();for(int n=2;n<=8;++n)count->setValue(n,juce::sendNotificationSync);count->onDragEnd();
+    check(p.getUiParameter(ParameterId::OscUnison)==8 && p.uiHistorySize()==1,"stepped drag coalesces into one history entry");
+    check(p.undoUi() && p.getUiParameter(ParameterId::OscUnison)==1 && p.redoUi() && p.getUiParameter(ParameterId::OscUnison)==8,"Unison 1-8 undo/redo");
+    check(p.setUiParameter(ParameterId::OscUnison,7.7f) && p.getUiParameter(ParameterId::OscUnison)==8,"Unison quantizes fractional edits");
+    check(p.setUiParameter(ParameterId::OscUnison,100) && p.getUiParameter(ParameterId::OscUnison)==16,"Unison maximum clamps");
+    check(p.setUiParameter(ParameterId::OscUnison,-2) && p.getUiParameter(ParameterId::OscUnison)==1,"Unison minimum clamps");
+    const auto id=p.addUiOscillator();check(id!=0,"second oscillator for independent count");
+    auto m=p.getUiOscillatorState(id);m.unison=16;m.detuneCents=32;m.phaseMode=OscillatorPhaseMode::Random;m.phasePerUnison=true;m.randomPhaseDegrees=180;
+    p.clearUiHistory();check(p.setUiOscillatorState(id,m) && p.undoUi() && p.getUiOscillatorState(id).unison==1 && p.redoUi() && p.getUiOscillatorState(id).unison==16,"independent oscillator count and phase use centralized history");
+    juce::MemoryBlock saved;p.getStateInformation(saved);
+    auto restored=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());restored->setStateInformation(saved.getData(),int(saved.getSize()));restored->prepareToPlay(48000,128);
+    const auto recalled=restored->getUiOscillatorState(id);
+    check(recalled.unison==16 && recalled.detuneCents==32 && recalled.phaseMode==OscillatorPhaseMode::Random && recalled.randomPhaseDegrees==180,"host project restores independent unison and phase");
+    check(restored->getUiParameter(ParameterId::OscUnison)==1 && restored->getUiFinalOutput()==FinalOutputGain::unity,"Unison restore preserves other oscillator and final Master");
+    juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;midi.addEvent(juce::MidiMessage::noteOn(1,60,.7f),0);restored->processBlock(audio,midi);midi.clear();
+    pluginAllocations=0;pluginFrees=0;pluginGuardAllocations=true;restored->processBlock(audio,midi);pluginGuardAllocations=false;
+#ifndef ORIGAMI_SANITIZED
+    check(!pluginAllocations.load() && !pluginFrees.load(),"unison processor callback allocation guard");
+#endif
+    for(int ch=0;ch<2;++ch)for(int n=0;n<128;++n)check(std::isfinite(audio.getSample(ch,n)),"restored unison processor finite");
+    std::cout<<"PASS Unison plugin/UI audit\n";
+}
+
+void finalOutputAudit() {
+    using G=FinalOutputGain;
+    check(G::linear(0)==0.f && std::abs(G::db(.5f)+12.f)<1e-6f && G::db(1)==6.f,"Master endpoint and midpoint mapping");
+    check(G::linear(G::unity)==1.f && std::abs(G::linear(1)-std::pow(10.f,.3f))<1e-6f,"unity is bit-exact, maximum is +6 dB");
+    float previous=0;
+    for(int i=0;i<=1000;++i){const float p=float(i)/1000.f;check(std::isfinite(G::linear(p)) && G::linear(p)>=previous,"gain mapping is finite and monotonic");previous=G::linear(p);check(std::abs(G::position(G::db(p))-p)<1e-6f,"mapping round trip");}
+    check(G::text(0).contains("dB") && !G::text(.5f).contains("%") && G::text(.5f)=="-12.0 dB" && G::text(1)=="+6.0 dB","readout uses signed dB and silence");
+    FinalOutputStage stage;std::array<float,128> l{},r{};
+    stage.prepare(48000,.5f);l.fill(.8f);r.fill(.2f);stage.process(l.data(),r.data(),128,.5f);
+    check(std::abs(l[20]-.8f*G::linear(.5f))<1e-7f && std::abs(r[20]-.2f*G::linear(.5f))<1e-7f,"one common final gain for L/R");
+    auto meter=stage.meters();check(std::abs(meter.level[0]-l[20])<1e-7f && std::abs(meter.level[1]-r[20])<1e-7f,"independent meter tap is post gain");
+    stage.prepare(48000,G::unity);l.fill(1);r.fill(.5f);stage.process(l.data(),r.data(),128,0);
+    check(l[0]<1 && l[0]>.99f && l[127]>0 && l[127]<l[0],"mute ramp begins smoothly, rather than cutting");
+    for(int block=0;block<8;++block){l.fill(1);r.fill(.5f);stage.process(l.data(),r.data(),128,0);}
+    check(l[127]==0 && r[127]==0,"mute reaches true zero after 20 ms");
+    stage.prepare(48000,0);l.fill(1);r.fill(1);stage.process(l.data(),r.data(),128,0);
+    check(stage.meters().level[0]==0 && stage.meters().level[1]==0,"silence meter reflects final gain");
+    stage.prepare(48000,G::unity);l.fill(1);r.fill(0);stage.process(l.data(),r.data(),128,G::unity);
+    l.fill(0);stage.process(l.data(),r.data(),128,G::unity);meter=stage.meters();
+    check(meter.level[0]<1 && meter.level[0]>.98f && meter.level[1]==0 && meter.hold[0]==1,"responsive peak, controlled release and independent hold");
+    for(int i=0;i<210;++i)stage.process(l.data(),r.data(),128,G::unity);
+    check(stage.meters().hold[0]<1 && stage.meters().level[0]<.3f,"hold expires after half a second and then releases");
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,128);p.clearUiHistory();
+    check(p.finalOutputParameter()->getParameterID()=="output.master" && std::abs(static_cast<juce::AudioProcessorParameter*>(p.finalOutputParameter())->getValueForText("-12 dB")-.5f)<1e-6f,"host automation is normalized but labelled in dB");
+    const auto initial=p.getUiFinalOutput();p.beginFinalOutputGesture();
+    for(int i=1;i<=100;++i)check(p.setUiFinalOutput(float(i)/200.f),"master continuous edit");p.endFinalOutputGesture();
+    check(p.uiHistorySize()==1 && p.undoUi() && p.getUiFinalOutput()==initial && p.redoUi() && p.getUiFinalOutput()==.5f,"Master drag is one history entry with undo/redo");
+    juce::MemoryBlock saved;p.getStateInformation(saved);auto restored=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());
+    restored->setStateInformation(saved.getData(),int(saved.getSize()));check(restored->getUiFinalOutput()==.5f,"Master trim state save/restore");
+    const auto legacy=encodeInstrumentState(p.getUiInstrumentState());restored->setStateInformation(legacy.data(),int(legacy.size()));check(restored->getUiFinalOutput()==G::unity,"legacy patches restore compatible unity output");
+    p.setUiFinalOutput(.7f);static_cast<juce::AudioProcessorParameter*>(p.finalOutputParameter())->setValue(.2f);
+    check(p.undoUi() && p.getUiFinalOutput()==.2f,"Undo preserves later host output automation");
+    auto editor=std::unique_ptr<OrigamiAudioProcessorEditor>(static_cast<OrigamiAudioProcessorEditor*>(p.createEditor()));
+    ui::OrigamiHeader* header=nullptr;walk(*editor,[&](auto& c){if(auto* h=dynamic_cast<ui::OrigamiHeader*>(&c))header=h;});check(header,"Master header");
+    auto& knob=header->masterKnob();check(!knob.getProperties().contains("mct.mod.destination") && !knob.getProperties().contains("mct.mod.itemId") && !knob.getProperties().contains("mct.mod.oscillator"),"Master knob advertises no internal modulation destination");
+    check(std::abs(knob.getNormalisableRange().convertFrom0to1(.5)+12)<1e-5,"knob midpoint is 12 o'clock at -12 dB");
+    const auto beforeWheel=knob.getValue();juce::MouseWheelDetails wheel{};wheel.deltaY=.2f;knob.mouseWheelMove(event(knob),wheel);check(knob.getValue()==beforeWheel,"workspace wheel navigation cannot change final gain");
+    p.clearUiHistory();if(knob.onDragStart)knob.onDragStart();for(int i=0;i<20;++i)knob.setValue(-24.+i,juce::sendNotificationSync);if(knob.onDragEnd)knob.onDragEnd();
+    check(p.uiHistorySize()==1 && p.canUndoUi(),"actual header slider wiring coalesces gestures");
+    editor->openWavetableEditorForOscillator(1);
+    p.clearUiHistory();const auto beforeOverlay=p.getUiFinalOutput();knob.setValue(-12,juce::sendNotificationSync);
+    check(header->canUndo && header->canUndo(),"permanent Master Undo remains available in wavetable authoring");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(p.getUiFinalOutput()==beforeOverlay,"Master Undo uses document history while draft editor is open");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(p.getUiFinalOutput()==.5f,"Master Redo works while draft editor is open");
+    auto& authoring=editor->wavetableEditorForTesting();const auto originalSample=authoring.documentForTesting().frames[0].samples[17];
+    authoring.drawSampleForTesting(0,17,.37f);
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(authoring.documentForTesting().frames[0].samples[17]==originalSample && p.getUiFinalOutput()==.5f,"new wavetable draft edit has Undo priority over older Master edit");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(p.getUiFinalOutput()==beforeOverlay,"exhausting draft history reveals previous Master edit");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(p.getUiFinalOutput()==.5f && authoring.documentForTesting().frames[0].samples[17]==originalSample,"Master Redo precedes newer draft Redo");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(authoring.documentForTesting().frames[0].samples[17]==.37f,"draft Redo remains available after Master replay");
+
+    for(const auto& entry:ui::modulationDestinationCatalog(p.getUiInstrumentState(),{}))check(!entry.label.containsIgnoreCase("Master Output") && !entry.group.containsIgnoreCase("Master Output"),"shared Matrix and Nodes catalog excludes final output");
+
+    header->setPresetName("A very long preset name that must ellipsize before the next preset icon or primary navigation");
+    for(int width:{960,1440,1920}){header->setSize(width,72);auto* output=knob.getParentComponent();check(header->getLocalBounds().contains(output->getBounds()),"Master group remains inside header");for(auto* child:header->getChildren())if(child!=output && child->getName()!="Emergency DSP reset")check(!output->getBounds().intersects(child->getBounds()),"Master never overlaps presets, pages, history or menu");}
+    // Processor integration: the new trim is after the final output, and does
+    // not reroute or retune a patch. Identical processors isolate the gain.
+    auto unity=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized()),trim=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());
+    unity->prepareToPlay(48000,128);trim->prepareToPlay(48000,128);trim->setUiFinalOutput(.5f);
+    juce::AudioBuffer<float> a(2,128),b(2,128);juce::MidiBuffer ma,mb;
+    for(int block=0;block<30;++block){a.clear();b.clear();ma.clear();mb.clear();if(block==0){ma.addEvent(juce::MidiMessage::noteOn(1,60,juce::uint8(100)),0);mb=ma;}unity->processBlock(a,ma);trim->processBlock(b,mb);if(block>12)for(int ch=0;ch<2;++ch)for(int i=0;i<128;++i)check(std::abs(b.getSample(ch,i)-a.getSample(ch,i)*G::linear(.5f))<1e-7f,"final trim leaves existing output/routing unchanged apart from gain");}
+    trim->setUiFinalOutput(0);for(int i=0;i<10;++i){b.clear();trim->processBlock(b,mb);}check(b.getMagnitude(0,b.getNumSamples())==0,"processor final mute produces true silence");
+}
+
+#include "ActivationPanelTests.h"
+#include "ActivationWelcomeTests.h"
+#include "AccountContractTests.h"
+
+void authorizationGateAudit() {
+    auto flag=std::make_shared<std::atomic<bool>>(false);
+    std::array<std::unique_ptr<OrigamiAudioProcessor>,3> processors;
+    std::array<std::unique_ptr<OrigamiAudioProcessorEditor>,3> editors;
+    const auto serialized=[](OrigamiAudioProcessor& p){juce::MemoryBlock b;p.getStateInformation(b);return b;};
+    for(unsigned i=0;i<3;++i) {
+        processors[i]=std::make_unique<OrigamiAudioProcessor>(flag);auto& p=*processors[i];p.prepareToPlay(48000,128);
+        p.setUiParameter(ParameterId::Release,1.f);p.addUiOscillator();p.addUiBus();
+        auto modulation=p.getUiInstrumentState().modulation;modulation.macros[0]=.42f;p.setUiModulationState(modulation);
+        check(p.getUiFxDocument().edit([](auto& graph){return graph.insertEffectBeforeOutput(mct::origami::fx::FxEffectType::Delay)!=0;}),"authorization fixture restores a live Nodes delay and modulation state");
+        const auto patch=serialized(p);p.setStateInformation(patch.getData(),int(patch.getSize()));
+        editors[i]=std::make_unique<OrigamiAudioProcessorEditor>(p);auto& editor=*editors[i];editor.setVisible(true);
+        juce::Component* surface=nullptr;juce::Component* workspace=nullptr;juce::TextEditor* input=nullptr;
+        walk(editor,[&](auto& c){if(c.getName()=="Origami activation surface")surface=&c;if(c.getName()=="Origami authorized workspace")workspace=&c;if(c.getName()=="Origami license key")input=dynamic_cast<juce::TextEditor*>(&c);});
+        check(surface && surface->isVisible() && workspace && !workspace->isEnabled() && input && input->isEnabled(),"all unauthorized editors gate one workspace while key entry remains accessible");
+        for(int y=10;y<editor.getHeight();y+=37)for(int x=10;x<editor.getWidth();x+=53){auto* target=editor.getComponentAt(x,y);check(target==surface || surface->isParentOf(target),"every editor hit routes to activation surface, covering all pages and controls");}
+        check(editor.keyPressed(juce::KeyPress('Z',juce::ModifierKeys::commandModifier,0),workspace),"unauthorized synth shortcut consumed");
+        check(!editor.keyPressed(juce::KeyPress('V',juce::ModifierKeys::commandModifier,0),input),"license paste remains available");
+        check(!editor.isInterestedInFileDrag({"fixture.wav"}),"unauthorized file drag rejected");editor.performDocumentHistory(false);
+        juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;
+        for(int block=0;block<8;++block){audio.applyGain(0);for(int ch=0;ch<2;++ch)for(int n=0;n<128;++n)audio.setSample(ch,n,.75f);midi.addEvent(juce::MidiMessage::noteOn(1,60,.8f),0);p.enqueueUiKeyboardNote(67,true,.8f);
+            pluginAllocations=0;pluginFrees=0;pluginGuardAllocations=true;p.processBlock(audio,midi);pluginGuardAllocations=false;
+            check(magnitude(audio)==0 && pluginAllocations==0 && pluginFrees==0,"unauthorized initialized/restored output explicitly clears stale buffers with zero heap work");}
+        check(serialized(p)==patch,"unauthorized complex project and blocked UI preserve complete document");
+    }
+    flag->store(true);
+    for(unsigned i=0;i<3;++i){auto& p=*processors[i];editors[i]->refreshAuthorizationState();juce::Component* workspace=nullptr;walk(*editors[i],[&](auto& c){if(c.getName()=="Origami authorized workspace")workspace=&c;});check(workspace && workspace->isEnabled(),"shared authorization opens all three editors");
+        juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;audio.clear();p.processBlock(audio,midi);check(magnitude(audio)==0,"unauthorized host/UI MIDI never erupts after authorization");
+        midi.addEvent(juce::MidiMessage::noteOn(1,60,.8f),0);double peak=0;for(int block=0;block<20;++block){audio.clear();p.processBlock(audio,midi);midi.clear();peak=std::max(peak,double(magnitude(audio)));}check(peak>0 && std::isfinite(peak),"authorized restored patch renders finite nonzero output for new MIDI");
+    }
+    flag->store(false);
+    for(unsigned i=0;i<3;++i){auto& p=*processors[i];const auto patch=serialized(p);editors[i]->refreshAuthorizationState();juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;audio.clear();midi.addEvent(juce::MidiMessage::noteOn(1,64,.8f),0);
+        pluginAllocations=0;pluginFrees=0;pluginGuardAllocations=true;p.processBlock(audio,midi);pluginGuardAllocations=false;
+        check(magnitude(audio)==0 && pluginAllocations==0 && pluginFrees==0 && p.finalOutputMeters().level[0]==0 && p.getUiRenderBudgetSnapshot().load.activeVoices==0,"authorization loss clears voices, meters and output without callback allocation");
+        check(serialized(p)==patch,"authorization loss preserves patch");
+    }
+    flag->store(true);
+    for(auto& owner:processors){juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;for(int block=0;block<400;++block){audio.clear();owner->processBlock(audio,midi);check(magnitude(audio)==0,"reopening cannot resurrect previous voices or delayed FX tails");}}
+    // No personal credentials or real browser are involved in these UI captures.
+    if(const char* folder=std::getenv("ORIGAMI_ACTIVATION_REPORT")){flag->store(false);for(int width:{960,1440,1920}){editors[0]->setSize(width,int(width/1.6));editors[0]->refreshAuthorizationState();juce::FileOutputStream out(juce::File(juce::String(folder)+"/activation-"+juce::String(width)+".png"));out.setPosition(0);out.truncate();check(juce::PNGImageFormat{}.writeImageToStream(editors[0]->createComponentSnapshot(editors[0]->getLocalBounds()),out),"activation screenshot saved");}}
+    std::cout<<"PASS L01.1 authorization UI/audio gate audit\n";
+}
+
+void accountPatchBoundaryAudit() {
+    using namespace melogic::account;
+    class FixtureBackend final : public Backend {
+    public:
+        Request begin(juce::int64 now) override {const auto id=juce::String::repeatedString("c",64);return {id,juce::String::repeatedString("d",64),"https://melogicrecords.studio/auth/desktop?request="+id,now+300000};}
+        Session fixture(juce::int64 now){Session s;s.identity={"account-boundary-fixture","Boundary Fixture","boundary@example.invalid",{}};s.refreshToken="boundary-fixture-secret-not-real";s.verified=true;s.validatedAt=now;s.refreshAfter=now+3000000;return s;}
+        Poll poll(const Request& r,juce::int64 now) override{return {Poll::Approved,r.id,fixture(now)};}
+        Session refresh(const Session&,juce::int64 now) override{return fixture(now);}
+    };
+    Service::useInMemoryForTesting(std::make_unique<FixtureBackend>());auto account=Service::shared();
+    const auto wait=[&](State target){const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(6);while(account->snapshot().state!=target && std::chrono::steady_clock::now()<end)std::this_thread::sleep_for(std::chrono::milliseconds(10));check(account->snapshot().state==target,"asynchronous account fixture reaches state");};
+    auto processor=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*processor;p.prepareToPlay(48000,128);
+    const auto state=[&]{juce::MemoryBlock b;p.getStateInformation(b);return b;};p.clearUiHistory();const auto before=state();
+    account->signIn();wait(State::SignedIn);
+    {
+        auto unlicensed=std::make_unique<OrigamiAudioProcessor>(account->authorizationFlag());std::unique_ptr<OrigamiAudioProcessorEditor> gated(new OrigamiAudioProcessorEditor(*unlicensed));
+        juce::Label* status=nullptr;juce::TextEditor* entry=nullptr;juce::Button* activate=nullptr;bool overlay=false;
+        walk(*gated,[&](auto& c){if(c.getName()=="Activation status")status=dynamic_cast<juce::Label*>(&c);if(c.getName()=="Origami license key")entry=dynamic_cast<juce::TextEditor*>(&c);if(c.getName()=="Activate license key")activate=dynamic_cast<juce::Button*>(&c);if(c.getName()=="Origami activation surface")overlay=c.isVisible();});
+        check(!unlicensed->isAuthorized() && overlay && status && status->getText().isEmpty(),"authenticated but unlicensed account remains gated without redundant status prose");
+        check(entry && activate,"unlicensed account retains key redemption controls");entry->setText("invalid-fixture-key-entry-only");entry->onTextChange();check(activate->isEnabled(),"signed-in unlicensed user can submit a key");
+        juce::MemoryBlock pendingState;unlicensed->getStateInformation(pendingState);
+        const auto pendingText=juce::String::fromUTF8(static_cast<const char*>(pendingState.getData()),int(pendingState.getSize()));
+        check(!pendingText.contains(entry->getText()),"key entry is absent from complete DAW/preset serialization");
+        check(account->takeBrowserURL().isEmpty(),"completed browser request cannot reopen as a stale login");
+    }
+    check(state()==before && p.uiHistorySize()==0,"sign-in changes neither serialized patch nor history");
+    const auto uid=account->snapshot().identity.uid;
+    p.setUiParameter(ParameterId::Sustain,.27f);check(p.undoUi() && p.redoUi() && account->snapshot().identity.uid==uid,"Undo/Redo does not replay account identity");
+    check(p.loadUiPresetState(before,"account-boundary-preset","Account boundary fixture") && account->snapshot().identity.uid==uid,"preset load leaves machine account unchanged");
+    p.setStateInformation(before.getData(),int(before.getSize()));check(account->snapshot().identity.uid==uid,"DAW project restore leaves machine account unchanged");
+    const auto bytes=state();const auto serialized=juce::String::fromUTF8(static_cast<const char*>(bytes.getData()),int(bytes.getSize()));
+    check(bytes==before && !serialized.contains(uid) && !serialized.contains("boundary@example.invalid") && !serialized.contains("boundary-fixture-secret-not-real"),"complete state including Nodes/Matrix excludes identity and token");
+    juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;audio.clear();p.processBlock(audio,midi);
+    pluginAllocations=0;pluginFrees=0;pluginGuardAllocations=true;p.processBlock(audio,midi);pluginGuardAllocations=false;
+    check(pluginAllocations==0 && pluginFrees==0,"callback has zero allocations/frees with authenticated worker alive");
+    const auto saved=state();const auto entries=p.uiHistorySize();account->logout();wait(State::SignedOut);check(state()==saved && p.uiHistorySize()==entries,"logout leaves synth state/history intact");
+    Service::useInMemoryForTesting();
+#ifndef ORIGAMI_SANITIZED
+    std::atomic<bool> start{false},done{false};std::thread background([&]{while(!start.load())std::this_thread::yield();void* value=::operator new(17);::operator delete(value);done=true;});
+    pluginAllocations=0;pluginFrees=0;pluginGuardAllocations=true;start=true;while(!done.load())std::this_thread::yield();pluginGuardAllocations=false;background.join();
+    check(pluginAllocations==0 && pluginFrees==0,"allocation guard excludes other threads");
+    pluginGuardAllocations=true;void* value=::operator new(19);::operator delete(value);pluginGuardAllocations=false;
+    check(pluginAllocations==1 && pluginFrees==1,"allocation guard still detects calling-thread allocations and frees");
+#endif
+    std::cout<<"PASS L01 account/patch boundary audit\n";
+}
+
+void documentHistoryAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;
+    p.prepareToPlay(48000,128);
+    auto state=[&]{juce::MemoryBlock s;p.getStateInformation(s);return s;};
+    const auto a=state();p.clearUiHistory();
+    check(!p.canUndoUi() && !p.canRedoUi(),"empty document history");
+    p.setUiHistoryContext(3,mainBusId);
+    check(p.uiHistorySize()==0,"navigation does not record history");
+    p.setUiParameter(ParameterId::Sustain,.73f);const auto b=state();
+    check(p.uiHistorySize()==1 && p.undoUi() && state()==a,"parameter undo restores canonical A");
+    check(p.uiHistoryContext().first==3,"undo carries editing context");
+    check(p.redoUi() && state()==b,"parameter redo restores canonical B");
+    p.setUiParameter(ParameterId::Attack,.12f);const auto c=state();
+    check(p.undoUi() && state()==b && p.undoUi() && state()==a,"two edits undo in order");
+    check(p.redoUi() && state()==b && p.redoUi() && state()==c,"two edits redo in order");
+    check(p.undoUi(),"branch undo");p.setUiParameter(ParameterId::Attack,.24f);
+    check(!p.canRedoUi(),"new edit drops abandoned redo branch");
+    const auto beforeFailedLoad=state();const auto entriesBeforeFailedLoad=p.uiHistorySize();
+    auto invalidPreset=beforeFailedLoad;static_cast<unsigned char*>(invalidPreset.getData())[0]=0;
+    std::memset(static_cast<unsigned char*>(invalidPreset.getData())+invalidPreset.getSize()-4,0,4);
+    check(!p.loadUiPresetState(invalidPreset,"invalid","Invalid") && state()==beforeFailedLoad && p.uiHistorySize()==entriesBeforeFailedLoad,"failed load preserves document and history atomically");
+    p.clearUiHistory();const auto beforeGesture=state();
+    p.beginUiTransaction("Adjust Sustain");
+    for(int i=1;i<=100;++i)p.setUiParameter(ParameterId::Sustain,float(i)/101.f);
+    p.endUiTransaction();const auto afterGesture=state();
+    check(p.uiHistorySize()==1 && p.undoUi() && state()==beforeGesture && p.redoUi() && state()==afterGesture,"continuous values coalesce into one entry");
+    const auto n=p.uiHistorySize();p.setUiParameter(ParameterId::Sustain,p.getUiParameter(ParameterId::Sustain));
+    check(p.uiHistorySize()==n,"no-op creates no history");
+    p.clearUiHistory();const auto beforeStructure=state();const auto osc=p.addUiOscillator();
+    check(osc && p.undoUi() && state()==beforeStructure && p.redoUi(),"oscillator creation restores complete structure");
+    const auto withOsc=state();check(p.removeUiOscillator(osc) && p.undoUi() && state()==withOsc,"oscillator deletion undo");
+    auto module=p.getUiOscillatorState(osc);module.pan=.23f;
+    check(p.setUiOscillatorState(osc,module),"edit restored oscillator before audio adoption");
+    check(p.removeUiOscillator(osc) && p.undoUi() && p.getUiOscillatorState(osc).id==osc,"structural edits after queued restore remain undoable");
+    p.clearUiHistory();const auto beforeLoad=state();
+    check(p.loadUiPresetState(a,"history-fixture","History fixture"),"load canonical preset");const auto loaded=state();
+    check(p.uiHistorySize()==1,"preset load is atomic");
+    for(int i=0;i<12;++i)check(p.undoUi() && state()==beforeLoad && p.redoUi() && state()==loaded,"repeated complete preset replay is stable");
+    check(p.loadUiInitPreset() && p.undoUi() && state()==loaded && p.redoUi(),"INIT is undoable");
+    p.markUiSaved();check(p.uiAtSavedState(),"saved checkpoint matches current state");
+    p.setUiParameter(ParameterId::Sustain,.41f);check(!p.uiAtSavedState() && p.undoUi() && p.uiAtSavedState(),"undo returns to saved checkpoint");
+    p.clearUiHistory();
+    for(int i=0;i<90;++i)p.setUiParameter(ParameterId::Sustain,float(i%2)*.5f+.1f);
+    check(p.uiHistorySize()<=64 && p.uiHistoryBytes()<=128u*1024u*1024u,"history count and conservative memory bounds");
+    const auto host=state();p.setStateInformation(host.getData(),int(host.getSize()));
+    check(!p.canUndoUi() && !p.canRedoUi(),"host project restore establishes a history boundary");
+    p.setUiParameter(ParameterId::Sustain,.66f);const auto withAutomation=p.uiHistorySize();
+    static_cast<juce::AudioProcessorParameter*>(p.macroParameter(0))->setValue(.81f);p.getUiRuntimeVisualizationSnapshot();
+    check(p.uiHistorySize()==withAutomation && p.undoUi() && std::abs(p.getUiInstrumentState().modulation.macros[0]-.81f)<1e-5f,"undo preserves later host automation without recording it");
+    p.clearUiHistory();const auto beforeContent=state();
+    const auto oscId=p.getUiInstrumentState().oscillators.front().id;
+    content::WavetableData table;table.name="History PCM";table.samples.resize(2048);
+    for(std::size_t i=0;i<table.samples.size();++i)table.samples[i]=std::sin(float(i)*.01f);
+    check(p.setUiOscillatorWavetable(oscId,table,"history-table"),"shared custom wavetable transaction");const auto withContent=state();
+    check(p.undoUi() && state()==beforeContent && p.redoUi() && state()==withContent,"wavetable PCM and identity survive replay");
+    p.clearUiHistory();
+    const auto count=p.uiHistorySize();bool offThreadUndo=true;
+    std::thread worker([&]{offThreadUndo=p.undoUi();p.beginUiTransaction("Foreign thread");p.endUiTransaction();});worker.join();
+    check(!offThreadUndo && p.uiHistorySize()==count,"foreign/audio threads cannot access history replay or allocate snapshots");
+    auto editor=std::unique_ptr<OrigamiAudioProcessorEditor>(static_cast<OrigamiAudioProcessorEditor*>(p.createEditor()));
+    ui::OrigamiHeader* header=nullptr;ui::FxPage* page=nullptr;
+    walk(*editor,[&](auto& x){if(auto* h=dynamic_cast<ui::OrigamiHeader*>(&x))header=h;if(auto* f=dynamic_cast<ui::FxPage*>(&x))page=f;});
+    check(header && page,"history UI components");
+    const auto beforeKey=p.uiHistorySize();
+    check(!editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys::commandModifier,0),editor.get()) && p.uiHistorySize()==beforeKey,"unfocused plugin leaves host Undo shortcut untouched");
+    p.clearUiHistory();header->selectMode(2);const auto graph=page->graph();
+    page->addEffectAt(fx::FxEffectType::Drive,{120,160});const auto editedGraph=page->graph();
+    check(p.uiHistorySize()==1,"Nodes creation is one centralized transaction");
+    header->selectMode(0);header->chooseUtility(ui::OrigamiHeader::undoItem);
+    check(page->graph()==graph,"top bar restores Nodes edit from SYNTH");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(page->graph()==editedGraph,"top bar replays Nodes edit");
+    p.clearUiHistory();
+    auto& doc=p.getUiFxDocument();doc.beginGesture();
+    const auto effect=editedGraph.nodes().back().id;
+    for(int i=1;i<20;++i)page->setParameter(effect,1,float(i)/20.f);
+    doc.endGesture();
+    check(p.uiHistorySize()==1,"FX parameter gesture coalesces across graph commits");
+    check(p.undoUi() && p.getUiFxDocument().graph()==editedGraph && p.redoUi(),"FX gesture replay");
+    editor->openContentBrowser(content::ContentType::Preset);editor->closeContentBrowser();
+    p.clearUiHistory();const auto beforeControl=state();
+    check(page->addControlOperator(ControlOpType::Multiply).has_value(),"CONTROL structural history fixture");const auto withControl=state();
+    check(p.uiHistorySize()==1 && p.undoUi() && state()==beforeControl && p.redoUi() && state()==withControl,"CONTROL layout and modulation replay together");
+    editor->openContentBrowser(content::ContentType::Preset);editor->closeContentBrowser();
+    for(auto id:{ui::IconId::PresetPrevious,ui::IconId::PresetNext,ui::IconId::Undo,ui::IconId::Redo})check(ui::icon(id).isValid(),"native toolbar vector is valid");
+    for(int width:{960,1440,1920}) {
+        header->setSize(width,72);std::vector<juce::Button*> controls;
+        for(auto* child:header->getChildren())if(auto* button=dynamic_cast<juce::Button*>(child))if(button->getName()!="Emergency DSP reset")controls.push_back(button);
+        for(auto* button:controls){check(header->getLocalBounds().contains(button->getBounds()),"top bar control remains inside bounds");for(auto* other:controls)if(other!=button)check(!button->getBounds().intersects(other->getBounds()),"top bar controls do not overlap");}
+    }
+    p.clearUiHistory();header->refreshHistoryState();
+    for(auto* child:header->getChildren())if(auto* button=dynamic_cast<ui::IconButton*>(child))if(button->getName()=="Undo" || button->getName()=="Redo")check(button->isVisible() && !button->isEnabled() && !button->getBounds().isEmpty(),"unavailable icons keep visible fixed positions");
+}
+
+void presetNodesSynchronizationAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());
+    auto& p=*owner;
+    p.prepareToPlay(48000,128);
+    auto editor=std::unique_ptr<OrigamiAudioProcessorEditor>(static_cast<OrigamiAudioProcessorEditor*>(p.createEditor()));
+    editor->setVisible(true);
+    ui::FxPage* page=nullptr; ui::OrigamiHeader* header=nullptr;
+    walk(*editor,[&](auto& c){if(auto* x=dynamic_cast<ui::FxPage*>(&c))page=x;if(auto* x=dynamic_cast<ui::OrigamiHeader*>(&c))header=x;});
+    check(page && header,"preset Nodes components");
+    header->selectMode(2);
+    auto save=[&](const char* name){ui::PresetSaveDialog::Fields f{name,"QA","","",""};check(editor->savePreset(f,false).wasOk(),"save synchronization fixture");return p.getUiCurrentPreset().id;};
+    auto a=page->addEffectAt(fx::FxEffectType::Drive,{110,150});
+    page->addEffectAt(fx::FxEffectType::Delay,{430,270});
+    const auto routeA=p.addUiRoute();
+    check(p.setUiRoute({routeA,true,ModSource::Lfo1,fxParameterAddress(mainBusId,a,1),.3f,true}),"A modulation fixture");
+    page->syncFromModel();
+    const auto graphA=page->graph(); const auto presetA=save("Sync A");
+    page->confirmClear();
+    auto b=page->addEffectAt(fx::FxEffectType::SpectralTune,{330,100});
+    page->addEffectAt(fx::FxEffectType::Limiter,{700,350});
+    const auto routeB=p.addUiRoute();
+    check(p.setUiRoute({routeB,true,ModSource::Env1,fxParameterAddress(mainBusId,b,fx::spectral::Snap),.6f,false}),"B different route fixture");
+    page->syncFromModel();
+    const auto graphB=page->graph(); const auto presetB=save("Sync B");
+    page->setParameter(b,fx::spectral::Snap,.19f);
+    page->setNodeEnabled(b,false);
+    page->commitMove(b,{750,180});
+    check(p.setUiRoute({routeB,true,ModSource::Random,fxParameterAddress(mainBusId,b,fx::spectral::Snap),.8f,true}),"same topology different modulation");
+    page->setRoutingMode(fx::FxRoutingMode::Parallel);
+    page->syncFromModel();
+    const auto graphC=page->graph(); const auto presetC=save("Sync C");
+    const auto busD=page->addBus(); check(busD!=mainBusId && busD!=0,"different bus fixture");
+    page->addEffectAt(fx::FxEffectType::Gain,{150,360});
+    const auto graphD=page->graph(); const auto presetD=save("Sync D");
+    auto verify=[&](const fx::FxGraph& expected){
+        check(page->graph()==expected,"authoritative graph matches preset");
+        check(page->canvas().connectionPathCount()==expected.connections().size(),"displayed connections match preset");
+        check(page->canvas().nodeComponentCount()==expected.nodes().size(),"displayed node count matches without graph interaction");
+        for(const auto& n:expected.nodes()) {
+            auto* c=page->canvas().nodeComponent(n.id);
+            check(c && c->getX()==juce::roundToInt(n.position.x) && c->getY()==juce::roundToInt(n.position.y),"displayed positions match without graph interaction");
+            if(n.kind==fx::FxNodeKind::Effect) walk(*c,[&](auto& child){
+                if(auto* button=dynamic_cast<juce::Button*>(&child)) if(button->getName()=="Power FX "+juce::String(n.id)) check(button->getToggleState()==n.enabled,"displayed power matches current preset");
+                if(auto* slider=dynamic_cast<juce::Slider*>(&child)) if(slider->getName().startsWith("FX "+juce::String(n.id)+" P")) {
+                    const auto pid=fx::FxParameterId(slider->getName().fromLastOccurrenceOf("P",false,false).getIntValue());
+                    check(std::abs(slider->getValue()-n.parameter(pid).value_or(0))<.002,"displayed quick parameter matches current preset");
+                }
+            });
+        }
+    };
+    auto browse=[&](const juce::String& id){editor->openContentBrowser(content::ContentType::Preset);check(editor->contentBrowser().selectId(id) && editor->contentBrowser().loadSelected(),"actual Browse load and close");check(!editor->contentBrowserOpen(),"Browse closes after load");};
+    browse(presetA); verify(graphA);
+    page->selectNode(a);
+    check(page->modulationRowCount()==1,"A inspector binds A modulation");
+    page->inspectorViewport().setViewPosition(1000,0);
+    check(page->addControlOperator(ControlOpType::Multiply).has_value(),"patch-local CONTROL undo fixture");
+    page->selectNode(a);
+    browse(presetB); verify(graphB);
+    check(page->selectedNode()==fx::invalidFxNodeId,"preset replacement clears selection");
+    check(page->inspectorViewport().getViewPositionX()==0 && page->modulationRowCount()==0,"empty inspector clears old routes and horizontal scroll");
+    check(page->canUndo() && !page->canRedo() && !page->canUndoControl(),"replacement clears local history while retaining document load undo");
+    header->chooseUtility(ui::OrigamiHeader::undoItem); verify(graphA);
+    header->chooseUtility(ui::OrigamiHeader::redoItem); verify(graphB);
+    page->selectNode(b); check(page->modulationRowCount()==1,"B inspector binds B route");
+    browse(presetC); verify(graphC);
+    check(page->selectedNode()==fx::invalidFxNodeId,"same IDs clear old inspector binding");
+
+    browse(presetA); verify(graphA);
+    browse(content::ContentLibrary::initPresetId);
+    verify(p.getUiFxDocument().graph());
+    check(page->canvas().nodeComponentCount()==2,"complex to empty leaves only terminals");
+    browse(presetD); page->selectBus(busD); verify(graphD);
+    browse(presetA); check(page->selectedBus()==mainBusId,"removed active bus falls back to MAIN"); verify(graphA);
+    check(!header->modeEnabled(1),"MIXER is disabled in this build; no real transition exists");
+    for(int mode:{0,3,4}) {
+        header->selectMode(mode); browse(presetB); header->selectMode(2); verify(graphB);
+        browse(presetA); verify(graphA);
+    }
+    // Selecting then cancelling Browse does not preview or restore preset state.
+    editor->openContentBrowser(content::ContentType::Preset);
+    check(editor->contentBrowser().selectId(presetB),"Browse row selection");
+    editor->closeContentBrowser(); verify(graphA);
+    editor->stepPreset(1); verify(p.getUiFxDocument().graph());
+    browse(presetB); page->selectNode(b);
+    // Queue deletes from B, then load C with the same node and route IDs.
+    juce::TextButton* deleteButton=nullptr;
+    walk(*page->canvas().nodeComponent(b),[&](auto& c){if(auto* x=dynamic_cast<juce::TextButton*>(&c))if(x->getName()=="Delete FX "+juce::String(b))deleteButton=x;});
+    check(deleteButton && deleteButton->onClick,"queued delete fixture");
+#if JUCE_MAC
+    juce::TextButton* removeRoute=nullptr;
+    walk(page->moduleParametersPanel(),[&](auto& c){if(auto* x=dynamic_cast<juce::TextButton*>(&c))if(x->getName()=="FX modulation remove "+juce::String(routeB))removeRoute=x;});
+    check(removeRoute && removeRoute->onClick,"queued route delete fixture");
+    removeRoute->onClick();
+    deleteButton->onClick();
+#endif
+    browse(presetB); browse(presetC); browse(presetA); browse(presetC); verify(graphC);
+    #if JUCE_MAC
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode,.03,false);
+    #else
+    p.dispatchPendingMessages();
+    #endif
+    verify(graphC); check(page->graph().findNode(b),"stale deferred delete cannot mutate latest generation");
+
+    bool latestRoute=false;for(const auto& r:p.getUiInstrumentState().modulation.routes) latestRoute|=r.id==routeB && r.source==ModSource::Random;
+    check(latestRoute,"stale deferred route delete cannot mutate latest patch");
+    editor->openContentBrowser(content::ContentType::Preset);
+    for(const auto& id:{presetA,presetB,presetC,presetD}) check(editor->loadPresetRecord(*editor->contentLibrary().find(id)),"rapid loads while Browse stays open");
+    editor->closeContentBrowser(); verify(graphC); // D's MAIN graph is C; its second bus also survived.
+    check(p.getUiCurrentPreset().id==presetD,"rapid A B C D ends on D");
+    check(p.getUiFxWorkspace().contains(busD),"D bus list published");
+    // Host restoration completion, with no page/browser interaction.
+    juce::MemoryBlock stateA; check(editor->contentLibrary().loadPresetState(*editor->contentLibrary().find(presetA),stateA),"host restore bytes");
+    p.setStateInformation(stateA.getData(),int(stateA.getSize()));
+    #if JUCE_MAC
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode,.03,false);
+    #else
+    p.dispatchPendingMessages();
+    #endif
+    verify(graphA);
+    const auto identity=p.getUiCurrentPreset();
+    const auto instrument=encodeInstrumentState(p.getUiInstrumentState());
+    const auto workspace=p.getUiFxWorkspace().encode();
+    const auto generation=p.getUiFxWorkspace().generation();
+    const auto diagnostics=page->uiDiagnostics().controlRebuilds;
+    auto* component=page->canvas().nodeComponent(a);
+    for(int i=0;i<10;++i) {header->selectMode(0);header->selectMode(2);editor->openContentBrowser(content::ContentType::Preset);editor->closeContentBrowser();}
+    check(instrument==encodeInstrumentState(p.getUiInstrumentState()) && workspace==p.getUiFxWorkspace().encode() && generation==p.getUiFxWorkspace().generation(),"view synchronization never edits authoritative state");
+    check(component==page->canvas().nodeComponent(a) && diagnostics==page->uiDiagnostics().controlRebuilds,"unchanged boundaries reuse components and skip CONTROL rebuilds");
+    check(p.getUiCurrentPreset().id==identity.id && p.getUiCurrentPreset().name==identity.name,"synchronization preserves loaded preset identity");
+    auto comparison=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());
+    comparison->prepareToPlay(48000,128);
+    juce::MemoryBlock sound; p.getStateInformation(sound);
+    comparison->setStateInformation(sound.getData(),int(sound.getSize()));
+    p.setStateInformation(sound.getData(),int(sound.getSize()));
+    editor->openContentBrowser(content::ContentType::Preset); editor->closeContentBrowser();
+    for(int block=0;block<32;++block) {
+        juce::AudioBuffer<float> left(2,128),right(2,128); left.clear();right.clear();
+        juce::MidiBuffer ml,mr;
+        if(block==0){ml.addEvent(juce::MidiMessage::noteOn(1,60,juce::uint8(100)),0);mr=ml;}
+        p.processBlock(left,ml);comparison->processBlock(right,mr);
+        for(int channel=0;channel<2;++channel) check(std::memcmp(left.getReadPointer(channel),right.getReadPointer(channel),128*sizeof(float))==0,"synchronized editor leaves identical-state audio bit equivalent");
+    }
+}
+
+void workspaceInspectorAudit() {
+    auto owner = std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());
+    auto &p = *owner;
+    p.prepareToPlay(48000, 128);
+    auto editor = std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    editor->setVisible(true);
+    ui::FxPage *page = nullptr;
+    ui::OrigamiHeader *header = nullptr;
+    juce::TextButton *nodes = nullptr;
+    walk(*editor, [&](auto &c) {
+        if (auto *x = dynamic_cast<ui::FxPage *>(&c))
+            page = x;
+        if (auto *x = dynamic_cast<ui::OrigamiHeader *>(&c))
+            header = x;
+        if (auto *b = dynamic_cast<juce::TextButton *>(&c))
+            if (b->getButtonText() == "NODES" && !nodes)
+                nodes = b;
+    });
+    check(page && header && nodes, "workspace components exist");
+    nodes->onClick();
+    const auto button = [&](juce::Component &parent, const juce::String &name) {
+        juce::TextButton *found = nullptr;
+        walk(parent, [&](auto &c) {
+            if (auto *b = dynamic_cast<juce::TextButton *>(&c))
+                if (b->getName() == name)
+                    found = b;
+        });
+        check(found, "workspace named button exists");
+        return found;
+    };
+    auto *menu = button(*header, "Origami menu");
+    check(menu->getButtonText().isEmpty(), "hamburger uses an icon");
+    check(header->getComponentAt(menu->getBounds().getCentre()) == menu, "hamburger hit bounds");
+    walk(*header, [&](auto &c) {
+        if (auto *b = dynamic_cast<juce::TextButton *>(&c))
+            check(b->getButtonText() != "BROWSE" && b->getButtonText() != "SAVE" &&
+                      b->getButtonText() != "...",
+                  "header has one consolidated menu");
+    });
+    const auto item = [&](int id) {
+        for (const auto &i : header->utilityMenuItems())
+            if (i.id == id)
+                return i;
+        throw std::runtime_error("missing application menu item");
+    };
+    check(item(ui::OrigamiHeader::undoItem).enabled == page->canUndo() &&
+              item(ui::OrigamiHeader::redoItem).enabled == page->canRedo(),
+          "menu availability follows Nodes history");
+    check(item(ui::OrigamiHeader::browseItem).enabled && item(ui::OrigamiHeader::saveItem).enabled,
+          "preset commands remain available");
+    // Verify presentation routes to the existing callbacks without opening a modal save dialog.
+    auto browse = header->onPresetBrowserRequested, save = header->onSaveRequested;
+    int browsed = 0, saved = 0;
+    header->onPresetBrowserRequested = [&] { ++browsed; };
+    header->onSaveRequested = [&] { ++saved; };
+    header->chooseUtility(ui::OrigamiHeader::browseItem);
+    header->chooseUtility(ui::OrigamiHeader::saveItem);
+    check(browsed == 1 && saved == 1, "menu invokes existing preset command callbacks");
+    header->onPresetBrowserRequested = browse;
+    header->onSaveRequested = save;
+    const auto capture = [&](juce::Component &c, const juce::String &name, float scale = 1.f) {
+        auto image = c.createComponentSnapshot(c.getLocalBounds(), true, scale);
+        check(image.isValid(), "workspace capture valid");
+        if (const char *folder = std::getenv("ORIGAMI_WORKSPACE_REPORT")) {
+            juce::FileOutputStream out(juce::File(juce::String(folder) + "/" + name + ".png"));
+            out.setPosition(0);
+            out.truncate();
+            juce::PNGImageFormat{}.writeImageToStream(image, out);
+        }
+    };
+    for (auto type : {fx::FxEffectType::SpectralTune, fx::FxEffectType::Drive, fx::FxEffectType::Filter,
+                      fx::FxEffectType::Equalizer, fx::FxEffectType::Compressor, fx::FxEffectType::Flanger,
+                      fx::FxEffectType::Phaser, fx::FxEffectType::Spatial, fx::FxEffectType::Gain,
+                      fx::FxEffectType::Limiter,fx::FxEffectType::Delay,fx::FxEffectType::Reverb}) {
+        page->document().replace(fx::makeDefaultFxGraph());
+        fx::FxNodeId id = 0;
+        page->document().edit([&](fx::FxGraph &g) {
+            id = g.insertEffectBeforeOutput(type);
+            return id != 0;
+        });
+        page->syncFromModel();
+        page->selectNode(id);
+        auto &viewport = page->inspectorViewport();
+        auto *content = viewport.getViewedComponent();
+        check(content, "unified inspector content exists");
+        check(viewport.getViewPositionY() == 0, "new selection starts at top");
+        walk(page->moduleParametersPanel(), [&](auto &c) {
+            if (auto *b = dynamic_cast<juce::TextButton *>(&c))
+                check(b->getButtonText() != "MAIN" && b->getButtonText() != "MODULATION" &&
+                          b->getButtonText() != "ADVANCED",
+                      "no inspector navigation tabs");
+        });
+        juce::Component *visual = nullptr;
+        walk(*content, [&](auto &c) {
+            if (c.getName() == "Inspector visual")
+                visual = &c;
+        });
+        if (type != fx::FxEffectType::Gain && type != fx::FxEffectType::Equalizer)
+            check(visual && visual->isVisible() && visual->getHeight() >= 100 && visual->getWidth() >= 240 && visual->getWidth() <= 580,
+                  "descriptor visual has bounded width and useful height");
+        if (type == fx::FxEffectType::Gain)
+            check(!visual->isVisible(), "utility has no invented visualizer");
+        for (auto *c : content->getChildren())
+            if (c->isVisible())
+                check(content->getLocalBounds().contains(c->getBounds()),
+                      "inspector children fit scroll content");
+        for (auto *c : content->getChildren())
+            if (auto *slider = dynamic_cast<juce::Slider *>(c)) {
+                check(content->getComponentAt(slider->getBounds().getCentre()) == slider,
+                      "parameter visual and hit bounds agree");
+                const auto key = slider->getName().fromFirstOccurrenceOf("FX parameter ", false, false);
+                const fx::FxParameterDescriptor *descriptor = nullptr;
+                for (std::size_t i = 0; i < fx::findFxEffect(type)->parameterCount; ++i)
+                    if (key == fx::findFxEffect(type)->parameters[i].key)
+                        descriptor = &fx::findFxEffect(type)->parameters[i];
+                check(descriptor, "generic slider uses canonical descriptor");
+                slider->setValue(.57, juce::sendNotificationSync);
+                check(std::abs(page->graph().findNode(id)->parameter(descriptor->id).value_or(-1) - .57) <
+                          .002,
+                      "unified slider writes canonical graph parameter");
+                juce::MouseWheelDetails wheel{};
+                wheel.deltaY = -.3f;
+                slider->mouseWheelMove(event(*slider), wheel);
+                check(std::abs(slider->getValue() - .57) < .002, "wheel scrolling never changes a parameter");
+            }
+        if(type==fx::FxEffectType::Filter){
+            const auto plot=visual->getLocalBounds().toFloat().reduced(8,7).withTrimmedTop(12);
+            auto down=event(*visual).withNewPosition(juce::Point<float>{plot.getX()+plot.getWidth()*.57f,plot.getCentreY()});
+            visual->mouseDown(down);visual->mouseDrag(down.withNewPosition(juce::Point<float>{plot.getX()+plot.getWidth()*.75f,plot.getCentreY()-plot.getHeight()*.1f}));visual->mouseUp(down);
+            check(std::abs(*page->graph().findNode(id)->parameter(1)-.75f)<.002 && std::abs(*page->graph().findNode(id)->parameter(6)-.67f)<.002,"filter response drag writes cutoff and resonance in one gesture");
+        }
+        if (type == fx::FxEffectType::SpectralTune) {
+            check(button(*content, "Inspector ROOT")->getWidth() > 0 &&
+                      button(*content, "Inspector SCALE")->getWidth() > 0,
+                  "musical selectors have bounds");
+            auto *key = button(*content, "Inspector pitch class C");
+            check(content->getComponentAt(key->getBounds().getCentre()) == key,
+                  "inspector pitch key hit bounds");
+            key->onClick();
+            check(std::round(*page->graph().findNode(id)->parameter(fx::spectral::Mask) * 4095) == 4094,
+                  "inspector key edits canonical pitch mask");
+            for (auto source : {ModSource::Env1, ModSource::Lfo1, ModSource::Random}) {
+                auto rid = p.addUiRoute();
+                check(p.setUiRoute({rid, true, source, fxParameterAddress(mainBusId, id, fx::spectral::Snap),
+                                    .1f, false}),
+                      "inspector modulation fixture");
+            }
+            page->syncFromModel();
+            check(page->modulationRowCount() == 3, "inline inspector preserves three modulation routes");
+            juce::Slider *amount = nullptr;
+            walk(*content, [&](auto &c) {
+                if (auto *s = dynamic_cast<juce::Slider *>(&c))
+                    if (s->getName().startsWith("FX modulation amount"))
+                        amount = s;
+            });
+            check(amount, "inline modulation amount exists");
+            amount->setValue(-.42, juce::sendNotificationSync);
+            bool changed = false;
+            for (const auto &r : p.getUiInstrumentState().modulation.routes)
+                changed |= r.id && std::abs(r.amount + .42) < .002;
+            check(changed, "inline modulation edits shared route");
+            p.setUiFxNodeTelemetryEnabled(mainBusId, true);
+            juce::AudioBuffer<float> audio(2, 128);
+            juce::MidiBuffer midi;
+            for (int i = 0; i < 80; ++i) {
+                audio.clear();
+                midi.clear();
+                if (i == 0)
+                    midi.addEvent(juce::MidiMessage::noteOn(1, 60, juce::uint8(100)), 0);
+                p.processBlock(audio, midi);
+            }
+            page->refreshInspectorTelemetry();
+            check(page->nodeTelemetry(id).hasSpectrum,
+                  "large inspector receives real DSP spectral telemetry");
+            page->setParameter(id, fx::spectral::Low, 0);
+            auto pos = visual->getLocalBounds().toFloat().reduced(8, 7).withTrimmedTop(12);
+            const auto e = event(*visual).withNewPosition(juce::Point<float>{pos.getX(), pos.getCentreY()});
+            visual->mouseDown(e);
+            visual->mouseDrag(
+                e.withNewPosition(juce::Point<float>{pos.getX() + pos.getWidth() * .15f, pos.getCentreY()}));
+            visual->mouseUp(e);
+            check(std::abs(*page->graph().findNode(id)->parameter(fx::spectral::Low) - .15f) < .002,
+                  "spectral boundary drag edits eligibility parameter");
+            viewport.setViewPosition(64,0);
+            auto scrolled=event(*visual).withNewPosition(juce::Point<float>{pos.getX()+pos.getWidth()*.15f,pos.getCentreY()});
+            const auto screenPoint=viewport.getLocalPoint(visual,scrolled.position.toInt());
+            check(viewport.getComponentAt(screenPoint)==visual,"scrolled spectral boundary uses viewport transform");
+            visual->mouseDown(scrolled);
+            visual->mouseDrag(scrolled.withNewPosition(juce::Point<float>{pos.getX()+pos.getWidth()*.3f,pos.getCentreY()}));
+            visual->mouseUp(scrolled);
+            check(std::abs(*page->graph().findNode(id)->parameter(fx::spectral::Low)-.3f)<.002,"visualizer dragging while horizontally scrolled edits canonical range");
+            viewport.setViewPosition(0, 0);
+            for (auto size :
+                 {juce::Point<int>{1100, 760}, juce::Point<int>{1440, 900}, juce::Point<int>{1920, 1200}}) {
+                editor->setSize(size.x, size.y);
+                editor->resized();
+                check(menu->getParentComponent()->getLocalBounds().contains(menu->getBounds()),
+                      "responsive hamburger fits header");
+                for (float scale : {.75f, 1.f, 1.5f, 2.f})
+                    capture(*editor, "workspace-" + juce::String(size.x) + "-" + juce::String(scale, 2),
+                            scale);
+            }
+        }
+        capture(*content, juce::String(fx::findFxEffect(type)->key) + "-inspector");
+        capture(page->moduleParametersPanel(), juce::String(fx::findFxEffect(type)->key) + "-viewport");
+        const float zoom = page->graphZoom();
+        check(content->getHeight() <= viewport.getHeight(), "horizontal inspector has no vertical overflow");
+        viewport.setViewPosition(content->getWidth(),0);
+        if(content->getWidth()>viewport.getWidth()) {
+            check(viewport.getViewPositionX()>0,"rightmost inspector section reachable");
+            viewport.setViewPosition(0,0);
+            for(auto delta: {juce::Point<float>{-.1f,0.f},juce::Point<float>{0.f,-.1f}}) {
+                juce::MouseWheelDetails wheel{};wheel.deltaX=delta.x;wheel.deltaY=delta.y;
+                viewport.mouseWheelMove(event(viewport),wheel);
+                check(viewport.getViewPositionX()>0,"native horizontal and one-axis wheel navigate inspector");
+                viewport.setViewPosition(0,0);
+            }
+        }
+        if(content->getWidth()>viewport.getWidth()) {
+            viewport.setViewPosition(0,0);
+            juce::MouseWheelDetails wheel{};wheel.deltaY=-.1f;
+            const auto baseEvent=event(viewport).withNewPosition(juce::Point<float>{20,20});
+            const auto shifted=juce::MouseEvent(baseEvent.source,baseEvent.position,juce::ModifierKeys(juce::ModifierKeys::shiftModifier),baseEvent.pressure,baseEvent.orientation,baseEvent.rotation,baseEvent.tiltX,baseEvent.tiltY,baseEvent.eventComponent,baseEvent.originalComponent,baseEvent.eventTime,baseEvent.mouseDownPosition,baseEvent.mouseDownTime,baseEvent.getNumberOfClicks(),baseEvent.mouseWasDraggedSinceMouseDown());
+            viewport.mouseWheelMove(shifted,wheel);
+            check(viewport.getViewPositionX()>0,"Shift wheel navigates horizontal inspector");
+            // Scroll the last real control into view, then audit transformed hit bounds.
+            juce::Slider* last=nullptr;
+            for(auto* c:content->getChildren()) if(auto* slider=dynamic_cast<juce::Slider*>(c))
+                if(!last || slider->getRight()>last->getRight()) last=slider;
+            if(last) {
+                viewport.setViewPosition(std::max(0,last->getX()-40),0);
+                const auto point=viewport.getLocalPoint(last,last->getLocalBounds().getCentre());
+                check(viewport.getComponentAt(point)==last,"scrolled control paint and viewport hit coordinates agree");
+                if(last->onDragStart) last->onDragStart();
+                last->setValue(.61,juce::sendNotificationSync);
+                if(last->onDragEnd) last->onDragEnd();
+                check(std::abs(last->getValue()-.61)<.002,"scrolled parameter gesture retains canonical feedback");
+                const auto before=last->getValue();
+                last->mouseWheelMove(event(*last),wheel);
+                viewport.mouseWheelMove(event(*last),wheel);
+                check(last->getValue()==before,"descendant navigation leaves parameter untouched");
+                const int once=viewport.getViewPositionX();
+                viewport.mouseWheelMove(event(*last).getEventRelativeTo(&viewport),wheel);
+                check(viewport.getViewPositionX()==once,"bubbled wheel does not scroll twice");
+            }
+            if(visual && visual->isVisible()) {
+                viewport.setViewPosition(64,0);
+                auto point=viewport.getLocalPoint(visual,juce::Point<int>{100,60});
+                check(viewport.getComponentAt(point)==visual,"scrolled visualizer hit coordinates agree");
+            }
+        }
+        check(page->graphZoom() == zoom, "inspector scrolling preserves graph zoom");
+        page->selectNode(0);
+        page->selectNode(id);
+        check(viewport.getViewPositionX() == 0 && viewport.getViewPositionY()==0, "changed selection resets scroll");
+    }
+    auto &panel = page->moduleParametersPanel();
+    int utilities = 0;
+    for (auto *c : panel.getChildren())
+        if (auto *b = dynamic_cast<juce::TextButton *>(c)) {
+            ++utilities;
+            check(b->getY() == 4 && b->getHeight() == 22 &&
+                      panel.getComponentAt(b->getBounds().getCentre()) == b,
+                  "graph utility hits inside existing inspector header");
+            if (b->getButtonText() == "+") {
+                auto z = page->graphZoom();
+                b->onClick();
+                check(page->graphZoom() > z, "header zoom button operates graph");
+            }
+            if (b->getButtonText() == "FIT" || b->getName() == "NODES AUTO LAYOUT")
+                b->onClick();
+        }
+    for(auto* a:panel.getChildren()) if(dynamic_cast<juce::TextButton*>(a))
+        for(auto* b:panel.getChildren()) if(a!=b && dynamic_cast<juce::TextButton*>(b))
+            check(!a->getBounds().intersects(b->getBounds()),"header command bounds never overlap");
+    check(utilities == 9, "all nine graph commands share Module Parameters header");
+    check(page->graphView().getY()==0 && panel.getHeight()==250,"workspace removes full 28px toolbar without growing inspector");
+    const auto graphBefore = page->graph();
+    page->setParameter(page->selectedNode(), 1, .33f);
+    check(item(ui::OrigamiHeader::undoItem).enabled, "menu Undo enabled after graph edit");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);
+    check(page->graph() == graphBefore, "menu Undo uses same graph history");
+    check(item(ui::OrigamiHeader::redoItem).enabled, "menu Redo enabled after Undo");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);
+    header->selectMode(0);
+    check(item(ui::OrigamiHeader::undoItem).enabled == p.canUndoUi() && item(ui::OrigamiHeader::redoItem).enabled == p.canRedoUi(),
+          "document history remains available outside Nodes");
+}
+
+void optionalUpdateUiAudit() {
+    struct Pending {std::atomic<bool> entered{false},ready{false},stopped{false},downloadEntered{false},downloadReady{false};};
+    class UpdateTransport final : public melogic::update::Transport {
+        std::shared_ptr<Pending> pending_;
+    public:
+        explicit UpdateTransport(std::shared_ptr<Pending> p):pending_(std::move(p)){}
+        juce::var check(const juce::var&) override {
+            pending_->entered=true;
+            while(!pending_->ready && !pending_->stopped)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if(pending_->stopped)throw std::runtime_error("cancelled");
+            auto v=juce::JSON::parse(R"({"schemaVersion":1,"status":"update_available","release":{"releaseId":"ui-fixture","artifactId":"installer","version":"0.1.1-beta.1","buildNumber":103,"channel":"beta","releaseNotes":"Optional release fixture","minimumOS":"12.0"}})");
+            const auto now=juce::Time::currentTimeMillis();v.getDynamicObject()->setProperty("checkedAt",juce::Time(now).toISO8601(true));v.getDynamicObject()->setProperty("expiresAt",juce::Time(now+3600000).toISO8601(true));return v;
+        }
+        juce::var requestDownload(const juce::var&) override {
+            pending_->downloadEntered=true;
+            while(!pending_->downloadReady && !pending_->stopped)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            throw std::runtime_error("isolated download request failure");
+        }
+        void cancel() noexcept override {pending_->downloadReady=true;}
+        void shutdown() noexcept override {pending_->stopped=true;}
+    };
+    auto authorized=origami_test::authorized();OrigamiAudioProcessor processor(authorized);
+    juce::MemoryBlock before;processor.getStateInformation(before);const auto history=processor.uiHistorySize();
+    auto pending=std::make_shared<Pending>();
+    auto updates=std::make_shared<melogic::update::Service>(melogic::update::Identity{"origami","0.1.0","beta","fixture","macos","arm64",100},std::make_unique<UpdateTransport>(pending));
+    auto panel=std::make_unique<ui::GlobalPanel>(ui::GlobalPanel::Getter{},ui::GlobalPanel::Setter{},ui::GlobalPanelHost{},updates);
+    updates->check();for(int n=0;n<1000 && !pending->entered;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(pending->entered,"update request starts without UI ownership");panel.reset();pending->ready=true;
+    for(int n=0;n<1000 && updates->snapshot().state==melogic::update::State::Checking;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    panel=std::make_unique<ui::GlobalPanel>(ui::GlobalPanel::Getter{},ui::GlobalPanel::Setter{},ui::GlobalPanelHost{},updates);panel->setSize(1440,700);panel->syncFromModel();
+    juce::Button* later=nullptr;juce::Button* view=nullptr;
+    walk(*panel,[&](auto& c){if(auto* b=dynamic_cast<juce::Button*>(&c)){if(b->getName()=="Dismiss optional update")later=b;if(b->getName()=="Origami optional update download or check")view=b;}});
+    check(later && view && later->isVisible() && view->getButtonText()=="DOWNLOAD UPDATE","recreated editor reads optional candidate snapshot");
+    if(const char* folder=std::getenv("ORIGAMI_GLOBAL_REPORT")){auto image=panel->createComponentSnapshot(panel->getLocalBounds());juce::FileOutputStream out(juce::File(juce::String(folder)+"/update-available.png"));juce::PNGImageFormat{}.writeImageToStream(image,out);}
+    later->onClick();check(!later->isVisible() && view->getButtonText()=="CHECK FOR UPDATES","Later dismisses optional presentation");
+    // Explicit action, then destroy/recreate the editor while its owned service is requesting a download.
+    view->onClick();panel->syncFromModel();view->onClick();
+    for(int n=0;n<1000 && !pending->downloadEntered;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(pending->downloadEntered,"only explicit Download begins request");
+    panel.reset();pending->downloadReady=true;
+    for(int n=0;n<1000 && updates->snapshot().state==melogic::update::State::RequestingDownload;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(updates->snapshot().state==melogic::update::State::DownloadFailed,"request failure survives editor destruction safely");
+    panel=std::make_unique<ui::GlobalPanel>(ui::GlobalPanel::Getter{},ui::GlobalPanel::Setter{},ui::GlobalPanelHost{},updates);panel->setSize(1440,700);panel->syncFromModel();
+    bool retry=false;walk(*panel,[&](auto& c){if(auto* b=dynamic_cast<juce::Button*>(&c))retry=retry || b->getButtonText()=="RETRY DOWNLOAD";});
+    check(retry,"recreated editor shows useful download failure feedback");
+    juce::MemoryBlock after;processor.getStateInformation(after);check(before==after && authorized->load() && processor.uiHistorySize()==history,"update arrival and dismissal leave authorization, project state and history unchanged");
+    updates->shutdown();
+}
+
+void globalPageAudit() {
+    auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,128);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());
+    ui::GlobalPanel* global=nullptr;ui::OrigamiHeader* header=nullptr;ui::PerformanceKeyboard* performance=nullptr;
+    walk(*editor,[&](auto& c){if(auto* v=dynamic_cast<ui::GlobalPanel*>(&c))global=v;if(auto* v=dynamic_cast<ui::OrigamiHeader*>(&c))header=v;if(auto* v=dynamic_cast<ui::PerformanceKeyboard*>(&c))performance=v;});
+    check(global && header && performance,"Global and persistent views exist");header->selectMode(4);
+    const auto named=[&](juce::Component& root,const char* name)->juce::Component*{juce::Component* result=nullptr;walk(root,[&](auto& c){if(c.getName()==name)result=&c;});check(result,"named Global integration control");return result;};
+    const auto slider=[&](juce::Component& root,const char* name)->juce::Slider&{auto* s=dynamic_cast<juce::Slider*>(named(root,name));check(s,"named Global slider");return *s;};
+    const auto button=[&](const char* name)->juce::Button&{auto* b=dynamic_cast<juce::Button*>(named(*global,name));check(b,"named Global button");return *b;};
+    const auto label=[&](const char* name){auto* l=dynamic_cast<juce::Label*>(named(*global,name));check(l,"named engine label");return l->getText();};
+    check(global->isVisible() && (ui::GlobalPanel::version()==JucePlugin_VersionString || ui::GlobalPanel::version().startsWith(juce::String(JucePlugin_VersionString)+"-")),"Global uses canonical build version");
+    const auto identity=ui::GlobalPanel::buildIdentity();check(identity.contains("Build ") && !identity.contains("/Users/") && !identity.containsIgnoreCase("ginobarnes") && !identity.contains("https:"),"public build identity omits private metadata");
+    auto& master=global->masterKnob();auto& headerMaster=header->masterKnob();
+    check(!master.getProperties().contains("mct.mod.destination") && std::abs(master.getNormalisableRange().convertFrom0to1(.5)+12)<1e-5,"Global shares Master mapping without modulation");
+    p.clearUiHistory();const float initial=p.getUiFinalOutput();master.onDragStart();for(int i=0;i<30;++i)master.setValue(-42+i,juce::sendNotificationSync);master.onDragEnd();
+    check(p.uiHistorySize()==1 && master.getValue()==headerMaster.getValue(),"Global Master drag coalesces and immediately synchronizes header");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(p.getUiFinalOutput()==initial && master.getValue()==headerMaster.getValue(),"Global Master Undo refreshes both views");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);check(std::abs(master.getValue()+13)<1e-4 && std::abs(headerMaster.getValue()+13)<1e-4,"Global Master Redo refreshes both views");
+    headerMaster.setValue(-12,juce::sendNotificationSync);check(master.getValue()==-12 && p.getUiFinalOutput()==.5f,"header Master immediately synchronizes Global");
+    static_cast<juce::AudioProcessorParameter*>(p.finalOutputParameter())->setValue(1);global->syncFromModel();check(master.getValue()==6,"host automation reaches Global canonical view");
+    global->chooseVoiceMode(VoiceMode::Mono);global->choosePriority(NotePriority::High);
+    auto& glide=slider(*global,"Global glide");glide.onDragStart();glide.setValue(.123,juce::sendNotificationSync);glide.onDragEnd();
+    check(std::abs(slider(*performance,"Glide").getValue()-.123)<1e-6,"Global glide immediately reaches bottom bar");
+    button("Global legato").setToggleState(false,juce::dontSendNotification);button("Global legato").onClick();
+    slider(*global,"Global pitch bend up").setValue(12,juce::sendNotificationSync);slider(*global,"Global pitch bend down").setValue(5,juce::sendNotificationSync);
+    check(slider(*performance,"Pitch bend up range").getValue()==12 && slider(*performance,"Pitch bend down range").getValue()==5,"signed bend endpoints immediately reach bottom bar");
+    p.clearUiHistory();slider(*performance,"Glide").setValue(.456,juce::sendNotificationSync);slider(*performance,"Pitch bend down range").setValue(-7,juce::sendNotificationSync);
+    check(p.uiHistorySize()==2,"performance and bend edits use document history");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(slider(*global,"Global pitch bend down").getValue()==5 && slider(*performance,"Pitch bend down range").getValue()==5,"bend Undo refreshes both views");
+    header->chooseUtility(ui::OrigamiHeader::undoItem);check(std::abs(glide.getValue()-.123)<1e-6 && std::abs(slider(*performance,"Glide").getValue()-.123)<1e-6,"glide Undo refreshes both views");
+    header->chooseUtility(ui::OrigamiHeader::redoItem);header->chooseUtility(ui::OrigamiHeader::redoItem);
+    check(std::abs(glide.getValue()-.456)<1e-6 && slider(*global,"Global pitch bend down").getValue()==-7,"bottom performance edits immediately reach Global");
+    bool mono=false,high=false;walk(*performance,[&](auto& c){if(auto* b=dynamic_cast<juce::TextButton*>(&c)){mono|=b->getButtonText()=="MONO";high|=b->getButtonText()=="HIGH";}});check(mono && high && !p.getUiPerformanceState().legato,"voice mode, priority and legato share canonical state");
+    auto invalid=p.getUiPerformanceState();invalid.glideSeconds=std::numeric_limits<float>::quiet_NaN();check(!p.setUiPerformanceState(invalid),"invalid performance input rejected without mutation");
+    p.clearUiHistory();const auto mask=p.getUiVisualizationMask();const char* activities[]={"ENV visualization","LFO visualization","RANDOM visualization","FUNCTION visualization","CHAOS visualization","DRIFT visualization","SEQUENCER visualization","OSC visualization"};
+    for(int i=0;i<8;++i){auto& b=button(activities[i]);b.setToggleState(!b.getToggleState(),juce::dontSendNotification);b.onClick();check(((p.getUiVisualizationMask()^mask)&(1u<<i))!=0,"existing Activity bit remains functional");}
+    check(p.uiHistorySize()==8,"Activity retains canonical history");header->chooseUtility(ui::OrigamiHeader::undoItem);check(button(activities[7]).getToggleState()==bool(mask&128),"Activity Undo refreshes Global");header->chooseUtility(ui::OrigamiHeader::redoItem);
+    juce::MemoryBlock saved;p.getStateInformation(saved);auto restored=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());restored->setStateInformation(saved.getData(),int(saved.getSize()));
+    check(restored->getUiFinalOutput()==p.getUiFinalOutput() && restored->getUiVisualizationMask()==p.getUiVisualizationMask(),"host project restores Master and Activity");
+    const auto rp=restored->getUiPerformanceState();check(rp.voiceMode==VoiceMode::Mono && rp.notePriority==NotePriority::High && !rp.legato && std::abs(rp.glideSeconds-.456)<1e-6 && rp.pitchBendDownSemitones==-7 && rp.pitchBendRangeSemitones==12,"host project restores complete performance and signed bend");
+    {std::unique_ptr<juce::AudioProcessorEditor> re(restored->createEditor());ui::GlobalPanel* rg=nullptr;walk(*re,[&](auto& c){if(auto* v=dynamic_cast<ui::GlobalPanel*>(&c))rg=v;});check(rg && rg->masterKnob().getValue()==6 && std::abs(slider(*rg,"Global glide").getValue()-.456)<1e-6,"restored editor hydrates Global");}
+    const auto preset=saved;p.setUiFinalOutput(.5f);global->chooseVoiceMode(VoiceMode::Poly);
+    check(p.loadUiPresetState(preset,"g01-fixture","G01 fixture"),"canonical preset load succeeds");p.sendSynchronousChangeMessage();
+    check(master.getValue()==6 && std::abs(glide.getValue()-.456)<1e-6,"existing Global editor refreshes after preset restoration");
+    p.clearUiHistory();const auto state=[&]{juce::MemoryBlock b;p.getStateInformation(b);return b;};const auto beforeUtilities=state();
+    button("Global Settings").onClick();check(global->settingsOpen() && !master.isShowing(),"Settings stays under Global");
+    juce::SharedResourcePointer<ui::UserPreferences> prefs;const bool oldCapture=prefs->captureKeyboardInput();auto& capture=button("Global keyboard capture preference");capture.setToggleState(!oldCapture,juce::dontSendNotification);capture.onClick();
+    check(prefs->captureKeyboardInput()!=oldCapture && state()==beforeUtilities && p.uiHistorySize()==0,"shared application preference does not enter patch/history");capture.setToggleState(oldCapture,juce::dontSendNotification);capture.onClick();
+    const auto snapshot=[&](const juce::String& name){if(const char* folder=std::getenv("ORIGAMI_GLOBAL_REPORT")){const auto image=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.f);juce::FileOutputStream out(juce::File(juce::String(folder)+"/"+name+".png"));out.setPosition(0);out.truncate();check(juce::PNGImageFormat{}.writeImageToStream(image,out),"Global screenshot saved");}};
+    editor->setSize(1440,900);snapshot("settings-1440");button("Global Settings").onClick();
+    juce::AudioBuffer<float> audio(2,64);juce::MidiBuffer midi;midi.addEvent(juce::MidiMessage::noteOn(1,60,.8f),0);p.processBlock(audio,midi);global->syncFromModel();
+    check(label("Engine sample rate")=="48.0 kHz" && label("Engine audio block")=="64 / 128 samples" && label("Engine active MIDI voices")=="1 / 16" && label("Engine audio callback load").contains("%"),"engine reports actual prepared and callback telemetry");
+    const auto meters=p.finalOutputMeters();check(global->displayedMeters().level==meters.level && global->displayedMeters().hold==meters.hold,"Global uses exact final post-Master meter snapshot");
+    for(int width:{960,1440,1920}){editor->setSize(width,width*5/8);editor->resized();global->syncFromModel();for(auto* c:global->getChildren())if(c->isVisible())check(global->getLocalBounds().contains(c->getBounds()),"scaled Global child remains within page");snapshot("global-"+juce::String(width));}
+    for(int page:{0,1,2,3,4})header->selectMode(page);check(global->isVisible() && state()==beforeUtilities && p.uiHistorySize()==0,"page switching and telemetry do not mutate patch/history");
+    const auto panicCount=p.panicCount();button("Global Panic").onClick();audio.clear();midi.clear();p.processBlock(audio,midi);
+    check(p.panicCount()==panicCount+1 && p.getUiRenderBudgetSnapshot().load.activeVoices==0 && magnitude(audio)==0,"Global Panic terminates active voices safely");
+    audio=renderNote(p,64,.8f,64);check(magnitude(audio)>0 && state()==beforeUtilities && p.uiHistorySize()==0,"Panic preserves patch and subsequent note playback");
+    std::cout<<"PASS Global G01 plugin/UI audit\n";
+}
+
 int main(){juce::ScopedJuceInitialiser_GUI gui;
 // Preferences stay in memory (the user's file is never touched). The
 // shortcut audits run with CAPTURE KEYBOARD INPUT on, as a user enables it.
 ui::UserPreferences::useVolatileStorageForTesting();
+melogic::account::Service::useInMemoryForTesting();
 // The content library lives in a temporary folder (never the user's library).
 const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("origami-plugin-tests-"+juce::String(juce::Time::currentTimeMillis()));
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{if(const char* base=std::getenv("ORIGAMI_ACCOUNT_CONTRACT_BASE")){accountWireContractAudit(base);return 0;}activationSurfaceAudit();authorizationGateAudit();activationWelcomeAudit();if(std::getenv("ORIGAMI_AUTHORIZATION_ONLY")){std::cout<<"PASS focused authorization: "<<checks<<" checks\n";return 0;}accountPatchBoundaryAudit();if(std::getenv("ORIGAMI_ACTIVATION_ONLY")){std::cout<<"PASS focused activation: "<<checks<<" checks\n";return 0;}globalPageAudit();optionalUpdateUiAudit();if(std::getenv("ORIGAMI_GLOBAL_ONLY")){std::cout<<"PASS focused Global: "<<checks<<" checks\n";return 0;}unisonPluginAudit();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison plugin: "<<checks<<" checks\n";return 0;}finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

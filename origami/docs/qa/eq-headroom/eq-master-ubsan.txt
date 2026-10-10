@@ -1,0 +1,2 @@
+PASS eqMaster (0.222424 s)
+B01 seed=0xb010cafe checks=748139 samples=1486848 callbacks=1281 failures=0

@@ -1,0 +1,4 @@
+motion smooth=0 carrier=0.131293 coherence=0.806567
+motion smooth=80 carrier=0.131293 coherence=0.806567
+motion smooth=500 carrier=0.131293 coherence=0.806567
+Rendered quality audit fixtures; convergence failures=0

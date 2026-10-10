@@ -1,3 +1,9 @@
+import { adminPageHeader, adminSimpleTable, htmlCell, renderBadge } from './admin/primitives'
+import { hasAdminPermission, permissionDeniedMarkup } from './utils/adminPermissions'
+import { mountLicensingPanel } from './admin/licensingPanel'
+import { licensingRequest } from './data/licensingService'
+let licensingPanel = null
+let licensingAccessDialog = null
 import './styles/base.css'
 import './styles/admin.css'
 import {
@@ -334,6 +340,7 @@ window.__melogicAdminRequireStepUp=performAdminStepUp
 
 
 const SECTIONS = [
+  { key: 'licenseKeys', route: '/admin/license-keys', label: 'License Keys', icon: 'package', permission: 'licensesManage' },
   { key: 'dashboard', route: ROUTES.admin, label: 'Overview', icon: 'barChart', permission: 'admin' },
   { key: 'reviews', route: ROUTES.adminReviews, label: 'Audits', icon: 'checkCircle', permission: 'productReview' },
   { key: 'distribution', route: ROUTES.adminDistribution, label: 'Music Review', icon: 'music', permission: 'productReview' },
@@ -972,9 +979,7 @@ function setAuditTab(tabKey = 'listing') {
 }
 
 function can(permission = 'admin') {
-  if (permission === 'admin') return state.claims.admin === true
-  if (permission === 'emailSend' && ['owner', 'admin'].includes(state.claims.adminRole || '')) return true
-  return state.claims[permission] === true
+  return hasAdminPermission(state.claims, permission)
 }
 
 function isReviewPath(path = window.location.pathname) {
@@ -1508,7 +1513,7 @@ function overviewSnapshotTable(title = '', href = '', headers = [], rows = [], e
 }
 
 function permissionState(permission) {
-  return `<div class="admin-empty-state"><strong>Permission required</strong><span>${escapeHtml(permission)}</span></div>`
+  return permissionDeniedMarkup(permission)
 }
 
 function reviewQueueGrid(compact = false) {
@@ -1610,11 +1615,6 @@ function renderMoneyField(label, cents = 0, currency = 'USD') {
   return renderField(label, formatMoney(cents, currency))
 }
 
-function renderBadge(value, tone = '') {
-  const text = String(value || '').trim()
-  if (!text) return ''
-  return `<span class="review-badge ${tone ? `is-${escapeHtml(tone)}` : ''}">${escapeHtml(text)}</span>`
-}
 
 function renderBadgeList(items = [], empty = 'None') {
   const values = normalizeList(items)
@@ -2713,18 +2713,6 @@ function adminData(key = '') {
   return state.adminData[key] || { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' }
 }
 
-function adminPageHeader({ eyebrow = 'Admin', title = '', description = '', refreshLabel = 'Refresh' } = {}) {
-  return `
-    <header class="admin-page-header">
-      <div>
-        <p class="eyebrow">${escapeHtml(eyebrow)}</p>
-        <h1>${escapeHtml(title)}</h1>
-        ${description ? `<p>${escapeHtml(description)}</p>` : ''}
-      </div>
-      <button type="button" class="admin-icon-button" data-refresh-admin-section title="${escapeHtml(refreshLabel)}">${iconSvg('barChart')}</button>
-    </header>
-  `
-}
 
 function adminFilterControls(collection, filters = []) {
   const data = adminData(collection)
@@ -3164,6 +3152,7 @@ function renderAccountActionMenu({ uid, user, publicProfile, isSelf, canNote, ca
     <div class="admin-account-actions-menu ${open ? 'is-open' : ''}" data-account-actions-menu>
       <button type="button" class="admin-icon-button" data-toggle-account-actions="${escapeHtml(uid)}" aria-haspopup="menu" aria-expanded="${open}" title="Account actions">${iconSvg('moreVertical')}</button>
       <div class="admin-account-actions-dropdown" role="menu" ${open ? '' : 'hidden'}>
+        <button type="button" class="${itemClass}" data-admin-manage-products="${escapeHtml(uid)}" ${can('licensesManage') ? '' : 'disabled'}>Manage Products</button>
         <button type="button" class="${itemClass}" data-admin-give-product="${escapeHtml(uid)}" ${canGrantProduct ? '' : 'disabled'}>Give Product</button>
         <button type="button" class="${itemClass}" data-admin-message-user="${escapeHtml(uid)}" ${isSelf ? 'disabled' : ''}>Message</button>
         <button type="button" class="${itemClass}" data-admin-email-user="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled'}>Email User</button>
@@ -3928,7 +3917,7 @@ function adminTeamTable(team = []) {
 }
 
 function permissionMatrixMarkup(permissions = {}) {
-  const keys = ['admin', 'productReview', 'listingEdit', 'userRead', 'userModerate', 'orderSupport', 'roleManage', 'auditRead', 'settingsManage', 'emailSend']
+  const keys = ['admin', 'productReview', 'listingEdit', 'userRead', 'userModerate', 'orderSupport', 'roleManage', 'auditRead', 'settingsManage', 'emailSend', 'licensesManage']
   return `
     <div class="admin-permission-matrix">
       ${keys.map((key) => {
@@ -5958,29 +5947,6 @@ function settingsInput(key, label, type, value) {
   `
 }
 
-function adminSimpleTable(label = 'Rows', headers = [], rows = [], options = {}) {
-  return `
-    <div class="admin-data-table ${escapeHtml(options.className || '')}" role="table" aria-label="${escapeHtml(label)}">
-      <div class="admin-data-row is-header" role="row">
-        ${headers.map((header) => `<span>${escapeHtml(header)}</span>`).join('')}
-      </div>
-      ${rows.length ? rows.map((row) => `
-        <article class="admin-data-row" role="row">
-          ${row.map((cell) => `<span>${cell?.html ? cell.html : escapeHtml(cell)}</span>`).join('')}
-        </article>
-      `).join('') : `
-        <article class="admin-empty-state admin-table-empty">
-          <strong>${escapeHtml(options.emptyTitle || `No ${label.toLowerCase()} found.`)}</strong>
-          <span>${escapeHtml(options.emptyBody || 'Rows will appear here when data is available.')}</span>
-        </article>
-      `}
-    </div>
-  `
-}
-
-function htmlCell(html = '') {
-  return { html }
-}
 
 function communityTargetRoute(type = '', id = '', row = {}) {
   if (type === 'community_post') return `/community/post/${encodeURIComponent(id)}`
@@ -6356,7 +6322,15 @@ function communityAdminView() {
 }
 
 function render() {
+  licensingPanel?.dispose(); licensingPanel = null
+  licensingAccessDialog?.remove(); licensingAccessDialog = null
   state.section = currentSectionKey()
+  if (state.section === 'licenseKeys') {
+    renderLayout(can('licensesManage') ? '<div data-licensing-root></div>' : permissionState('licensesManage'))
+    const root = app.querySelector('[data-licensing-root]')
+    if (root) licensingPanel = mountLicensingPanel(root, { request: licensingRequest, allowed: can('licensesManage') })
+    return
+  }
   if (state.section === 'dashboard') return renderLayout(dashboardView())
   if (state.section === 'reviews') return renderLayout(reviewsView())
   if (state.section === 'products') return renderLayout(productsView())
@@ -9102,6 +9076,21 @@ function leaveAdminContactCallRoom() {
 }
 
 function bindEvents() {
+  app.querySelectorAll('[data-admin-manage-products]').forEach(button => button.addEventListener('click', () => {
+    if (!can('licensesManage')) return
+    licensingPanel?.dispose()
+    licensingAccessDialog?.remove()
+    const dialog = document.createElement('dialog')
+    licensingAccessDialog = dialog
+    dialog.className = 'admin-decision-modal admin-product-grant-modal admin-licensing-dialog'
+    dialog.innerHTML = '<button type="button" class="admin-secondary-button">Close</button><div data-access-root></div>'
+    document.body.append(dialog)
+    licensingPanel = mountLicensingPanel(dialog.querySelector('[data-access-root]'), { request: licensingRequest, allowed: true, targetUid: button.dataset.adminManageProducts })
+    const close = () => { licensingPanel?.dispose(); licensingPanel = null; dialog.remove(); licensingAccessDialog = null; button.focus() }
+    dialog.querySelector('button').onclick = close
+    dialog.addEventListener('cancel', e => { e.preventDefault(); close() })
+    dialog.showModal()
+  }))
   app.querySelectorAll('[data-engineering-triage]').forEach((button) => {
     button.addEventListener('click', async () => {
       const jobId = String(button.dataset.engineeringTriage || '').trim()

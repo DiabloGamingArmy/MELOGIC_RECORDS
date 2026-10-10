@@ -1,0 +1,33 @@
+Test project /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+      Start  1: origami_state
+ 1/14 Test  #1: origami_state .......................   Passed    0.07 sec
+      Start  2: origami_foundation
+ 2/14 Test  #2: origami_foundation ..................   Passed   12.23 sec
+      Start  3: origami_wavetable_bank_foundation
+ 3/14 Test  #3: origami_wavetable_bank_foundation ...   Passed    0.08 sec
+      Start  4: origami_modulation_core
+ 4/14 Test  #4: origami_modulation_core .............   Passed    1.75 sec
+      Start  5: origami_fx_graph
+ 5/14 Test  #5: origami_fx_graph ....................   Passed    1.72 sec
+      Start  6: origami_spectral_tune
+ 6/14 Test  #6: origami_spectral_tune ...............   Passed    0.65 sec
+      Start  7: origami_spectral_quality
+ 7/14 Test  #7: origami_spectral_quality ............   Passed    1.20 sec
+      Start  8: origami_plugin_ui
+ 8/14 Test  #8: origami_plugin_ui ...................   Passed   66.13 sec
+      Start  9: origami_content
+ 9/14 Test  #9: origami_content .....................   Passed    1.60 sec
+      Start 10: origami_account
+10/14 Test #10: origami_account .....................   Passed    8.24 sec
+      Start 11: origami_update
+11/14 Test #11: origami_update ......................   Passed   32.35 sec
+      Start 12: origami_download
+12/14 Test #12: origami_download ....................   Passed   62.32 sec
+      Start 13: origami_eq_headroom
+13/14 Test #13: origami_eq_headroom .................   Passed    3.89 sec
+      Start 14: origami_dsp_torture
+14/14 Test #14: origami_dsp_torture .................   Passed   73.50 sec
+
+100% tests passed out of 14
+
+Total Test time (real) = 265.75 sec

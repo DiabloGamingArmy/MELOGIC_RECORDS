@@ -1,0 +1,77 @@
+Candidate: x86-clt
+Apple clang version 17.0.0 (clang-1700.0.13.5)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+
+Runtime: /Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.asan_osx_dynamic.dylib
+Runtime SHA256: 9a4166d249eab6e4f1430d211e65e22172ffdf3257ec116ffc8a845d938337ec
+Clean CMake: RelWithDebInfo, x86_64, deployment target 26.0; address,undefined
+ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:detect_stack_use_after_return=1
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+Rosetta already installed: arch -x86_64 /usr/bin/true exits 0.
+Unsanitized control exits 0 with constructor/main markers.
+Sanitized normal mode exits -4 (SIGILL), neither constructor nor main marker present.
+Deliberate UAF: not run because normal sanitized execution failed.
+<probe-build>/sanitizer_probe: Mach-O 64-bit executable x86_64
+
+<probe-build>/sanitizer_probe:
+	/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2000.67.0)
+	@rpath/libclang_rt.asan_osx_dynamic.dylib (compatibility version 0.0.0, current version 0.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+
+Crash report relevant fields only (personal/machine identifiers omitted):
+{
+  "translated": true,
+  "cpuType": "X86-64",
+  "exception": {
+    "codes": "0x0000000000000001, 0x0000000000000000",
+    "rawCodes": [
+      1,
+      0
+    ],
+    "type": "EXC_BAD_INSTRUCTION",
+    "signal": "SIGILL"
+  }
+}
+Triggered thread frames:
+?: <unsymbolicated> + 140705797335440
+libsystem_pthread.dylib: __pthread_init + 1021
+libSystem.B.dylib: libSystem_initializer + 125
+dyld: invocation function for block in dyld4::Loader::findAndRunAllInitializers(dyld4::RuntimeState&) const::$_0::operator()() const + 194
+dyld: invocation function for block in dyld3::MachOAnalyzer::forEachInitializer(Diagnostics&, dyld3::MachOAnalyzer::VMAddrConverter const&, void (unsigned int) block_pointer, void const*) const + 234
+dyld: invocation function for block in mach_o::UnsafeHeader::forEachSection(void (mach_o::UnsafeHeader::SectionInfo const&, bool&) block_pointer) const + 386
+dyld: mach_o::UnsafeHeader::forEachLoadCommand(void (load_command const*, bool&) block_pointer) const + 191
+dyld: mach_o::UnsafeHeader::forEachSection(void (mach_o::UnsafeHeader::SectionInfo const&, bool&) block_pointer) const + 116
+dyld: dyld3::MachOAnalyzer::forEachInitializer(Diagnostics&, dyld3::MachOAnalyzer::VMAddrConverter const&, void (unsigned int) block_pointer, void const*) const + 470
+dyld: dyld4::Loader::findAndRunAllInitializers(dyld4::RuntimeState&) const + 304
+dyld: dyld4::PrebuiltLoader::runInitializers(dyld4::RuntimeState&) const + 30
+dyld: dyld4::APIs::dlopen_from(char const*, int, void*) + 72
+libdyld.dylib: invocation function for block in dyldFrameworkIntrospectionVtable() + 43
+libdispatch.dylib: _dispatch_client_callout + 6
+libdispatch.dylib: _dispatch_once_callout + 20
+libdyld.dylib: dyldFrameworkIntrospectionVtable() + 27
+libdyld.dylib: dyld_shared_cache_iterate_text + 18
+libclang_rt.asan_osx_dynamic.dylib: __sanitizer::get_dyld_hdr() + 261
+libclang_rt.asan_osx_dynamic.dylib: __sanitizer::MemoryMappingLayout::Next(__sanitizer::MemoryMappedSegment*) + 79
+libclang_rt.asan_osx_dynamic.dylib: __sanitizer::MemoryRangeIsAvailable(unsigned long, unsigned long) + 219
+libclang_rt.asan_osx_dynamic.dylib: __asan::InitializeShadowMemory() + 71
+libclang_rt.asan_osx_dynamic.dylib: __asan::AsanInitInternal() (.cold.1) + 233
+libclang_rt.asan_osx_dynamic.dylib: __asan::AsanInitInternal() + 34
+libclang_rt.asan_osx_dynamic.dylib: <deduplicated_symbol> + 21
+libclang_rt.asan_osx_dynamic.dylib: __asan::AsanInitFromRtl() + 21
+libclang_rt.asan_osx_dynamic.dylib: wrap_malloc_default_zone + 9
+libsystem_malloc.dylib: __malloc_init + 1702
+libSystem.B.dylib: libSystem_initializer + 198
+dyld: invocation function for block in dyld4::Loader::findAndRunAllInitializers(dyld4::RuntimeState&) const::$_0::operator()() const + 194
+dyld: invocation function for block in dyld3::MachOAnalyzer::forEachInitializer(Diagnostics&, dyld3::MachOAnalyzer::VMAddrConverter const&, void (unsigned int) block_pointer, void const*) const + 234
+dyld: invocation function for block in mach_o::UnsafeHeader::forEachSection(void (mach_o::UnsafeHeader::SectionInfo const&, bool&) block_pointer) const + 386
+dyld: mach_o::UnsafeHeader::forEachLoadCommand(void (load_command const*, bool&) block_pointer) const + 191
+dyld: mach_o::UnsafeHeader::forEachSection(void (mach_o::UnsafeHeader::SectionInfo const&, bool&) block_pointer) const + 116
+dyld: dyld3::MachOAnalyzer::forEachInitializer(Diagnostics&, dyld3::MachOAnalyzer::VMAddrConverter const&, void (unsigned int) block_pointer, void const*) const + 470
+dyld: dyld4::Loader::findAndRunAllInitializers(dyld4::RuntimeState&) const + 304
+dyld: dyld4::PrebuiltLoader::runInitializers(dyld4::RuntimeState&) const + 30
+dyld: dyld4::APIs::runAllInitializersForMain() + 77
+dyld: dyld4::prepare(dyld4::APIs&, mach_o::UnsafeHeader const*) + 4099
+dyld: dyld4::start(dyld4::KernelArgs*, void*, void*, unsigned long long)::$_0::operator()() const + 284
+dyld: start + 3142

@@ -4,6 +4,8 @@
 // mct-origami-v25.1.0-arp-advanced-page
 #pragma once
 #include <JuceHeader.h>
+#include "ui/ActivationPanel.h"
+#include "ui/WelcomeOverlay.h"
 #include "ui/OrigamiHeader.h"
 #include "ui/UserPreferences.h"
 #include "ui/ContentBrowser.h"
@@ -27,14 +29,27 @@ class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropContainer,
                                          public juce::DragAndDropTarget,
                                          public juce::FileDragAndDropTarget,
+                                         public mct::origami::ui::DocumentActionHost,
                                          private juce::Timer,
-                                         private juce::AsyncUpdater {
+                                         private juce::AsyncUpdater,
+                                         private juce::ChangeListener,
+                                         private juce::KeyListener {
 public:
     explicit OrigamiAudioProcessorEditor(OrigamiAudioProcessor&);
     ~OrigamiAudioProcessorEditor() override;
+    void dragOperationStarted(const juce::DragAndDropTarget::SourceDetails&) override;
+    void dragOperationEnded(const juce::DragAndDropTarget::SourceDetails&) override;
     void paint(juce::Graphics&) override;
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;
+    void changeListenerCallback(juce::ChangeBroadcaster*) override;
+    using juce::AudioProcessorEditor::keyPressed;
+    bool keyPressed(const juce::KeyPress&,juce::Component*) override;
+    void mouseUp(const juce::MouseEvent&) override;
+    void performDocumentHistory(bool redo);
+    void beginDocumentAction() override;
+    void endDocumentAction() override;
+    bool replayDocumentAction(bool redo) override;
 
     bool isInterestedInDragSource(const SourceDetails&) override;
     void itemDragEnter(const SourceDetails&) override;
@@ -59,6 +74,7 @@ public:
     void beginModulationDrag(mct::origami::ModSource);
     void updateModulationDragHover(juce::Point<int> editorPoint,double nowMs);
     void endModulationDrag();
+    void refreshAuthorizationState(){syncActivationGate();}
     int currentPage() const noexcept { return currentPage_; }
     // mct-origami-modulation-row-consistency
     // Every route mutation (from any view, via the modulation bindings) posts
@@ -1376,14 +1392,7 @@ private:
                 const auto text=labels_.count(selectedId_)!=0?labels_.at(selectedId_):juce::String{};
                 g.drawText(text,getLocalBounds().reduced(8,0).withTrimmedRight(18),
                            juce::Justification::centredLeft,false);
-                juce::Path arrow;
-                const float cx=static_cast<float>(getWidth()-10),cy=static_cast<float>(getHeight())*0.5f;
-                arrow.startNewSubPath(cx-3.0f,cy-1.5f);
-                arrow.lineTo(cx,cy+1.5f);
-                arrow.lineTo(cx+3.0f,cy-1.5f);
-                g.setColour(juce::Colours::white.withAlpha(0.72f*alpha));
-                g.strokePath(arrow,juce::PathStrokeType(1.2f,juce::PathStrokeType::curved,
-                                                        juce::PathStrokeType::rounded));
+                mct::origami::ui::drawPulldownChevron(g,{static_cast<float>(getWidth()-10),static_cast<float>(getHeight())*.5f},juce::Colours::white.withAlpha(.72f*alpha));
             }
         private:
             std::vector<mct::origami::ui::NativeChoiceItem> nativeItems_;
@@ -2030,6 +2039,11 @@ private:
         // other table source (OrigamiAudioProcessor::compileWavetable).
         mct::origami::dsp::Wavetable compiledWavetable() const;
 
+        std::uint64_t authoringRevision() const {return authoringRevision_;}
+        bool canUndoAuthoring() const {return historyIndex_>0;}
+        bool canRedoAuthoring() const {return historyIndex_<history_.size();}
+        void undoAuthoring(){undo();}
+        void redoAuthoring(){redo();}
         bool keyPressed(const juce::KeyPress& key) override {
             const auto mods=key.getModifiers();
             // CAPTURE KEYBOARD INPUT OFF: only Escape (cancel / close this
@@ -2411,7 +2425,7 @@ private:
             }
             refreshHistoryButtons();
         }
-        void refreshHistoryButtons() { header_.setHistoryAvailable(historyIndex_>0,historyIndex_<history_.size()); }
+        void refreshHistoryButtons() { ++authoringRevision_;header_.setHistoryAvailable(historyIndex_>0,historyIndex_<history_.size()); }
         mct::origami::ui::WavetableDocument document_;
         GridSettings gridSettings_;
         EditorHeader header_;
@@ -2437,12 +2451,14 @@ private:
         std::vector<HistoryEntry> history_;
         std::optional<mct::origami::ui::WavetableFrame> clipboard_;
         std::unique_ptr<juce::FileChooser> frameFileChooser_;
+        std::uint64_t authoringRevision_=0;
         std::size_t historyIndex_=0;
         std::uint64_t generationSeed_=0;
     };
     void openWavetableEditor(unsigned oscillatorId);
     void closeWavetableEditor();
     void timerCallback() override;
+    void syncGlobalViews();
     void handleAsyncUpdate() override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
@@ -2484,6 +2500,14 @@ private:
     bool wavetableEditorSelected_=false;
     unsigned wavetableEditorOscillatorId_=0;
     WavetableEditorSurface wavetableEditor_;
+    bool preferFinalOutputHistory(bool redo) const;
+    std::uint64_t outputHistoryDraftRevision_=0;
+    bool historyMouseGesture_=false;
+    void syncActivationGate();
+    bool interactionBlocked() const;
+    juce::Component normalSurface_;
+    mct::origami::ui::ActivationPanel activation_;
+    mct::origami::ui::WelcomeOverlay welcome_;
     OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;
     mct::origami::ui::OrigamiHeader header_;

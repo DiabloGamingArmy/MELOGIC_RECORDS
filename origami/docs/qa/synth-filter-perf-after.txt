@@ -1,0 +1,25 @@
+scenario                                   rate block  vox | median us    p95 us    p99 us |   med %   p99 % |   ns/smp | output hash      | spectral misses | requests | compiles | max d2
+Synth filters zero, 1 voices               48.0   256    1 |      17.9      20.5      22.6 |   0.34%   0.42% |     69.8 | c527776467754ffd | 0 | 0 | 0 | 0.0772
+Synth filters single, 1 voices             48.0   256    1 |      23.5      27.1      29.1 |   0.44%   0.55% |     91.8 | 39617da18f63a941 | 0 | 0 | 0 | 0.0019
+Synth filters shared four OSC, 1 voices    48.0   256    1 |      33.3      36.5      39.6 |   0.62%   0.74% |    130.0 | 541697246d4efa29 | 0 | 0 | 0 | 0.0016
+Synth filters serial two, 1 voices         48.0   256    1 |      26.6      29.8      31.6 |   0.50%   0.59% |    103.8 | 39256309aee9d065 | 0 | 0 | 0 | 0.0008
+Synth filters four separate, 1 voices      48.0   256    1 |      38.8      43.3      46.7 |   0.73%   0.88% |    151.5 | 4794529ba878ce3d | 0 | 0 | 0 | 0.0031
+Synth filters maximum eight serial, 1 voices   48.0   256    1 |      61.7      67.7      74.3 |   1.16%   1.39% |    241.0 | 3f3a3b935e3c1e89 | 0 | 0 | 0 | 0.0452
+Synth filters zero, 8 voices               48.0   256    8 |      61.3      67.3      77.1 |   1.15%   1.45% |    239.6 | 1e6aa2d77a8a4129 | 0 | 0 | 0 | 0.1635
+Synth filters single, 8 voices             48.0   256    8 |     102.2     109.7     117.0 |   1.92%   2.19% |    399.4 | d37d9a89955f1a71 | 0 | 0 | 0 | 0.0056
+Synth filters shared four OSC, 8 voices    48.0   256    8 |     161.6     177.9     182.6 |   3.03%   3.42% |    631.3 | c4e3f7ad9cb9b4dd | 0 | 0 | 0 | 0.0046
+Synth filters serial two, 8 voices         48.0   256    8 |     136.7     148.8     160.0 |   2.56%   3.00% |    533.9 | 21cb6af56b93a211 | 0 | 0 | 0 | 0.0030
+Synth filters four separate, 8 voices      48.0   256    8 |     201.3     215.3     225.5 |   3.77%   4.23% |    786.3 | dcac979017dca1ad | 0 | 0 | 0 | 0.0090
+Synth filters maximum eight serial, 8 voices   48.0   256    8 |     384.6     408.8     422.8 |   7.21%   7.93% |   1502.3 | af6ef2558498d709 | 0 | 0 | 0 | 0.0957
+Synth filters zero, 16 voices              48.0   256   16 |     110.4     118.7     127.9 |   2.07%   2.40% |    431.2 | 9570d88118497819 | 0 | 0 | 0 | 0.2953
+Synth filters single, 16 voices            48.0   256   16 |     195.0     209.1     213.0 |   3.66%   3.99% |    761.6 | 82fbf1f2aa6fc7d9 | 0 | 0 | 0 | 0.0102
+Synth filters shared four OSC, 16 voices   48.0   256   16 |     303.6     327.4     348.1 |   5.69%   6.53% |   1185.9 | 19afb100cd4ddc65 | 0 | 0 | 0 | 0.0084
+Synth filters serial two, 16 voices        48.0   256   16 |     259.0     277.0     288.0 |   4.86%   5.40% |   1011.7 | 24b3a567aa20cba5 | 0 | 0 | 0 | 0.0051
+Synth filters four separate, 16 voices     48.0   256   16 |     381.8     405.9     415.5 |   7.16%   7.79% |   1491.5 | bb26347bbc0f4b11 | 0 | 0 | 0 | 0.0144
+Synth filters maximum eight serial, 16 voices   48.0   256   16 |     765.6     802.8     826.5 |  14.36%  15.50% |   2990.7 | b856f1b5d1ab4299 | 0 | 0 | 0 | 0.1742
+1 osc, 1 voices                            48.0   256    1 |      17.0      20.2      24.6 |   0.32%   0.46% |     66.4 | c527776467754ffd | 0 | 0 | 0 | 0.0772
+1 osc, 8 voices                            48.0   256    8 |      61.2      67.5      73.0 |   1.15%   1.37% |    238.9 | 1e6aa2d77a8a4129 | 0 | 0 | 0 | 0.1635
+1 osc, 16 voices                           48.0   256   16 |     110.5     120.9     126.2 |   2.07%   2.37% |    431.8 | 9570d88118497819 | 0 | 0 | 0 | 0.2953
+1 osc unison 4, 16 voices                  48.0   256   16 |     159.8     169.3     174.1 |   3.00%   3.26% |    624.0 | 46d636996096db99 | 0 | 0 | 0 | 0.1434
+1 osc unison 8, 16 voices                  48.0   256   16 |     208.5     218.8     228.8 |   3.91%   4.29% |    814.3 | f99e51ea74755c4d | 0 | 0 | 0 | 0.1250
+1 osc unison 16, 16 voices                 48.0   256   16 |     309.4     326.4     334.5 |   5.80%   6.27% |   1208.7 | 69fcfdcbb7460259 | 0 | 0 | 0 | 0.1205

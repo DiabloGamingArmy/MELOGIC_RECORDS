@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
+#include "FilterTypes.h"
+#include "FilterResponse.h"
+#include "Comb.h"
+#include "FastMath.h"
 namespace mct::origami::dsp {
 // Topology-preserving state variable low-pass; shared coefficients, per-voice state.
 struct LowPassCoefficients {
@@ -14,7 +19,37 @@ struct LowPassCoefficients {
         return {g, 1.0 / (1 + g * (g + 1.0 / q))};
     }
 };
+inline double lowPassMagnitude(const LowPassCoefficients& c,double hz,double rate,double mix=1) noexcept {
+    if(c.g<=0 || c.a1<=0 || rate<=0) return 0;
+    const double k=(1/c.a1-1)/c.g-c.g;
+    return std::abs((1-mix)+mix*svfTransfer(c.g,k,0,0,1,hz,rate));
+}
 
+struct FilterCoefficients {LowPassCoefficients integrator{};double m0=0,m1=0,m2=1;};
+inline FilterCoefficients filterDesign(FilterType type,const LowPassCoefficients& base,float gainDb=0) noexcept {
+    double g=base.g,k=(1/base.a1-1)/g-g,m0=0,m1=0,m2=1;
+    const double A=fastExp2Audio(double(gainDb)/12.041199826);
+    switch(type) {
+    case FilterType::LowPass:break;
+    case FilterType::HighPass:m0=1;m1=-k;m2=-1;break;
+    case FilterType::BandPass:m1=k;m2=0;break;
+    case FilterType::Notch:m0=1;m1=-k;m2=0;break;
+    case FilterType::AllPass:m0=1;m1=-2*k;m2=0;break;
+    case FilterType::Bell:k/=A;m0=1;m1=k*(A*A-1);m2=0;break;
+    case FilterType::LowShelf:g/=std::sqrt(A);m0=1;m1=k*(A-1);m2=A*A-1;break;
+    case FilterType::HighShelf:g*=std::sqrt(A);m0=A*A;m1=k*(1-A)*A;m2=1-A*A;break;
+    case FilterType::Comb:break; // Comb dispatches its shared fractional-delay kernel
+    }
+    return {{g,type==FilterType::LowPass?base.a1:1/(1+g*(g+k))},m0,m1,m2};
+}
+inline double filterMagnitude(const FilterCoefficients& c,double hz,double rate,double mix=1) noexcept {
+    const auto& i=c.integrator;const double k=(1/i.a1-1)/i.g-i.g;
+    return std::abs((1-mix)+mix*svfTransfer(i.g,k,c.m0,c.m1,c.m2,hz,rate));
+}
+
+inline double filterResponseMagnitude(FilterType type,const LowPassCoefficients& base,float cutoff,float resonance,float gain,double hz,double rate,double mix=1) noexcept {
+    return type==FilterType::Comb?combMagnitude(combDesign(rate,cutoff,combFeedback(resonance)),hz,rate,mix):filterMagnitude(filterDesign(type,base,gain),hz,rate,mix);
+}
 class LowPassCoefficientTable {
 public:
     static constexpr std::size_t size=4097;
@@ -66,6 +101,12 @@ public:
         ic1_ = flush(2 * v1 - ic1_); ic2_ = flush(2 * v2 - ic2_);
         const float out=static_cast<float>(v2);
         return std::isfinite(out) ? out : 0.0f;
+    }
+    float next(float input,const FilterCoefficients& c) noexcept {
+        if(!std::isfinite(input) || !std::isfinite(ic1_) || !std::isfinite(ic2_)) {reset();return 0;}
+        const auto& a=c.integrator;const double v1=a.a1*(ic1_+a.g*(double(input)-ic2_)),v2=ic2_+a.g*v1;
+        if(!std::isfinite(v1) || !std::isfinite(v2) || std::abs(v1)>1e12 || std::abs(v2)>1e12) {reset();return 0;}
+        ic1_=flush(2*v1-ic1_);ic2_=flush(2*v2-ic2_);const float out=float(c.m0*input+c.m1*v1+c.m2*v2);return std::isfinite(out)?out:0;
     }
     bool quiet() const noexcept { return std::abs(ic1_) + std::abs(ic2_) < 1e-9; }
 private:

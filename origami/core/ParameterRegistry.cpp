@@ -13,7 +13,7 @@ const std::array<ParameterDescriptor, parameterCount>& parameterRegistry() noexc
         {ParameterId::Attack,"env.1.attack","ENV 1 Attack","s",.01f,.001f,10,ParameterScale::Logarithmic,0},
         {ParameterId::Decay,"env.1.decay","ENV 1 Decay","s",.15f,.001f,10,ParameterScale::Logarithmic,0},
         {ParameterId::Sustain,"env.1.sustain","ENV 1 Sustain","linear",.7f,0,1,ParameterScale::Linear,.01f},
-        {ParameterId::Release,"env.1.release","ENV 1 Release","s",.25f,.001f,20,ParameterScale::Logarithmic,0},
+        {ParameterId::Release,"env.1.release","ENV 1 Release","s",.25f,0,20,ParameterScale::Logarithmic,0},
         {ParameterId::MasterGain,"master.gain","Master Gain","linear",.2f,0,1,ParameterScale::Linear,.01f},
         {ParameterId::OscOctave,"osc.1.octave","OSC 1 Octave","oct",0,-4,4,ParameterScale::Choice,0},
         {ParameterId::OscSemitone,"osc.1.semitone","OSC 1 Semitone","st",0,-12,12,ParameterScale::Choice,0},
@@ -42,12 +42,17 @@ float toNormalized(ParameterId id, float physical) noexcept {
     float value = 0;
     if (!sanitizeParameter(id, physical, value)) return 0;
     const auto& p = *findParameter(id);
+    // Zero-inclusive release uses a 1 ms logarithmic offset; physical saved values stay authoritative.
+    if(p.scale==ParameterScale::Logarithmic && p.minimum==0)
+        return std::log1p(value/.001f)/std::log1p(p.maximum/.001f);
     return p.scale == ParameterScale::Logarithmic ? std::log(value / p.minimum) / std::log(p.maximum / p.minimum) : (value-p.minimum)/(p.maximum-p.minimum);
 }
 float fromNormalized(ParameterId id, float normalized) noexcept {
     const auto* p = findParameter(id);
     if (!p || !std::isfinite(normalized)) return 0;
     const auto n = std::clamp(normalized, 0.f, 1.f);
+    if(p->scale==ParameterScale::Logarithmic && p->minimum==0)
+        return n==1.0f ? p->maximum : std::clamp(.001f*std::expm1(n*std::log1p(p->maximum/.001f)),0.0f,p->maximum);
     float value = p->scale == ParameterScale::Logarithmic ? p->minimum * std::pow(p->maximum/p->minimum, n) : p->minimum+n*(p->maximum-p->minimum);
     sanitizeParameter(id, value, value);
     return value;

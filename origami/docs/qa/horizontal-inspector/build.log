@@ -1,0 +1,30 @@
+[  0%] Building VST3 manifest helper for OrigamiPlugin
+[  5%] Built target OrigamiAssets
+[  5%] Built target origami_spectral_heap_probe
+[ 13%] Built target origami_core
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/vst3_helpers/OrigamiPlugin
+[ 15%] Built target origami_dsp_profile
+[ 16%] Built target origami_nodes_bench
+[ 16%] Built target origami_patch
+[ 16%] Built target origami_wavetable_bank_tests
+make[3]: warning: jobserver unavailable: using -j1.  Add `+' to parent make rule.
+[ 21%] Built target origami_render
+[ 21%] Built target origami_state_tests
+[ 21%] Built target origami_fx_tests
+[ 21%] Built target origami_modulation_tests
+[ 21%] Built target origami_tests
+[100%] Built target vst3_helper
+[ 22%] Built target origami_spectral_quality_tests
+[ 23%] Built target origami_spectral_tests
+[ 23%] Built target OrigamiPlugin_vst3_helper
+[ 44%] Built target OrigamiPlugin
+[ 49%] Built target OrigamiPlugin_Standalone
+[ 61%] Built target OrigamiPlugin_VST3
+[ 61%] Built target OrigamiPlugin_AU
+[ 87%] Built target origami_content_tests
+[ 87%] Built target origami_perf_bench
+[ 88%] Building CXX object CMakeFiles/origami_plugin_tests.dir/tests/PluginTests.cpp.o
+[ 89%] Linking CXX executable origami_plugin_tests
+[100%] Built target origami_plugin_tests

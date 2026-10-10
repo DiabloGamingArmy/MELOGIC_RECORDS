@@ -1,0 +1,50 @@
+Test command: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost/origami_tests
+Working Directory: /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+Test timeout computed to be: 10000000
+Init MIDI 36 peak=0.290701 dB=-10.7311 RMS=0.142949 DC=-0.000584966
+Init MIDI 60 peak=0.287903 dB=-10.8151 RMS=0.142194 DC=-0.000158859
+Init MIDI 84 peak=0.277077 dB=-11.148 RMS=0.14027 DC=1.36254e-05
+Init gain stages MIDI60 raw=1.1633 rawRMS=0.574552 postENV/level=1.1633 stereoPostRoute=0.822579 previousMaster0.2=0.164516 calibratedMaster0.35=0.287903
+Init stereo headroom unison=0 chord=0 peak=0.289777
+Init stereo headroom unison=0 chord=1 peak=0.991154
+Init stereo headroom unison=4 chord=0 peak=0.243956
+Init stereo headroom unison=4 chord=1 peak=0.917063
+Init stereo headroom unison=8 chord=0 peak=0.243541
+Init stereo headroom unison=8 chord=1 peak=0.921376
+Init stereo headroom unison=16 chord=0 peak=0.24258
+Init stereo headroom unison=16 chord=1 peak=0.920371
+[PEAK response] 360 Synth/Nodes probe pairs; worst Synth error 1.10186e-06 dB
+[Comb response] 432 measured probes, worst error 1.58216e-05 dB
+[filter response] 6656 independent Synth probes; worst meaningful dB error 0.00577907216882; worst absolute magnitude error 1.41515030094e-06
+dynamic topology
+oscillator control cache
+simple playback + visualization policy
+clean sine simple path P0
+performance visualization sources
+voice observation
+visualization cadence
+performance source curves
+QoS voice admission
+audio-rate fast math
+oscillator generation
+spectral preparation
+random spectral amount
+spectral playback
+spectral concurrent eviction
+random spectral morph
+random spectral morph crossing
+realtime thread policy
+wavetable handoff
+wavetable handoff concurrency
+optimised-path golden renders
+spectral transitions
+manual-edit dezipper
+nested modulation realtime
+registry and patches
+envelope timing
+pitch and blocks
+voices and realtime
+performance modes
+signal behavior
+oscillator and filter
+PASS: 1916735 checks

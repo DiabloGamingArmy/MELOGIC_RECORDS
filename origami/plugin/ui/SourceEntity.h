@@ -99,4 +99,45 @@ inline void paintSourceEntityRow(juce::Graphics& g,juce::Rectangle<int> r,const 
         text(g,s.badge,inner.withTrimmedRight(reserved+2),Type::secondary,Palette::muted(),juce::Justification::centredRight);
 }
 
+// Source-card chrome is shared; modulation adds its route chamber on top.
+class SourceEntityButton : public juce::TextButton {
+public:
+    using juce::TextButton::TextButton;
+    static constexpr int baseHeight=36;
+    void paintButton(juce::Graphics& g,bool over,bool down) override {
+        juce::TextButton::paintButton(g,over,down);
+        const auto card=getLocalBounds().toFloat();
+        paintDragGrip(g,card.withWidth(sourceEntityGripWidth+6.0f).withTrimmedLeft(4.0f)
+            .withHeight(std::min(card.getHeight(),18.0f)));
+    }
+};
+struct SourceRailLayout {
+    juce::Rectangle<int> rail,editor,header,list,remove,add;
+};
+inline SourceRailLayout sourceRailLayout(juce::Rectangle<int> body) {
+    body.removeFromTop(4);body.removeFromRight(4);
+    SourceRailLayout l;l.rail=body.removeFromLeft(116);body.removeFromLeft(6);l.editor=body;
+    auto rail=l.rail.reduced(4,5);auto controls=rail.removeFromBottom(24);
+    l.remove=controls.removeFromLeft((controls.getWidth()-3)/2);controls.removeFromLeft(3);l.add=controls;
+    rail.removeFromBottom(5);l.header=rail.removeFromTop(18);l.list=rail;return l;
+}
+inline void paintSourceRailHeader(juce::Graphics& g,juce::Rectangle<int> title) {
+    const auto box=title.toFloat().reduced(.5f);
+    g.setColour(juce::Colours::black);g.fillRoundedRectangle(box,2.5f);
+    g.setColour(Palette::borderSoft());g.drawRoundedRectangle(box,2.5f,1.0f);
+    text(g,"SOURCE",title,Type::label,Palette::secondary(),juce::Justification::centred);
+}
+// Close a sparse collection with a footer band inside the rail's perimeter.
+// Empty list space remains part of the same inset surface, not the editor.
+inline void paintSourceRail(juce::Graphics& g,const SourceRailLayout& layout) {
+    well(g,layout.rail);
+    const int footerTop=layout.remove.getY()-5;
+    g.setColour(Palette::raised());
+    g.fillRect(layout.rail.getX()+1,footerTop,layout.rail.getWidth()-2,layout.rail.getBottom()-footerTop-1);
+    g.setColour(Palette::border());
+    g.drawHorizontalLine(footerTop,float(layout.rail.getX()+1),float(layout.rail.getRight()-1));
+    paintSourceRailHeader(g,layout.header);
+}
+inline constexpr int sourceListTopGap=3,sourceRowGap=2;
+
 }

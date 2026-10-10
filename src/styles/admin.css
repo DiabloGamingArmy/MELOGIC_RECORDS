@@ -4794,3 +4794,18 @@
 .admin-engineering-triage-result{border-top:1px solid var(--admin-border);padding-top:.75rem}
 .admin-engineering-triage-result>strong{color:var(--admin-text);font-size:.82rem;text-transform:uppercase;letter-spacing:.05em}
 .admin-engineering-triage-result p{margin:.35rem 0 0;color:var(--admin-muted);line-height:1.5}
+
+/* Licensing composes shared admin primitives; only native-dialog and column sizing differ. */
+.admin-licensing-dialog { box-sizing: border-box; }
+.admin-licensing-dialog::backdrop { background: rgba(15, 24, 34, 0.52); }
+.admin-licensing-dialog textarea[aria-label="Generated keys"] { min-height: 10rem; }
+.admin-licensing-dialog [data-license-error][hidden] { display: none; }
+.admin-data-table.is-license-keys .admin-data-row { grid-template-columns: minmax(160px, 1.2fr) minmax(110px, .8fr) minmax(80px, .6fr) minmax(155px, 1fr) minmax(150px, 1fr) 140px; min-width: 850px; }
+.admin-data-table.is-license-access .admin-data-row { grid-template-columns: minmax(120px, 1fr) 90px 100px minmax(240px, 2fr) minmax(150px, 1fr); min-width: 750px; }
+.admin-data-table.is-license-keys summary { list-style: none; display: inline-grid; place-items: center; cursor: pointer; }
+.admin-data-table.is-license-keys summary::-webkit-details-marker { display: none; }
+.admin-data-table.is-license-keys .admin-account-actions-dropdown { position: static; width: auto; margin-top: .35rem; }
+.admin-licensing-filter { display: flex; align-items: center; gap: .75rem; color: var(--admin-muted); }
+
+.admin-empty-state[role="alert"] { display: grid; gap: 0.4rem; }
+.admin-empty-state[role="alert"] p { margin: 0; }
