@@ -566,7 +566,8 @@ void OrigamiAudioProcessorEditor::syncGlobalViews() {
 void OrigamiAudioProcessorEditor::syncActivationGate() {
     const bool blocked=!processor_.isAuthorized();const bool changed=activation_.isVisible()!=blocked;
     normalSurface_.setEnabled(!blocked);activation_.setBounds(getLocalBounds());activation_.setVisible(blocked);
-    if(blocked){activation_.toFront(false);activation_.sync(isShowing());if(changed){juce::PopupMenu::dismissAllActiveMenus();globalOverlay_.dismiss();endModulationDrag();if(historyMouseGesture_){historyMouseGesture_=false;processor_.endUiTransaction();}if(isShowing())activation_.grabKeyboardFocus();}}
+    activation_.sync(blocked && isShowing());
+    if(blocked){activation_.toFront(false);if(changed){juce::PopupMenu::dismissAllActiveMenus();globalOverlay_.dismiss();endModulationDrag();if(historyMouseGesture_){historyMouseGesture_=false;processor_.endUiTransaction();}if(isShowing())activation_.grabKeyboardFocus();}}
 }
 void OrigamiAudioProcessorEditor::timerCallback() {
     syncActivationGate();if(!processor_.isAuthorized())return;

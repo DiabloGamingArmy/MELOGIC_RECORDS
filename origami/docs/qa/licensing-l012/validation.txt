@@ -1,0 +1,61 @@
+L01.2 validation — 2026-10-09
+Baseline: b7913c55ca7a4883c793ee841bda45770624747a
+
+Final focused UI/continuation/gate/state-boundary run:
+PASS L01.2 activation controls and continuation audit
+PASS L01.1 authorization UI/audio gate audit
+PASS L01 account/patch boundary audit
+PASS focused activation: 3394 checks
+
+Account/auth standalone run:
+PASS account 61 checks
+
+Complete Release CTest:
+Test project /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+      Start  1: origami_state
+ 1/12 Test  #1: origami_state .......................   Passed    0.08 sec
+      Start  2: origami_foundation
+ 2/12 Test  #2: origami_foundation ..................   Passed   12.40 sec
+      Start  3: origami_wavetable_bank_foundation
+ 3/12 Test  #3: origami_wavetable_bank_foundation ...   Passed    0.09 sec
+      Start  4: origami_modulation_core
+ 4/12 Test  #4: origami_modulation_core .............   Passed    1.78 sec
+      Start  5: origami_fx_graph
+ 5/12 Test  #5: origami_fx_graph ....................   Passed    1.75 sec
+      Start  6: origami_spectral_tune
+ 6/12 Test  #6: origami_spectral_tune ...............   Passed    0.67 sec
+      Start  7: origami_spectral_quality
+ 7/12 Test  #7: origami_spectral_quality ............   Passed    1.21 sec
+      Start  8: origami_plugin_ui
+ 8/12 Test  #8: origami_plugin_ui ...................   Passed   52.53 sec
+      Start  9: origami_content
+ 9/12 Test  #9: origami_content .....................   Passed    2.71 sec
+      Start 10: origami_account
+10/12 Test #10: origami_account .....................   Passed    2.26 sec
+      Start 11: origami_eq_headroom
+11/12 Test #11: origami_eq_headroom .................   Passed    4.14 sec
+      Start 12: origami_dsp_torture
+12/12 Test #12: origami_dsp_torture .................   Passed   74.30 sec
+
+100% tests passed out of 12
+
+Total Test time (real) = 153.95 sec
+
+Fresh tests-OFF Release builds:
+origami-l012-release.log
+[100%] Built target OrigamiPlugin_Standalone
+[100%] Built target OrigamiPlugin_AU
+[ 85%] Built target OrigamiPlugin_vst3_helper
+[100%] Built target OrigamiPlugin_VST3
+origami-l012-release-final.log
+[100%] Built target OrigamiPlugin_Standalone
+[100%] Built target OrigamiPlugin_AU
+[ 39%] Built target OrigamiPlugin_vst3_helper
+[100%] Built target OrigamiPlugin_VST3
+
+All three wrappers built from fresh Release tree; final transport source refresh relinked all three.
+Full regression plugin run: 1647483 plugin/UI checks.
+Dedicated EQ: 373552 checks, 157011364 inspected samples.
+B01 torture: 2844658 checks, 318781890 samples, 392344 callbacks, 0 failures.
+Focused final run covers added already-entitled continuation and state-dependent branding assertions.
+No production authentication, license redemption, Keychain content export or plugin installation performed.

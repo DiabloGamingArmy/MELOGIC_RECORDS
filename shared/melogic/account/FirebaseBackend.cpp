@@ -101,7 +101,8 @@ public:
     }
     Authorization redeem(Session& session,const juce::String& key,juce::int64 now) override {
         operation_=cancellation_.load();const auto value=key.trim();
-        if(value.length()<32 || value.length()>256)throw Failure{Failure::InvalidKey,"redeem_key",0};
+        // Bound transport input, but let the trusted endpoint decide key format/validity.
+        if(value.isEmpty() || value.length()>256)throw Failure{Failure::InvalidKey,"redeem_key",0};
         ensureAccess(session,now);
         return decodeAuthorization(post(endpoint("redeemOrigamiLicense"),object({{"key",value}}),true,false,session.accessToken),now);
     }

@@ -93,12 +93,32 @@ boundary at 15 Hz. Root history/shortcut, mouse editing and drop handlers also
 check the current atomic state. Open transient menus are dismissed when gating.
 Activation controls remain keyboard/mouse accessible, including paste and Return
 submission. Key text is masked, trimmed only at its outer edges, never normalized
-in case/separators, never persisted, and cleared on submission/logout.
+in case/separators, and never persisted. In L01.2, any trimmed nonempty key enables
+Activate directly from the editor's text notification, independent of the 15 Hz
+account refresh. Return invokes the same guarded submission path. The native
+transport bounds input size but leaves key format and validity to the backend.
 
-Signed-out users see Sign In and key entry with a clear account requirement.
-Authenticated unlicensed users stay gated, can recheck access, open canonical
-`/profile`, log out or redeem a key. Authorized users see the original synth UI;
-Global includes Origami activation/edition status without a redesign.
+Signed-out users see Sign In, a simple OR separator, masked key entry and Activate.
+Logout is absent from their component tree. The duplicate Open Melogic Account
+link and redundant signed-out status/account prose are removed. The original
+centred branding frame and wordmark/tagline drawing geometry remain unchanged.
+
+Activating while signed out retains the key only in the initiating panel's memory
+and starts canonical browser authentication. The panel observes the shared service
+snapshot and consumes the pending key once after verified sign-in. If the account
+already has authorization, no redemption is attempted. Cancellation, authentication
+failure or panel destruction discards the pending key. Destroying a panel does not
+cancel another editor's shared account flow; there is no destroyed-UI callback,
+and no deferred redemption survives the initiating panel. A redemption already
+submitted to the shared worker may finish independently of editor lifetime.
+
+Authenticated unlicensed users stay gated, can recheck access, log out or redeem a
+key. A Firebase identity alone never dismisses the gate. Submission disables the
+controls and uses the existing worker; safe classified errors appear below the
+activation controls. Success clears input/pending state and stale messages even
+when the overlay becomes hidden, and the existing atomic gate opens the editor
+and audio. Global retains its account controls. No DSP or serialization changes.
+The independent account-service shutdown P0 is not fixed by this UI pass.
 
 All shipping wrappers construct the same processor using the canonical service's
 read-only atomic flag. The processor constructor starts asynchronous restoration
