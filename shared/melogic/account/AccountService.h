@@ -76,6 +76,7 @@ public:
     std::shared_ptr<const std::atomic<bool>> authorizationFlag() const noexcept {return authorized_;}
     void cancel();
     void logout();
+    bool claimActivationWelcome(); // UI-only, once per explicit service command generation.
     juce::String takeBrowserURL(); // message thread only; consumes once per process
     static std::shared_ptr<Service> shared();
 // Defined only in the explicit test-support target, absent from shipping binaries.
@@ -93,7 +94,7 @@ private:
     juce::String browserURL_,key_;
     std::shared_ptr<std::atomic<bool>> authorized_=std::make_shared<std::atomic<bool>>(false);
     Command command_=Command::None;
-    unsigned epoch_=0;
+    unsigned epoch_=0, welcomeClaimedEpoch_=0;
     bool stop_=false;
     std::thread worker_;
 };

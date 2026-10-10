@@ -5,6 +5,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "ui/ActivationPanel.h"
+#include "ui/WelcomeOverlay.h"
 #include "ui/OrigamiHeader.h"
 #include "ui/UserPreferences.h"
 #include "ui/ContentBrowser.h"
@@ -2503,8 +2504,10 @@ private:
     std::uint64_t outputHistoryDraftRevision_=0;
     bool historyMouseGesture_=false;
     void syncActivationGate();
+    bool interactionBlocked() const;
     juce::Component normalSurface_;
     mct::origami::ui::ActivationPanel activation_;
+    mct::origami::ui::WelcomeOverlay welcome_;
     OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;
     mct::origami::ui::OrigamiHeader header_;

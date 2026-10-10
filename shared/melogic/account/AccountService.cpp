@@ -75,7 +75,7 @@ bool Coordinator::step(Command command,juce::int64 now,const std::function<bool(
             if(r.id.length()!=64 || r.verifier.length()<43 || r.expiresAt<=now || r.expiresAt>now+300000
                || r.browserURL!="https://melogicrecords.studio/auth/desktop?request="+r.id)throw Failure{Failure::Protocol};
             browserURL=r.browserURL;snapshot.state=State::AwaitingBrowser;snapshot.verificationCode=r.id.substring(0,8).toUpperCase();
-            snapshot.message="Complete sign-in in your browser. Match code "+snapshot.verificationCode;snapshot.authorization.message=snapshot.message;return true;
+            snapshot.message="Complete sign-in in your browser.";snapshot.authorization.message=snapshot.message;return true;
         }
         if(request_){
             if(now>=request_->expiresAt || startingGeneration_!=store_.generation()){
@@ -157,6 +157,11 @@ Service::Service(std::unique_ptr<Store> store,std::unique_ptr<Backend> backend)
     :store_(std::move(store)),backend_(std::move(backend)),worker_([this]{run();}){}
 Service::~Service(){{std::lock_guard<std::mutex> lock(mutex_);stop_=true;++epoch_;}backend_->cancel();wake_.notify_one();worker_.join();}
 Snapshot Service::snapshot() const {std::lock_guard<std::mutex> lock(mutex_);return snapshot_;}
+bool Service::claimActivationWelcome(){
+    std::lock_guard<std::mutex> lock(mutex_);
+    if(!authorized_->load(std::memory_order_acquire) || snapshot_.state!=State::SignedIn || snapshot_.authorization.state!=AuthorizationState::Authorized || welcomeClaimedEpoch_==epoch_)return false;
+    welcomeClaimedEpoch_=epoch_;return true;
+}
 juce::String Service::takeBrowserURL(){std::lock_guard<std::mutex> lock(mutex_);auto url=browserURL_;browserURL_.clear();return url;}
 void Service::submit(Command c,const juce::String& key){{std::lock_guard<std::mutex> lock(mutex_);command_=c;key_=key;++epoch_;browserURL_.clear();if(c==Command::Logout || c==Command::SignIn || c==Command::Redeem)authorized_->store(false,std::memory_order_release);if(c==Command::SignIn){snapshot_.state=State::AwaitingBrowser;snapshot_.message="Starting secure browser sign-in...";snapshot_.verificationCode.clear();snapshot_.authorization={AuthorizationState::Authenticating,{},snapshot_.message,0};}if(c==Command::Restore){authorized_->store(false,std::memory_order_release);snapshot_.state=State::Restoring;snapshot_.message="Checking account and Origami access...";snapshot_.authorization={AuthorizationState::Restoring,{},snapshot_.message,0};}if(c==Command::Redeem)snapshot_.authorization={AuthorizationState::RedeemingKey,{},"Checking license...",0};if(c==Command::Logout)snapshot_.state=State::SigningOut;}backend_->cancel();wake_.notify_one();}
 void Service::redeem(const juce::String& key){submit(Command::Redeem,key.trim());}

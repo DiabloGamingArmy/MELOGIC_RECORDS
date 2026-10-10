@@ -29,6 +29,8 @@ public:
     void assignmentDragStarted();
     void assignmentDragEnded();
     void reconcileAssignmentDragFocus();
+    bool panicVisibleAtCurrentPointer() const {return panic_.reveal(panic_.physicalHover());}
+    void reconcileAccessFocus(){panic_.resetAccessFocus();}
     bool panicVisibleForPointer(bool inside) const noexcept {return panic_.reveal(inside);}
     void selectSynth();
     // Programmatic page switch (cross-page modulation drag); notifies onModeSelected.
@@ -60,8 +62,10 @@ private:
     class PanicButton final : public juce::Button,private juce::Timer {
     public:
         PanicButton():juce::Button("Emergency DSP reset") { setTooltip("PANIC: silence every voice and clear effect tails; the patch is kept"); }
-        void focusGained(FocusChangeType cause) override { juce::Button::focusGained(cause); keyboardFocus_=cause!=focusChangedByMouseClick && !dragFocusSuppressed_; repaint(); }
+        void focusGained(FocusChangeType cause) override { juce::Button::focusGained(cause); keyboardFocus_=cause==focusChangedByTabKey && !dragFocusSuppressed_; repaint(); }
         void focusLost(FocusChangeType cause) override { if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) if(container->isDragAndDropActive() && cause==focusChangedDirectly) keyboardBeforeDrag_=keyboardFocus_;juce::Button::focusLost(cause); keyboardFocus_=false; repaint(); }
+        bool physicalHover() const {return isEnabled() && isShowing() && getLocalBounds().contains(getLocalPoint(nullptr,juce::Desktop::getMousePosition()));}
+        void resetAccessFocus(){keyboardFocus_=false;keyboardBeforeDrag_=false;restoreKeyboardFocus_=false;repaint();}
         bool reveal(bool physicalHover) const noexcept {return physicalHover || keyboardFocus_;}
         void beginDrag() {restoreKeyboardFocus_=keyboardBeforeDrag_ || keyboardFocus_;keyboardBeforeDrag_=false;dragFocusSuppressed_=true;keyboardFocus_=false;++dragGeneration_;repaint();}
         void endDrag() {
@@ -78,7 +82,7 @@ private:
         void reconcileDragFocus() {reconcileDragFocus(dragGeneration_);}
         void confirm() { confirmed_=true; startTimer(500); repaint(); }
         void paintButton(juce::Graphics& g,bool over,bool down) override {
-            over=isShowing() && getLocalBounds().contains(getLocalPoint(nullptr,juce::Desktop::getMousePosition()));
+            over=physicalHover();
             if(!reveal(over)) return;
             g.setColour(Palette::background().withAlpha(.78f));
             g.fillRect(getLocalBounds());

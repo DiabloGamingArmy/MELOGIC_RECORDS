@@ -59,6 +59,8 @@ void activationSurfaceAudit() {
     wait([&]{panel.sync(false);return service->authorizationFlag()->load();});panel.sync(false);
     check(backend->redemptions==1 && backend->exactKey && entry.getText().isEmpty() && !activate.isEnabled(),"login resumes one redemption, authorizes, clears plaintext and disables cleared action");
     check(status.getText().isEmpty(),"success leaves no stale status");
+    check(panel.takeActivationWelcome() && !panel.takeActivationWelcome(),"successful initiating activation produces exactly one welcome event");
+    panel.sync(false);check(!panel.takeActivationWelcome(),"periodic authorized sync cannot repeat welcome");
     // Authenticated identity without entitlement remains gated; all failures use safe service classifications.
     backend->licensed=false;service->restoreAccess();wait([&]{return service->snapshot().state==State::SignedIn && service->snapshot().authorization.state==AuthorizationState::Unauthorized;});panel.sync(false);
     check(!service->authorizationFlag()->load(),"authenticated but unlicensed stays unauthorized");
@@ -67,9 +69,11 @@ void activationSurfaceAudit() {
         edit(item.first);check(activate.isEnabled(),"unlicensed signed-in identity can retry redemption");const auto before=backend->redemptions.load();
         entry.onReturnKey();activate.onClick();
         wait([&]{return service->snapshot().authorization.state==AuthorizationState::Error;});panel.sync(false);
+        check(!panel.takeActivationWelcome(),"each invalid/expired/exhausted/revoked/network redemption fails without welcome");
         check(backend->redemptions==before+1 && status.getText().contains(item.second) && !service->authorizationFlag()->load(),"safe failure classification and duplicate prevention");
         check(!status.getText().contains("Firebase") && !status.getText().contains("synthetic"),"activation error does not expose backend or secret material");
     }
+    check(!panel.takeActivationWelcome(),"failed redemption produces no welcome");
     check(unchangedBranding(),"error presentation does not shift branding");capture(panel,"network-error");
     edit("synthetic-activation-not-an-issued-key");entry.onReturnKey();wait([&]{return service->authorizationFlag()->load();});panel.sync(false);check(entry.getText().isEmpty(),"network failure is recoverable");
     // Exact old wordmark/tagline pixels, not an approximation of layout arithmetic.
@@ -93,7 +97,7 @@ void activationSurfaceAudit() {
         if(mode==2)wait([&]{return account->snapshot().state==State::Error;});
         if(mode==3){surface.reset();fake->waiting=false;wait([&]{return account->snapshot().state==State::SignedIn;});}
         if(mode==4)wait([&]{surface->sync(false);return account->authorizationFlag()->load();});
-        if(surface){surface->sync(false);check(input->getText().isEmpty(),"cancelled/failed auth clears transient key");}
+        if(surface){surface->sync(false);check(surface->takeActivationWelcome()==(mode==4),"only already-entitled successful explicit login produces welcome; decline/failure never does");check(input->getText().isEmpty(),"cancelled/failed auth clears transient key");}
         check(fake->redemptions==0 && (mode==4 || !account->authorizationFlag()->load()),"cancelled, failed, or destroyed initiating editor cannot redeem");
     }
     std::cout<<"PASS L01.2 activation controls and continuation audit\n";

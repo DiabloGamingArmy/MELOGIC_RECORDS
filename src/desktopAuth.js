@@ -2,28 +2,39 @@ import { httpsCallable } from 'firebase/functions'
 import { waitForInitialAuthState } from './firebase/auth.js'
 import { functions } from './firebase/functions.js'
 
-const status = document.querySelector('#status')
-const approve = document.querySelector('#approve')
-const cancel = document.querySelector('#cancel')
+const element = id => document.querySelector(`#${id}`)
+const status = element('status'), approve = element('approve'), cancel = element('cancel')
 const requestId = new URLSearchParams(location.search).get('request') || ''
-let finished = false
+let ready = false, finished = false
+function complete(title, copy, approved = false) {
+  ready = false
+  element('consent').hidden = true
+  element('completed').hidden = false
+  element('success-icon').hidden = !approved
+  element('result-title').textContent = title
+  element('result-copy').textContent = copy
+  status.textContent = ''
+}
 async function respond(accepted) {
-  if (finished) return
+  if (!ready || finished) return
   finished = true
   approve.disabled = cancel.disabled = true
-  status.textContent = accepted ? 'Approving account connection…' : 'Cancelling request…'
+  status.textContent = accepted ? 'Connecting…' : 'Declining…'
   try {
     const result = await httpsCallable(functions, 'approveDesktopLogin')({ requestId, approve: accepted })
     if (result.data?.ok !== true) throw Error('Unconfirmed approval')
-    status.textContent = accepted ? 'Approved. Return to Origami to finish signing in.' : 'Request cancelled. You can close this page.'
+    if (accepted) complete('Origami is connected', 'You can return to Origami. This window can now be closed.', true)
+    else complete('Connection declined', 'Origami was not connected to your Melogic Account. You can close this window.')
   } catch (error) {
-    status.textContent = error?.code === 'functions/deadline-exceeded' ? 'This request expired. Start a new sign-in from Origami.' : 'Account connection was not confirmed. Start a new sign-in from Origami.'
+    const code = error?.code
+    complete(code === 'functions/deadline-exceeded' ? 'Connection request expired' : 'Connection unavailable',
+      code === 'functions/deadline-exceeded' ? 'Return to Origami and try again.' : code === 'functions/failed-precondition' || code === 'functions/invalid-argument' || code === 'functions/permission-denied' ? 'This connection request is no longer valid. Return to Origami and try again.' : 'The connection was not confirmed. Return to Origami and try again.')
   }
 }
 approve.addEventListener('click', () => respond(true))
 cancel.addEventListener('click', () => respond(false))
 if (!/^[a-f0-9]{64}$/.test(requestId)) {
-  status.textContent = 'Invalid login request. Start sign-in from Origami.'
+  complete('Connection unavailable', 'This connection request is no longer valid.')
 } else {
   try {
     const user = await waitForInitialAuthState()
@@ -31,12 +42,21 @@ if (!/^[a-f0-9]{64}$/.test(requestId)) {
       const destination = `/auth/desktop?request=${requestId}`
       location.replace(`/auth?redirect=${encodeURIComponent(destination)}`)
     } else {
-      document.querySelector('#identity').textContent = [user.displayName, user.email].filter(Boolean).join(' · ')
-      document.querySelector('#verification').textContent = `CODE ${requestId.slice(0, 8).toUpperCase()}`
-      status.textContent = 'Confirm this account for the Origami request below.'
+      // textContent deliberately avoids interpreting account-controlled HTML.
+      element('account-name').textContent = user.displayName || ''
+      element('account-name').hidden = !user.displayName
+      element('account-email').textContent = user.email || ''
+      element('account-email').hidden = !user.email
+      if (!user.displayName && !user.email) {
+        element('account-name').textContent = 'Your Melogic Account'
+        element('account-name').hidden = false
+      }
+      element('consent').hidden = false
+      status.textContent = ''
+      ready = true
       approve.disabled = cancel.disabled = false
     }
   } catch {
-    status.textContent = 'Melogic is unavailable. Try again from Origami.'
+    complete('Connection unavailable', 'Return to Origami and try again.')
   }
 }

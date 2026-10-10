@@ -25,11 +25,12 @@ public:
         signIn_.onClick=[this]{
             if(!signIn_.isEnabled())return;
             notice_.clear();const auto s=account_->snapshot();
+            activationAttempt_=!s.storageError && s.state!=melogic::account::State::SignedIn;
             if(s.storageError || s.state==melogic::account::State::SignedIn)account_->restoreAccess();else account_->signIn();
             sync(false);
         };
         secondary_.onClick=[this]{
-            pendingKey_.clear();clearEntry();
+            activationAttempt_=false;welcomeReady_=false;pendingKey_.clear();clearEntry();
             if(account_->snapshot().state==melogic::account::State::AwaitingBrowser){notice_="Sign-in was cancelled.";account_->cancel();}
             else {notice_.clear();account_->logout();}
             sync(false);
@@ -39,10 +40,14 @@ public:
         sync(false);
     }
     ~ActivationPanel() override {pendingKey_.clear();key_.setText({},false);}
+    bool takeActivationWelcome(){return std::exchange(welcomeReady_,false);}
     void sync(bool launchBrowser=true) {
         using namespace melogic::account;
         auto s=account_->snapshot();
-        if(s.authorization.state==AuthorizationState::Authorized){pendingKey_.clear();clearEntry();notice_.clear();}
+        if(s.authorization.state==AuthorizationState::Authorized){
+            if(activationAttempt_)welcomeReady_=account_->claimActivationWelcome();
+            activationAttempt_=false;pendingKey_.clear();clearEntry();notice_.clear();
+        }
         else if(pendingKey_.isNotEmpty()) {
             if(s.state==State::SignedIn) {
                 // Consume before submission: repeated UI syncs cannot redeem twice.
@@ -53,6 +58,7 @@ public:
                 notice_=s.state==State::SignedOut?"Sign-in was cancelled.":s.message;
             }
         }
+        if(s.state==State::Error || s.state==State::SignedOut || s.authorization.state==AuthorizationState::Error)activationAttempt_=false;
         const bool signedIn=s.state==State::SignedIn;
         juce::String status=notice_;
         if(s.authorization.state==AuthorizationState::Error)status=s.authorization.message;
@@ -104,13 +110,14 @@ private:
         using namespace melogic::account;
         const auto s=account_->snapshot();const auto key=key_.getText().trim();
         if(isBusy(s) || pendingKey_.isNotEmpty() || key.isEmpty())return;
-        notice_.clear();
+        notice_.clear();activationAttempt_=true;
         if(s.state==State::SignedIn){clearEntry();account_->redeem(key);}
         else {pendingKey_=key;diagnostic("pending_key","present");account_->signIn();}
         sync(false);
     }
     std::shared_ptr<melogic::account::Service> account_;
     juce::String pendingKey_,notice_;
+    bool activationAttempt_=false,welcomeReady_=false;
     juce::Rectangle<int> body_;
     juce::Label status_,accountLabel_;
     juce::TextButton signIn_,secondary_,activate_{"ACTIVATE"};

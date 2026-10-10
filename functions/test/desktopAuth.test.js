@@ -36,6 +36,7 @@ test('Firestore transactions bind proof, UID, expiry and one-time issuance', { s
     await assert.rejects(c.poll({ ...req, verifier: 'b'.repeat(43) }, 'test-client'), { code: 'permission-denied' })
     await c.approve({ requestId: req.requestId, approve: true, uid: 'injected' }, 'verified-uid')
     await assert.rejects(c.approve({ requestId: req.requestId, approve: true }, 'other'), { code: 'failed-precondition' })
+    await assert.rejects(c.approve({ requestId: req.requestId, approve: false }, 'verified-uid'), { code: 'failed-precondition' })
     const responses = await Promise.all([c.poll(req, 'test-client'), c.poll(req, 'test-client')])
     assert.equal(responses.filter(r => r.customToken).length, 1)
     assert.equal(responses.find(r => r.customToken).customToken, 'fixture-only-custom-token-verified-uid')
@@ -45,6 +46,13 @@ test('Firestore transactions bind proof, UID, expiry and one-time issuance', { s
     await assert.rejects(c.poll(expired, 'test-client'), { code: 'deadline-exceeded' })
     const denied = await begin();await c.approve({ requestId: denied.requestId, approve: false }, 'verified-uid')
     assert.equal((await c.poll(denied, 'test-client')).status, 'cancelled')
+    await assert.rejects(c.approve({ requestId: denied.requestId, approve: false }, 'verified-uid'), { code: 'failed-precondition' })
+    await assert.rejects(c.approve({ requestId: denied.requestId, approve: true }, 'verified-uid'), { code: 'failed-precondition' })
+    await assert.rejects(c.approve({ requestId: expired.requestId, approve: true }, 'verified-uid'), { code: 'deadline-exceeded' })
+    const independent = await begin()
+    assert.equal((await c.poll(independent, 'test-client')).status, 'pending')
+    assert.equal(issued, 1) // consent cannot issue a token for another transaction
+    assert.equal((await db.doc(`users/verified-uid/entitlements/origami`).get()).exists, false) // consent never grants product access
     const revoked = await begin();disabled = true
     await assert.rejects(c.approve({ requestId: revoked.requestId, approve: true }, 'verified-uid'), { code: 'permission-denied' })
     disabled = false;await c.approve({ requestId: revoked.requestId, approve: true }, 'verified-uid');disabled = true
