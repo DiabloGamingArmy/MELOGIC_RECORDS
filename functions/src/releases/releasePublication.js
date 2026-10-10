@@ -20,8 +20,12 @@ function assertTransition(previous, next, highWater = 0, previousVersion = '0.0.
     for (let i = 0; i < 3; i++) { if (a[i] > b[i]) break; if (a[i] < b[i]) throw new HttpsError('failed-precondition', 'Version contradicts the published build sequence.') }
   }
 }
-async function writeRelease(db, next, actorUid) {
+async function writeRelease(db, next, actorUid, artifacts) {
   if (!validRelease(next, next?.releaseId) || (next.status === 'published' && (next.publishedAt.toMillis?.() ?? next.publishedAt.getTime()) > Date.now())) throw new HttpsError('invalid-argument', 'Invalid release record.')
+  if (next.status === 'published') {
+    if (!artifacts) throw new HttpsError('failed-precondition', 'Trusted Storage verification required.')
+    await artifacts.inspect(next, true)
+  }
   const product = db.doc('products/origami'), release = product.collection('releases').doc(next.releaseId)
   return db.runTransaction(async tx => {
     const [p, r] = await Promise.all([tx.get(product), tx.get(release)])

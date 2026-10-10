@@ -31,7 +31,7 @@ class FirebaseBackend final : public Backend {
     std::atomic<bool> stopping_{false};
     unsigned operation_=0; // worker only
     juce::var post(const juce::String& endpoint,const juce::var& body,bool callable=false,bool refresh=false,const juce::String& bearer={}) {
-        const char* stage=endpoint.contains("checkOrigamiUpdate")?"update_check":endpoint.contains("beginDesktopLogin")?"begin_login":endpoint.contains("pollDesktopLogin")?"poll_login":endpoint.contains("signInWithCustomToken")?"firebase_exchange":endpoint.contains("accounts:lookup")?"firebase_identity":endpoint.contains("securetoken")?"firebase_refresh":endpoint.contains("redeemOrigamiLicense")?"redeem_key":"entitlement";
+        const char* stage=endpoint.contains("getOrigamiReleaseDownload")?"update_download_request":endpoint.contains("checkOrigamiUpdate")?"update_check":endpoint.contains("beginDesktopLogin")?"begin_login":endpoint.contains("pollDesktopLogin")?"poll_login":endpoint.contains("signInWithCustomToken")?"firebase_exchange":endpoint.contains("accounts:lookup")?"firebase_identity":endpoint.contains("securetoken")?"firebase_refresh":endpoint.contains("redeemOrigamiLicense")?"redeem_key":"entitlement";
         if(stopping_.load() || cancellation_.load()!=operation_)throw Failure{Failure::Cancelled,stage,0};
         const auto json=refresh ? "grant_type=refresh_token&refresh_token="+juce::URL::addEscapeChars(body["refreshToken"].toString(),true)
                                 : juce::JSON::toString(callable?object({{"data",body}}):body,true);
@@ -118,6 +118,10 @@ public:
     }
 #endif
     FirebaseBackend()=default;
+    juce::var releaseDownload(const juce::var& body,const juce::String& token) override {
+        operation_=cancellation_.load();
+        return post(endpoint("getOrigamiReleaseDownload"),body,true,false,token);
+    }
     juce::var checkUpdates(const juce::var& body,const juce::String& token) override {
         operation_=cancellation_.load();
         return post(endpoint("checkOrigamiUpdate"),body,true,false,token);

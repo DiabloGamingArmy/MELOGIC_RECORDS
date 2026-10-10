@@ -12,24 +12,24 @@ class Fake final:public Transport {std::shared_ptr<Control> c;public:explicit Fa
 void wait(const std::function<bool()>& f){for(int n=0;n<2000 && !f();++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));require(f());}
 void wireTests(){
  using namespace melogic::account;
- for(int mode=0;mode<8;++mode){
+ for(int mode=0;mode<9;++mode){
   juce::StreamingSocket listener;require(listener.createListener(0,"127.0.0.1"));
   const auto port=listener.getBoundPort();std::atomic<bool> wireOK{false};
-  std::thread server([&]{JUCE_AUTORELEASEPOOL {std::unique_ptr<juce::StreamingSocket> client(listener.waitForNextConnection());if(!client)return;char bytes[4096]{};juce::String request;for(int n=0;n<20;++n){if(client->waitUntilReady(true,1000)<=0)break;const auto size=client->read(bytes,4095,false);if(size<=0)break;request+=juce::String::fromUTF8(bytes,size);if(request.contains("installedVersion"))break;}
-   const bool pathOK=request.contains("/functions/checkOrigamiUpdate"),authOK=request.containsIgnoreCase("Authorization: Bearer fixture-only"),bodyOK=request.contains("installedVersion");
+  std::thread server([&]{JUCE_AUTORELEASEPOOL {std::unique_ptr<juce::StreamingSocket> client(listener.waitForNextConnection());if(!client)return;char bytes[4096]{};juce::String request;for(int n=0;n<20;++n){if(client->waitUntilReady(true,1000)<=0)break;const auto size=client->read(bytes,4095,false);if(size<=0)break;request+=juce::String::fromUTF8(bytes,size);if(request.contains("installedVersion") || request.contains("artifactId"))break;}
+   const bool pathOK=request.contains(mode==8?"/functions/getOrigamiReleaseDownload":"/functions/checkOrigamiUpdate"),authOK=request.containsIgnoreCase("Authorization: Bearer fixture-only"),bodyOK=request.contains(mode==8?"artifactId":"installedVersion");
    wireOK=pathOK && authOK && bodyOK;
    if(!wireOK)std::cerr<<"HTTP framing: path="<<pathOK<<" auth="<<authOK<<" body="<<bodyOK<<"\n";
    if(mode==6)std::this_thread::sleep_for(std::chrono::seconds(31));
    if(mode==7)std::this_thread::sleep_for(std::chrono::seconds(1));
-   juce::String body=mode==0?"{\"result\":"+juce::JSON::toString(response())+"}":mode==1?"{bad":mode==2?juce::String::repeatedString("x",65537):mode==3?"[]":mode==5?R"({"error":{"status":"UNAUTHENTICATED"}})":"{}";
+   juce::String body=(mode==0 || mode==8)?"{\"result\":"+juce::JSON::toString(response())+"}":mode==1?"{bad":mode==2?juce::String::repeatedString("x",65537):mode==3?"[]":mode==5?R"({"error":{"status":"UNAUTHENTICATED"}})":"{}";
    const auto code=mode==4?503:mode==5?401:200;
    const auto text="HTTP/1.1 "+juce::String(code)+" Test\r\nContent-Type: application/json\r\nContent-Length: "+juce::String(body.getNumBytesAsUTF8())+"\r\nConnection: close\r\n\r\n"+body;
    client->write(text.toRawUTF8(),int(text.getNumBytesAsUTF8()));
   }});
   auto backend=makeFirebaseBackendForTesting("http://127.0.0.1:"+juce::String(port));bool failed=false,kindOK=true;
   std::thread canceller;if(mode==7)canceller=std::thread([&]{for(int n=0;n<5000 && !wireOK;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));backend->shutdown();});
-  try{auto v=backend->checkUpdates(requestBody(identity()),"fixture-only");decode(v,identity(),juce::Time::currentTimeMillis());}catch(const Failure& f){failed=true;const auto expected=mode==4?Failure::ServerUnavailable:mode==5?Failure::InvalidSession:mode==6?Failure::Timeout:mode==7?Failure::Cancelled:Failure::Protocol;kindOK=f.kind==expected;}catch(...){failed=true;}
-  if(canceller.joinable())canceller.join();server.join();if(!wireOK || !kindOK || failed!=(mode!=0))throw std::runtime_error("HTTP fixture mode "+std::to_string(mode)+" wire="+std::to_string(wireOK.load())+" rejected="+std::to_string(failed));backend->shutdown();
+  try{auto v=mode==8?backend->releaseDownload(juce::JSON::parse(R"({"releaseId":"b101","artifactId":"installer"})"),"fixture-only"):backend->checkUpdates(requestBody(identity()),"fixture-only");decode(v,identity(),juce::Time::currentTimeMillis());}catch(const Failure& f){failed=true;const auto expected=mode==4?Failure::ServerUnavailable:mode==5?Failure::InvalidSession:mode==6?Failure::Timeout:mode==7?Failure::Cancelled:Failure::Protocol;kindOK=f.kind==expected;}catch(...){failed=true;}
+  if(canceller.joinable())canceller.join();server.join();if(!wireOK || !kindOK || failed!=(mode!=0 && mode!=8))throw std::runtime_error("HTTP fixture mode "+std::to_string(mode)+" wire="+std::to_string(wireOK.load())+" rejected="+std::to_string(failed));backend->shutdown();
  }
 }
 int main(){try{

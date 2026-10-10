@@ -196,6 +196,7 @@ void Service::workerEntry() noexcept {
 juce::String Service::updateContext() const {std::lock_guard<std::mutex> lock(mutex_);return snapshot_.identity.uid+":"+juce::String(int(snapshot_.state))+":"+juce::String(epoch_);}
 AuthenticatedUpdateRequest::AuthenticatedUpdateRequest():backend_(makeFirebaseBackend()){}
 AuthenticatedUpdateRequest::AuthenticatedUpdateRequest(std::unique_ptr<Backend> backend):backend_(std::move(backend)){}
+void AuthenticatedUpdateRequest::cancel() noexcept {backend_->cancel();}
 void AuthenticatedUpdateRequest::shutdown() noexcept {backend_->shutdown();}
 juce::var Service::checkUpdates(const juce::var& body, AuthenticatedUpdateRequest& transport) {
     juce::String token;
@@ -203,6 +204,13 @@ juce::var Service::checkUpdates(const juce::var& body, AuthenticatedUpdateReques
       if(stop_ || snapshot_.state!=State::SignedIn || updateTokenExpiry_<=juce::Time::currentTimeMillis()+30000 || updateToken_.isEmpty())throw Failure{Failure::InvalidSession};
       token=updateToken_; }
     return transport.backend_->checkUpdates(body,token);
+}
+juce::var Service::releaseDownload(const juce::var& body, AuthenticatedUpdateRequest& transport) {
+    juce::String token;
+    { std::lock_guard<std::mutex> lock(mutex_);
+      if(stop_ || snapshot_.state!=State::SignedIn || updateTokenExpiry_<=juce::Time::currentTimeMillis()+30000 || updateToken_.isEmpty())throw Failure{Failure::InvalidSession};
+      token=updateToken_; }
+    return transport.backend_->releaseDownload(body,token);
 }
 Snapshot Service::snapshot() const {std::lock_guard<std::mutex> lock(mutex_);return snapshot_;}
 bool Service::claimActivationWelcome(){

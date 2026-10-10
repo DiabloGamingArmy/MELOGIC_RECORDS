@@ -1,3 +1,4 @@
+const { validArtifact } = require('./releaseArtifact')
 const { HttpsError } = require('firebase-functions/v2/https')
 const { isActive, validateProduct } = require('../licensing/entitlements')
 const semver = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
@@ -6,8 +7,8 @@ const buildOK = v => Number.isSafeInteger(v) && v > 0 && v <= 2147483647
 const idOK = v => typeof v === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(v)
 const millis = v => typeof v?.toMillis === 'function' ? v.toMillis() : (v instanceof Date ? v.getTime() : NaN)
 function validRelease(r, id) {
-  return r && Object.keys(r).every(k => ['schemaVersion', 'productId', 'releaseId', 'version', 'buildNumber', 'sourceRevision', 'channel', 'platform', 'architecture', 'status', 'publishedAt', 'releaseNotes', 'minimumOS'].includes(k)) && r.schemaVersion === 1 && r.productId === 'origami' && r.releaseId === id && idOK(id)
-    && versionOK(r.version) && buildOK(r.buildNumber)
+  return r && Object.keys(r).every(k => ['schemaVersion', 'productId', 'releaseId', 'version', 'buildNumber', 'sourceRevision', 'channel', 'platform', 'architecture', 'status', 'publishedAt', 'releaseNotes', 'minimumOS', 'artifact'].includes(k)) && r.schemaVersion === 1 && r.productId === 'origami' && r.releaseId === id && idOK(id)
+    && validArtifact(r) && versionOK(r.version) && buildOK(r.buildNumber)
     && typeof r.sourceRevision === 'string' && /^[a-zA-Z0-9._-]{1,96}$/.test(r.sourceRevision)
     && ['internal', 'beta', 'stable'].includes(r.channel) && r.platform === 'macos'
     && ['arm64', 'x86_64', 'universal'].includes(r.architecture)
@@ -44,7 +45,7 @@ function origamiReleasesCore({ db, now = Date.now }) {
     if (!eligible.length) return answer('no_eligible_release')
     const r = eligible[0]
     if (r.buildNumber <= data.installedBuildNumber) return answer('up_to_date')
-    return { ...answer('update_available'), release: { releaseId: r.releaseId, version: r.version, buildNumber: r.buildNumber, channel: r.channel, releaseNotes: r.releaseNotes, minimumOS: r.minimumOS } }
+    return { ...answer('update_available'), release: { releaseId: r.releaseId, version: r.version, buildNumber: r.buildNumber, channel: r.channel, releaseNotes: r.releaseNotes, minimumOS: r.minimumOS, artifactId: r.artifact.artifactId } }
   } }
 }
 async function verifiedReleaseIdentity(r, auth) {

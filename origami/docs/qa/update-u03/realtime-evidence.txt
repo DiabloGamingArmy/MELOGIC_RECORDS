@@ -1,0 +1,7 @@
+U03 realtime/state separation
+Baseline: 307c812f78360735ce5c632a9c7a1b90325e9e62
+PluginProcessor.cpp entire file is byte-for-byte unchanged.
+SHA256: 47aa9481f95b235529c8857b99d5fdc6bad88212c9577d7ef6dc66ae01bfd7b9
+PluginProcessor.h unchanged: True
+No download/network/hash/staging work was added to processBlock or project serialization.
+Update runtime state lives only in melogic::update::Service and worker-local download objects.

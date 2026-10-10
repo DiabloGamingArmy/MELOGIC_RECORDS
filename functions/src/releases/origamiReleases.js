@@ -6,3 +6,11 @@ exports.checkOrigamiUpdate = onCall({ region: 'us-central1', maxInstances: 10, t
   const uid = await verifiedReleaseIdentity(r, getAuth())
   return origamiReleasesCore({ db: getFirestore() }).check(r.data, uid)
 })
+
+const { getStorage } = require('firebase-admin/storage')
+const { storageArtifacts } = require('./releaseArtifact')
+const { origamiDownloadCore } = require('./origamiDownloadCore')
+exports.getOrigamiReleaseDownload = onCall({ region: 'us-central1', maxInstances: 10, timeoutSeconds: 30 }, async r => {
+  const uid = await verifiedReleaseIdentity(r, getAuth())
+  return origamiDownloadCore({ db: getFirestore(), artifacts: storageArtifacts(getStorage().bucket()) }).get(r.data, uid)
+})

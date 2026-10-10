@@ -1,0 +1,36 @@
+PASS: 2779 state checks
+PASS: 2594683 checks
+PASS: V22.0 wavetable-bank foundation
+PASS: 3938 modulation foundation checks
+PASS: 653 FX graph/DSP/bus checks
+PASS: 3954183 spectral checks; RT allocations=0 deletes=0 C mallocs=0 C frees=0
+PASS: 74 quality checks
+PASS L01.2 activation controls and continuation audit
+PASS L01.1 authorization UI/audio gate audit
+PASS L01.4 welcome, first-frame hover, UI/audio/state isolation
+PASS L01 account/patch boundary audit
+PASS Global G01 plugin/UI audit
+PASS Unison plugin/UI audit
+PASS Spectral Tune plugin/UI audit
+PASS: 1647746 plugin/UI checks
+PASS: 98 content library checks
+PASS account 1102 checks
+PASS 57 update manifest, HTTP, lifecycle, coalescing and cancellation checks
+PASS 208 artifact download, size/hash, state, cancellation and lifecycle checks
+PASS domain/state
+PASS EQ checks=373552 inspectedSamples=157011364
+PASS matrix (1.58998 s)
+PASS oscillator (7.87914 s)
+PASS filters (0.0238153 s)
+PASS effects (12.4824 s)
+PASS midi (3.46802 s)
+PASS arpStop (6.68951 s)
+PASS modulation (0.678139 s)
+PASS master (0.0102427 s)
+PASS eqMaster (0.0707563 s)
+PASS tails (0.278987 s)
+PASS states (0.388305 s)
+PASS routing (0.0782557 s)
+PASS lifecycle (0.686101 s)
+PASS long (39.1649 s)
+B01 seed=0xb010cafe checks=2844658 samples=318781890 callbacks=392344 failures=0

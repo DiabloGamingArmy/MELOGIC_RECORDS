@@ -1,0 +1,32 @@
+✔ canonical artifact metadata rejects incomplete, traversal, hash, generation and size spoofing (0.469167ms)
+✔ authorized response is bounded, ten minutes, exact generation; issuance never hashes on caller request (1.232916ms)
+✔ identity, eligibility, publication and artifact revalidated; all caller authority fields rejected (0.669917ms)
+✔ missing exact object/generation and metadata mismatch fail closed without URL/error leakage (0.32475ms)
+✔ replacement generation cannot substitute: retained original serves original or deletion fails closed (1.025666ms)
+✔ trusted publication independently hashes exact bytes; wrong digest rejected and adapter required (1.1915ms)
+✔ eligibility changes during issuance block new URL; already issued bearer survives until expiry (0.175875ms)
+✔ Storage emulator denies direct release read/write for anonymous, beta and owner clients (281.324375ms)
+✔ real installed GCS V4 signer binds exact generation in signed URL (97.445167ms)
+✔ strict SemVer, bounded identities and spoofing input rejected (0.572666ms)
+✔ selection, policy, response allowlist and build-only ordering (1.861791ms)
+✔ oversized active catalog fails closed (0.214917ms)
+✔ malformed catalog rows ignored (0.278167ms)
+✔ publication enforces immutable identity and monotonic build allocation (0.444709ms)
+[2026-10-10T05:50:25.371Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x395548f2 error. Code: 7 Message: 7 PERMISSION_DENIED:
+false for 'create' @ L1493, false for 'create' @ L2658, false for 'update' @ L1493, false for 'update' @ L2658
+[2026-10-10T05:50:25.391Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x395548f4 error. Code: 7 Message: 7 PERMISSION_DENIED:
+false for 'create' @ L1493, false for 'create' @ L2658, false for 'update' @ L1493, false for 'update' @ L2658
+[2026-10-10T05:50:25.409Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x395548f6 error. Code: 7 Message: 7 PERMISSION_DENIED:
+false for 'create' @ L1493, false for 'create' @ L2658, false for 'update' @ L1493, false for 'update' @ L2658
+✔ Firestore emulator enforces release privacy and denies client publication (467.938417ms)
+✔ release selection uses real Firestore and canonical entitlement (3297.305875ms)
+✔ callable identity checks revocation and cannot be spoofed (0.233125ms)
+✔ release build configuration rejects accidental public identity (82.171875ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3961.315209

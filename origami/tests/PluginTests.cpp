@@ -7391,7 +7391,7 @@ void workspaceInspectorAudit() {
 }
 
 void optionalUpdateUiAudit() {
-    struct Pending {std::atomic<bool> entered{false},ready{false},stopped{false};};
+    struct Pending {std::atomic<bool> entered{false},ready{false},stopped{false},downloadEntered{false},downloadReady{false};};
     class UpdateTransport final : public melogic::update::Transport {
         std::shared_ptr<Pending> pending_;
     public:
@@ -7400,9 +7400,15 @@ void optionalUpdateUiAudit() {
             pending_->entered=true;
             while(!pending_->ready && !pending_->stopped)std::this_thread::sleep_for(std::chrono::milliseconds(1));
             if(pending_->stopped)throw std::runtime_error("cancelled");
-            auto v=juce::JSON::parse(R"({"schemaVersion":1,"status":"update_available","release":{"releaseId":"ui-fixture","version":"0.1.1-beta.1","buildNumber":103,"channel":"beta","releaseNotes":"Optional release fixture","minimumOS":"12.0"}})");
+            auto v=juce::JSON::parse(R"({"schemaVersion":1,"status":"update_available","release":{"releaseId":"ui-fixture","artifactId":"installer","version":"0.1.1-beta.1","buildNumber":103,"channel":"beta","releaseNotes":"Optional release fixture","minimumOS":"12.0"}})");
             const auto now=juce::Time::currentTimeMillis();v.getDynamicObject()->setProperty("checkedAt",juce::Time(now).toISO8601(true));v.getDynamicObject()->setProperty("expiresAt",juce::Time(now+3600000).toISO8601(true));return v;
         }
+        juce::var requestDownload(const juce::var&) override {
+            pending_->downloadEntered=true;
+            while(!pending_->downloadReady && !pending_->stopped)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            throw std::runtime_error("isolated download request failure");
+        }
+        void cancel() noexcept override {pending_->downloadReady=true;}
         void shutdown() noexcept override {pending_->stopped=true;}
     };
     auto authorized=origami_test::authorized();OrigamiAudioProcessor processor(authorized);
@@ -7415,10 +7421,20 @@ void optionalUpdateUiAudit() {
     for(int n=0;n<1000 && updates->snapshot().state==melogic::update::State::Checking;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
     panel=std::make_unique<ui::GlobalPanel>(ui::GlobalPanel::Getter{},ui::GlobalPanel::Setter{},ui::GlobalPanelHost{},updates);panel->setSize(1440,700);panel->syncFromModel();
     juce::Button* later=nullptr;juce::Button* view=nullptr;
-    walk(*panel,[&](auto& c){if(auto* b=dynamic_cast<juce::Button*>(&c)){if(b->getName()=="Dismiss optional update")later=b;if(b->getName()=="Origami optional update check or release notes")view=b;}});
-    check(later && view && later->isVisible() && view->getButtonText()=="VIEW UPDATE","recreated editor reads optional candidate snapshot");
+    walk(*panel,[&](auto& c){if(auto* b=dynamic_cast<juce::Button*>(&c)){if(b->getName()=="Dismiss optional update")later=b;if(b->getName()=="Origami optional update download or check")view=b;}});
+    check(later && view && later->isVisible() && view->getButtonText()=="DOWNLOAD UPDATE","recreated editor reads optional candidate snapshot");
     if(const char* folder=std::getenv("ORIGAMI_GLOBAL_REPORT")){auto image=panel->createComponentSnapshot(panel->getLocalBounds());juce::FileOutputStream out(juce::File(juce::String(folder)+"/update-available.png"));juce::PNGImageFormat{}.writeImageToStream(image,out);}
     later->onClick();check(!later->isVisible() && view->getButtonText()=="CHECK FOR UPDATES","Later dismisses optional presentation");
+    // Explicit action, then destroy/recreate the editor while its owned service is requesting a download.
+    view->onClick();panel->syncFromModel();view->onClick();
+    for(int n=0;n<1000 && !pending->downloadEntered;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(pending->downloadEntered,"only explicit Download begins request");
+    panel.reset();pending->downloadReady=true;
+    for(int n=0;n<1000 && updates->snapshot().state==melogic::update::State::RequestingDownload;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(updates->snapshot().state==melogic::update::State::DownloadFailed,"request failure survives editor destruction safely");
+    panel=std::make_unique<ui::GlobalPanel>(ui::GlobalPanel::Getter{},ui::GlobalPanel::Setter{},ui::GlobalPanelHost{},updates);panel->setSize(1440,700);panel->syncFromModel();
+    bool retry=false;walk(*panel,[&](auto& c){if(auto* b=dynamic_cast<juce::Button*>(&c))retry=retry || b->getButtonText()=="RETRY DOWNLOAD";});
+    check(retry,"recreated editor shows useful download failure feedback");
     juce::MemoryBlock after;processor.getStateInformation(after);check(before==after && authorized->load() && processor.uiHistorySize()==history,"update arrival and dismissal leave authorization, project state and history unchanged");
     updates->shutdown();
 }

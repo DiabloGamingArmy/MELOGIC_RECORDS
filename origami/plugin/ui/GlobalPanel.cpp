@@ -46,12 +46,17 @@ GlobalPanel::GlobalPanel(Getter getter,Setter setter,GlobalPanelHost host,std::s
     updateStatus_.setName("Origami optional update status");
     updateStatus_.setFont(juce::FontOptions(11.f));updateStatus_.setColour(juce::Label::textColourId,Palette::secondary());
     updateStatus_.setJustificationType(juce::Justification::centredRight);
-    updateAction_.setName("Origami optional update check or release notes");updateLater_.setName("Dismiss optional update");
-    updateAction_.onClick=[this]{const auto u=updates_->snapshot();if(u.state==melogic::update::State::UpdateAvailable && dismissedRelease_!=u.candidate.releaseId){
-        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon,"Origami "+u.candidate.version,
-            u.candidate.releaseNotes+"\n\nMinimum macOS: "+u.candidate.minimumOS+"\nBuild: "+juce::String(u.candidate.buildNumber)+"\nUpdates are optional. Downloading is not available in this version.");
-    }else{dismissedRelease_.clear();updates_->check(true);}};
-    updateLater_.onClick=[this]{dismissedRelease_=updates_->snapshot().candidate.releaseId;syncFromModel();};
+    updateAction_.setName("Origami optional update download or check");updateLater_.setName("Dismiss optional update");
+    updateAction_.onClick=[this]{
+        using S=melogic::update::State;const auto u=updates_->snapshot();
+        if((u.state==S::UpdateAvailable && dismissedRelease_!=u.candidate.releaseId) || u.state==S::DownloadFailed || u.state==S::VerificationFailed)updates_->download();
+        else if(u.state==S::VerifiedDownload)juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon,"Update downloaded",
+            "Origami "+u.candidate.version+" has been downloaded and verified by byte size and SHA-256.\n\nInstallation support is not enabled in this development build. Apple package identity and notarization verification are not yet available.\n\n"+u.candidate.releaseNotes);
+        else{dismissedRelease_.clear();updates_->check(true);}
+    };
+    updateLater_.onClick=[this]{using S=melogic::update::State;const auto s=updates_->snapshot().state;
+        if(s==S::RequestingDownload || s==S::Downloading || s==S::Verifying)updates_->cancelDownload();
+        else dismissedRelease_=updates_->snapshot().candidate.releaseId;syncFromModel();};
     identity_.setName("Origami build identity");identity_.setText(buildIdentity(),juce::dontSendNotification);
     identity_.setFont(juce::FontOptions(12.f));identity_.setColour(juce::Label::textColourId,Palette::secondary());identity_.setJustificationType(juce::Justification::centredRight);
     for(auto* c:std::array<juce::Component*,3>{&accountIdentity_,&accountAction_,&accountSecondary_})addAndMakeVisible(c);
@@ -130,13 +135,20 @@ void GlobalPanel::syncFromModel() {
     const auto account=account_->snapshot();
     if(account.state==State::SignedIn)updates_->check();
     const auto update=updates_->snapshot();
-    const bool available=update.state==melogic::update::State::UpdateAvailable && update.candidate.releaseId!=dismissedRelease_;
+    using U=melogic::update::State;
+    const bool available=update.state==U::UpdateAvailable && update.candidate.releaseId!=dismissedRelease_;
+    const bool downloading=update.state==U::RequestingDownload || update.state==U::Downloading || update.state==U::Verifying;
+    const bool failed=update.state==U::DownloadFailed || update.state==U::VerificationFailed;
     updateStatus_.setText(available?"UPDATE AVAILABLE / "+update.candidate.version:
-        update.state==melogic::update::State::Checking?"Checking updates...":
-        update.state==melogic::update::State::CheckFailed?(update.manual?update.message:juce::String{}):update.message,juce::dontSendNotification);
-    updateAction_.setButtonText(available?"VIEW UPDATE":"CHECK FOR UPDATES");
-    updateAction_.setEnabled(update.state!=melogic::update::State::Checking);
-    updateLater_.setVisible(available);
+        update.state==U::Checking?"Checking updates...":
+        update.state==U::VerifiedDownload?"UPDATE DOWNLOADED / SHA-256 verified":
+        update.state==U::CheckFailed?(update.manual?update.message:juce::String{}):update.message,juce::dontSendNotification);
+    updateStatus_.setTooltip(update.message);
+    updateAction_.setButtonText(available?"DOWNLOAD UPDATE":downloading?"DOWNLOADING...":failed?"RETRY DOWNLOAD":update.state==U::VerifiedDownload?"DOWNLOAD DETAILS":"CHECK FOR UPDATES");
+    updateAction_.setTooltip(available?update.candidate.releaseNotes+"\nMinimum macOS: "+update.candidate.minimumOS:update.message);
+    updateAction_.setEnabled(update.state!=U::Checking && !downloading && (!available || update.candidate.artifactId.isNotEmpty()));
+    updateLater_.setButtonText(downloading?"CANCEL":"LATER");
+    updateLater_.setVisible(available || downloading);
     const bool identified=account.state==State::SignedIn || account.state==State::OfflineCached;
     accountIdentity_.setText(identified?(account.identity.displayName.isEmpty()?account.identity.email:account.identity.displayName)+"\n"+(account.state==State::OfflineCached?"Offline / cached identity":account.identity.email)+"\n"+(account.authorization.state==melogic::account::AuthorizationState::Authorized?"Origami / Activated / "+account.authorization.edition:"Origami / not licensed"):account.message,juce::dontSendNotification);
     accountIdentity_.setTooltip(account.message);

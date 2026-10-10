@@ -393,3 +393,5 @@ Object.assign(exports, require('./src/desktop/desktopAuth'))
 Object.assign(exports, require('./src/licensing/adminLicensing'))
 
 exports.checkOrigamiUpdate = require('./src/releases/origamiReleases').checkOrigamiUpdate
+
+exports.getOrigamiReleaseDownload = require('./src/releases/origamiReleases').getOrigamiReleaseDownload

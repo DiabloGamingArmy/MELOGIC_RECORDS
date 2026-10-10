@@ -38,6 +38,7 @@ Snapshot decode(const juce::var& v,const Identity& i,juce::int64 now){
  Candidate c{r["releaseId"].toString(),r["version"].toString(),r["channel"].toString(),r["releaseNotes"].toString(),r["minimumOS"].toString(),int(n)};
  if(!std::regex_match(c.releaseId.toStdString(),std::regex("[A-Za-z0-9_-]{1,128}")) || !validVersion(c.version) || c.channel!=i.channel || c.channel!="beta" || c.releaseNotes.getNumBytesAsUTF8()>8192 || !std::regex_match(c.minimumOS.toStdString(),std::regex(R"((0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})(\.(0|[1-9][0-9]{0,2}))?)")))return fail();
  if(c.buildNumber<=i.buildNumber){s.state=State::UpToDate;s.message="Up to date";return s;}
+ if(r.hasProperty("artifactId")){c.artifactId=r["artifactId"].toString();if(!r["artifactId"].isString() || !std::regex_match(c.artifactId.toStdString(),std::regex("[A-Za-z0-9_-]{1,128}")))return fail();}
  s.state=State::UpdateAvailable;s.candidate=c;s.message="Origami "+c.version+" is available.";return s;
 }
 }

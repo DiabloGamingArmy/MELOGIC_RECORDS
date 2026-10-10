@@ -33,6 +33,7 @@ public:
     virtual Session refresh(const Session&,juce::int64 now)=0;
     virtual Authorization authorization(Session&,juce::int64) { return {AuthorizationState::Unauthorized,{},"Account signed in; Origami is not licensed.",0}; }
     virtual Authorization redeem(Session&,const juce::String&,juce::int64) { throw Failure{Failure::Protocol}; }
+    virtual juce::var releaseDownload(const juce::var&, const juce::String&) { throw Failure{Failure::Protocol}; }
     virtual juce::var checkUpdates(const juce::var&, const juce::String&) { throw Failure{Failure::Protocol}; }
     virtual void shutdown() noexcept {cancel();} // terminal cancellation; no subsequent requests
     virtual void cancel() noexcept {} // interrupts blocking transport on shutdown/logout
@@ -41,6 +42,7 @@ public:
 class AuthenticatedUpdateRequest final {
 public:
     AuthenticatedUpdateRequest();
+    void cancel() noexcept;
     void shutdown() noexcept;
 private:
     friend class Service;
@@ -86,6 +88,7 @@ public:
     void shutdown(); // Runtime stop only; never erases the persisted account.
     Snapshot snapshot() const;
     juce::String updateContext() const; // non-secret account generation for private-result invalidation
+    juce::var releaseDownload(const juce::var&, AuthenticatedUpdateRequest&);
     juce::var checkUpdates(const juce::var&, AuthenticatedUpdateRequest& isolatedTransport); // worker-only; credentials never leave this bridge
     void signIn();
     void restoreAccess();

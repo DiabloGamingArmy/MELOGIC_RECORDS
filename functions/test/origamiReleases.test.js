@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const { origamiReleasesCore, validRelease, validateInput, versionOK } = require('../src/releases/origamiReleasesCore')
 const time = Date.parse('2026-10-10T12:00:00Z')
 const input = { installedVersion: '0.1.0-beta.1', installedBuildNumber: 100, installedChannel: 'beta', platform: 'macos', architecture: 'arm64' }
-const release = (n = 101, patch = {}) => ({ schemaVersion: 1, productId: 'origami', releaseId: `b${n}`, version: '0.1.0-beta.2', buildNumber: n, sourceRevision: 'abc123', channel: 'beta', platform: 'macos', architecture: 'arm64', status: 'published', publishedAt: new Date(time - 1000), releaseNotes: 'Notes', minimumOS: '12.0', ...patch })
+const release = (n = 101, patch = {}) => ({ schemaVersion: 1, productId: 'origami', releaseId: `b${n}`, version: '0.1.0-beta.2', buildNumber: n, sourceRevision: 'abc123', channel: 'beta', platform: 'macos', architecture: 'arm64', status: 'published', publishedAt: new Date(time - 1000), releaseNotes: 'Notes', minimumOS: '12.0', artifact: { artifactId: 'installer', kind: 'pkg', storagePath: `software-releases/origami/${patch.releaseId || `b${n}`}/macos/${patch.architecture || 'arm64'}/installer.pkg`, objectGeneration: '123', sizeBytes: 3, sha256: 'a'.repeat(64) }, ...patch })
 function fixture(rows = [], access = { productId: 'origami', status: 'active', edition: 'beta' }) {
   const paths = []
   const db = { doc: path => ({ get: async () => { paths.push(path); return { exists: true, data: () => path === 'products/origami' ? { status: 'beta', licensing: { enabled: true, editions: ['beta'] } } : access } } }), collection: () => { const filters = []; const q = { where: (k, op, v) => { filters.push([k, v]); return q }, limit: () => q, get: async () => ({ docs: rows.filter(r => filters.every(([k, v]) => r[k] === v)).map(r => ({ id: r.releaseId, data: () => r })) }) }; return q } }
@@ -30,7 +30,7 @@ test('selection, policy, response allowlist and build-only ordering', async () =
     const answer = await fixture(rows).core.check(input, 'real-user')
     assert.equal(answer.status, status)
     assert.equal(answer.release?.buildNumber, build)
-    if (answer.release) assert.deepEqual(Object.keys(answer.release).sort(), ['buildNumber', 'channel', 'minimumOS', 'releaseId', 'releaseNotes', 'version'])
+    if (answer.release) assert.deepEqual(Object.keys(answer.release).sort(), ['artifactId', 'buildNumber', 'channel', 'minimumOS', 'releaseId', 'releaseNotes', 'version'])
   }
   for (const access of [undefined, { status: 'revoked' }, { status: 'active', productId: 'origami', edition: 'beta', expiresAt: new Date(time - 1) }, { status: 'active', productId: 'origami', edition: 'stable' }]) {
     const f = fixture([release()], access === undefined ? null : access)
@@ -88,13 +88,14 @@ test('release selection uses real Firestore and canonical entitlement', { skip: 
     assert.equal((await core.check(input, 'outsider')).status, 'no_eligible_release')
     await db.doc('users/tester/entitlements/origami').update({ status: 'revoked' })
     assert.equal((await core.check(input, 'tester')).status, 'no_eligible_release')
+    const artifacts = { inspect: async () => ({}) }
     const { writeRelease } = require('../src/releases/releasePublication')
     const published = release(120, { publishedAt: new Date(Date.now() - 1000) })
-    await writeRelease(db, published, 'fixture-publisher')
+    await writeRelease(db, published, 'fixture-publisher', artifacts)
     assert.equal((await db.doc('products/origami').get()).data().releaseBuildNumber, 120)
-    await writeRelease(db, { ...published, status: 'unpublished' }, 'fixture-publisher')
-    await assert.rejects(writeRelease(db, { ...published, sourceRevision: 'changed' }, 'fixture-publisher'))
-    const concurrent = await Promise.allSettled([writeRelease(db, release(121, { publishedAt: published.publishedAt }), 'fixture-publisher'), writeRelease(db, release(121, { releaseId: 'another121', publishedAt: published.publishedAt }), 'fixture-publisher')])
+    await writeRelease(db, { ...published, status: 'unpublished' }, 'fixture-publisher', artifacts)
+    await assert.rejects(writeRelease(db, { ...published, sourceRevision: 'changed' }, 'fixture-publisher', artifacts))
+    const concurrent = await Promise.allSettled([writeRelease(db, release(121, { publishedAt: published.publishedAt }), 'fixture-publisher', artifacts), writeRelease(db, release(121, { releaseId: 'another121', publishedAt: published.publishedAt }), 'fixture-publisher', artifacts)])
     assert.equal(concurrent.filter(r => r.status === 'fulfilled').length, 1)
   } finally { await db.terminate(); await deleteApp(app) }
 })

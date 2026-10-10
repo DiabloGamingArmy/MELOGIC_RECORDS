@@ -29,6 +29,7 @@ public:
 class FakeBackend final : public Backend {
 public:
     Failure::Kind updateFailure=Failure::Network;
+    juce::var releaseDownload(const juce::var& v,const juce::String& token) override {return checkUpdates(v,token);}
     juce::var checkUpdates(const juce::var&,const juce::String& token) override {check(token=="fixture-access-token","bridge passes token only to private transport");throw Failure{updateFailure};}
     bool offline=false,invalid=false,mismatch=false,denied=false,waiting=false;
     unsigned refreshes=0,begins=0,licenseChecks=0,redemptions=0;bool licensed=false;
@@ -48,7 +49,7 @@ void updateBridgeIsolation(){
     check(service.authorizationFlag()->load(),"isolated account authorized before update failures");
     const auto before=service.snapshot();auto isolatedBackend=std::make_unique<FakeBackend>();auto* isolated=isolatedBackend.get();auto request=UpdateBridgeTestAccess::make(std::move(isolatedBackend));
     for(auto kind:{Failure::Network,Failure::Timeout,Failure::ServerUnavailable,Failure::InvalidSession,Failure::Protocol,Failure::Cancelled}){
-        isolated->updateFailure=kind;bool failed=false;try{service.checkUpdates(juce::var{},*request);}catch(const Failure&){failed=true;}
+        isolated->updateFailure=kind;bool downloadFailed=false;try{service.releaseDownload(juce::var{},*request);}catch(const Failure&){downloadFailed=true;}check(downloadFailed,"download bridge failure stays outside account state");bool failed=false;try{service.checkUpdates(juce::var{},*request);}catch(const Failure&){failed=true;}
         check(failed && service.authorizationFlag()->load() && service.snapshot().state==before.state && service.snapshot().authorization.validUntil==before.authorization.validUntil,"every update failure leaves authorization and account unchanged");
     }
     service.shutdown();bool stopped=false;try{service.checkUpdates(juce::var{},*request);}catch(const Failure&){stopped=true;}check(stopped,"terminal account shutdown denies new update bridge calls");
