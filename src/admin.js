@@ -1,3 +1,4 @@
+import { adminPageHeader, adminSimpleTable, htmlCell, renderBadge } from './admin/primitives'
 import { hasAdminPermission, permissionDeniedMarkup } from './utils/adminPermissions'
 import { mountLicensingPanel } from './admin/licensingPanel'
 import { licensingRequest } from './data/licensingService'
@@ -1614,11 +1615,6 @@ function renderMoneyField(label, cents = 0, currency = 'USD') {
   return renderField(label, formatMoney(cents, currency))
 }
 
-function renderBadge(value, tone = '') {
-  const text = String(value || '').trim()
-  if (!text) return ''
-  return `<span class="review-badge ${tone ? `is-${escapeHtml(tone)}` : ''}">${escapeHtml(text)}</span>`
-}
 
 function renderBadgeList(items = [], empty = 'None') {
   const values = normalizeList(items)
@@ -2717,18 +2713,6 @@ function adminData(key = '') {
   return state.adminData[key] || { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' }
 }
 
-function adminPageHeader({ eyebrow = 'Admin', title = '', description = '', refreshLabel = 'Refresh' } = {}) {
-  return `
-    <header class="admin-page-header">
-      <div>
-        <p class="eyebrow">${escapeHtml(eyebrow)}</p>
-        <h1>${escapeHtml(title)}</h1>
-        ${description ? `<p>${escapeHtml(description)}</p>` : ''}
-      </div>
-      <button type="button" class="admin-icon-button" data-refresh-admin-section title="${escapeHtml(refreshLabel)}">${iconSvg('barChart')}</button>
-    </header>
-  `
-}
 
 function adminFilterControls(collection, filters = []) {
   const data = adminData(collection)
@@ -5963,29 +5947,6 @@ function settingsInput(key, label, type, value) {
   `
 }
 
-function adminSimpleTable(label = 'Rows', headers = [], rows = [], options = {}) {
-  return `
-    <div class="admin-data-table ${escapeHtml(options.className || '')}" role="table" aria-label="${escapeHtml(label)}">
-      <div class="admin-data-row is-header" role="row">
-        ${headers.map((header) => `<span>${escapeHtml(header)}</span>`).join('')}
-      </div>
-      ${rows.length ? rows.map((row) => `
-        <article class="admin-data-row" role="row">
-          ${row.map((cell) => `<span>${cell?.html ? cell.html : escapeHtml(cell)}</span>`).join('')}
-        </article>
-      `).join('') : `
-        <article class="admin-empty-state admin-table-empty">
-          <strong>${escapeHtml(options.emptyTitle || `No ${label.toLowerCase()} found.`)}</strong>
-          <span>${escapeHtml(options.emptyBody || 'Rows will appear here when data is available.')}</span>
-        </article>
-      `}
-    </div>
-  `
-}
-
-function htmlCell(html = '') {
-  return { html }
-}
 
 function communityTargetRoute(type = '', id = '', row = {}) {
   if (type === 'community_post') return `/community/post/${encodeURIComponent(id)}`
@@ -9121,7 +9082,7 @@ function bindEvents() {
     licensingAccessDialog?.remove()
     const dialog = document.createElement('dialog')
     licensingAccessDialog = dialog
-    dialog.className = 'admin-licensing-dialog'
+    dialog.className = 'admin-decision-modal admin-product-grant-modal admin-licensing-dialog'
     dialog.innerHTML = '<button type="button" class="admin-secondary-button">Close</button><div data-access-root></div>'
     document.body.append(dialog)
     licensingPanel = mountLicensingPanel(dialog.querySelector('[data-access-root]'), { request: licensingRequest, allowed: true, targetUid: button.dataset.adminManageProducts })

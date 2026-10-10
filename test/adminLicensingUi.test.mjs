@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
 import { mountLicensingPanel } from '../src/admin/licensingPanel.js'
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
-function fixture(targetUid = '', allowed = true, products = [{ productId: 'origami', name: 'Origami', status: 'beta', editions: ['beta'] }]) {
+function fixture(targetUid = '', allowed = true, products = [{ productId: 'origami', name: 'Origami', status: 'beta', editions: ['beta'] }], listPage = null) {
   const dom = new JSDOM('<main></main>', { url: 'https://test.invalid/admin/license-keys' })
   // FormData must use this DOM's form implementation.
   const saved = globalThis.FormData; globalThis.FormData = dom.window.FormData
@@ -14,7 +14,7 @@ function fixture(targetUid = '', allowed = true, products = [{ productId: 'origa
     if (failNext) { failNext = false; throw Error('Backend unavailable') }
     if (name === 'listLicensingProducts') return products
     if (name === 'getAdminProductAccess') return { products, entitlements: entitlement ? [entitlement] : [] }
-    if (name === 'listLicenseKeys') return { keys, cursor: '' }
+    if (name === 'listLicenseKeys') return listPage ? listPage(data) : { keys, cursor: '' }
     if (name === 'grantProductEntitlement') entitlement = { productId: data.productId, edition: data.edition, status: 'active', source: 'admin', grantedAt: '2026-10-09' }
     if (name === 'revokeProductEntitlement') entitlement = { ...entitlement, status: 'revoked', revocationReason: data.reason }
     if (name === 'generateLicenseKeys') { keys = [{ managementId: 'safe-id', maskedKey: '••••-MASK', productId: 'origami', edition: 'beta', status: 'available', redemptionCount: 0, maxRedemptions: 1 }]; return { keys: ['synthetic-key-for-ui-only'] } }
@@ -30,12 +30,12 @@ test('Manage Products grants, confirms revocation, preserves errors and re-grant
   const f = fixture('user-a')
   try {
     await f.panel.ready
-    assert.match(f.root.textContent, /NO ACCESS/)
+    assert.match(f.root.textContent, /No access/)
     f.click('grant')
     assert.equal(f.dom.window.document.querySelector('[name="edition"]').value, 'beta')
     f.dom.window.document.querySelector('[name="reason"]').value = 'Beta tester'
     f.submit(); await tick(); await tick()
-    assert.match(f.root.textContent, /active/)
+    assert.match(f.root.textContent, /Active/)
     f.click('revoke-access')
     assert.match(f.dom.window.document.querySelector('dialog').textContent, /up to 15 minutes/)
     assert.equal(f.calls.filter(c => c.name === 'revokeProductEntitlement').length, 0)
@@ -45,10 +45,10 @@ test('Manage Products grants, confirms revocation, preserves errors and re-grant
     f.fail(); f.submit(); await tick()
     assert.match(f.dom.window.document.querySelector('[data-license-error]').textContent, /Backend unavailable/)
     f.submit(); await tick(); await tick()
-    assert.match(f.root.textContent, /revoked/)
+    assert.match(f.root.textContent, /Revoked/)
     f.click('grant'); f.dom.window.document.querySelector('[name="reason"]').value = 'Re-grant'
     f.submit(); await tick(); await tick()
-    assert.match(f.root.textContent, /active/)
+    assert.match(f.root.textContent, /Active/)
   } finally { f.close() }
 })
 test('License Keys generation displays once, Copy All, masked history and confirmed revoke', async () => {
@@ -58,7 +58,7 @@ test('License Keys generation displays once, Copy All, masked history and confir
     f.click('generate')
     assert.equal(f.dom.window.document.querySelector('[name="quantity"]').max, '100')
     f.submit(); await tick(); await tick()
-    assert.match(f.dom.window.document.querySelector('dialog').textContent, /only be shown once/)
+    assert.match(f.dom.window.document.querySelector('dialog').textContent, /shown only once/)
     f.click('copy'); await tick()
     assert.deepEqual(f.copies, ['synthetic-key-for-ui-only'])
     f.click('cancel')
@@ -69,7 +69,7 @@ test('License Keys generation displays once, Copy All, masked history and confir
     assert.equal(f.calls.filter(c => c.name === 'revokeLicenseKey').length, 0)
     f.dom.window.document.querySelector('[name="reason"]').value = 'Cancel invitation'
     f.submit(); await tick(); await tick()
-    assert.match(f.root.textContent, /revoked/)
+    assert.match(f.root.textContent, /Revoked/)
     f.click('product')
     f.dom.window.document.querySelector('[name="name"]').value = 'Origami'
     f.submit(); await tick(); await tick()
@@ -102,7 +102,7 @@ test('empty canonical catalog is a setup state, independent of admin authorizati
   const f = fixture('', true, [])
   try {
     await f.panel.ready
-    assert.match(f.root.textContent, /No products configured/)
+    assert.match(f.root.textContent, /No licensing products configured/)
     assert.equal(f.root.textContent.includes('Permission required'), false)
     assert.equal(f.dom.window.document.querySelector('[data-license-action="generate"]').disabled, true)
     f.click('product')
@@ -127,14 +127,60 @@ test('legacy owner claims reach functional key generation and user access contro
     access.click('grant')
     access.dom.window.document.querySelector('[name="reason"]').value = 'Owner regression'
     access.submit(); await tick(); await tick()
-    assert.match(access.root.textContent, /active/)
+    assert.match(access.root.textContent, /Active/)
     access.click('revoke-access')
     access.dom.window.document.querySelector('[name="reason"]').value = 'Owner revocation'
     access.submit(); await tick(); await tick()
-    assert.match(access.root.textContent, /revoked/)
+    assert.match(access.root.textContent, /Revoked/)
     access.click('grant')
     access.dom.window.document.querySelector('[name="reason"]').value = 'Owner re-grant'
     access.submit(); await tick(); await tick()
-    assert.match(access.root.textContent, /active/)
+    assert.match(access.root.textContent, /Active/)
   } finally { access.close() }
+})
+
+
+test('filter preserves loaded-page pagination and refresh replaces stale rows', async () => {
+  const row = (productId, maskedKey) => ({ productId, maskedKey, managementId: maskedKey, edition: 'beta', status: 'available', redemptionCount: 0, maxRedemptions: 1 })
+  const f = fixture('', true, [{ productId: 'origami', name: 'Origami', editions: ['beta'] }, { productId: 'other', name: 'Other', editions: ['beta'] }], data => data.cursor ? { keys: [row('other', 'MASK-SECOND')], cursor: '' } : { keys: [row('origami', 'MASK-FIRST')], cursor: 'page-2' })
+  try {
+    await f.panel.ready
+    const select = f.root.querySelector('[data-license-filter]')
+    select.value = 'other'; select.dispatchEvent(new f.dom.window.Event('change'))
+    assert.match(f.root.textContent, /No keys for this product/)
+    f.click('more'); await tick(); await tick()
+    assert.match(f.root.textContent, /MASK-SECOND/)
+    assert.equal(f.root.textContent.includes('MASK-FIRST'), false)
+    assert.equal(f.calls.filter(c => c.name === 'listLicenseKeys').at(-1).data.cursor, 'page-2')
+    assert.ok(f.root.querySelector('[aria-label="Actions for MASK-SECOND"]'))
+    f.click('refresh'); await tick(); await tick()
+    assert.equal(f.calls.filter(c => c.name === 'listLicenseKeys').at(-1).data.cursor, '')
+    assert.equal(f.root.textContent.includes('MASK-SECOND'), false)
+    assert.match(f.root.textContent, /No keys for this product/)
+  } finally { f.close() }
+})
+
+test('failed initial load cannot masquerade as an empty catalog', async () => {
+  const f = fixture('', true, [], () => { throw Object.assign(Error('internal'), { code: 'functions/internal' }) })
+  try {
+    await f.panel.ready
+    assert.match(f.root.textContent, /Licensing data could not be loaded/)
+    assert.match(f.root.textContent, /temporarily unavailable/)
+    assert.equal(f.root.textContent.includes('No licensing products configured'), false)
+    assert.ok(f.root.querySelector('[role="alert"]'))
+  } finally { f.close() }
+})
+
+test('dialog cancel removes fields and restores keyboard focus', async () => {
+  const f = fixture()
+  try {
+    await f.panel.ready
+    const opener = f.root.querySelector('[data-license-action="product"]')
+    opener.focus(); opener.click()
+    const dialog = f.dom.window.document.querySelector('dialog')
+    assert.equal(dialog.getAttribute('aria-labelledby'), 'license-dialog-title')
+    dialog.dispatchEvent(new f.dom.window.Event('cancel', { cancelable: true }))
+    assert.equal(f.dom.window.document.querySelector('dialog'), null)
+    assert.equal(f.dom.window.document.activeElement, opener)
+  } finally { f.close() }
 })
