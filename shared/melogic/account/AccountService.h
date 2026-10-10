@@ -33,6 +33,7 @@ public:
     virtual Session refresh(const Session&,juce::int64 now)=0;
     virtual Authorization authorization(Session&,juce::int64) { return {AuthorizationState::Unauthorized,{},"Account signed in; Origami is not licensed.",0}; }
     virtual Authorization redeem(Session&,const juce::String&,juce::int64) { throw Failure{Failure::Protocol}; }
+    virtual void shutdown() noexcept {cancel();} // terminal cancellation; no subsequent requests
     virtual void cancel() noexcept {} // interrupts blocking transport on shutdown/logout
 };
 class Store {
@@ -69,6 +70,7 @@ class Service final {
 public:
     Service(std::unique_ptr<Store>,std::unique_ptr<Backend>);
     ~Service();
+    void shutdown(); // Runtime stop only; never erases the persisted account.
     Snapshot snapshot() const;
     void signIn();
     void restoreAccess();
@@ -81,13 +83,16 @@ public:
     static std::shared_ptr<Service> shared();
 // Defined only in the explicit test-support target, absent from shipping binaries.
     static void useInMemoryForTesting(std::unique_ptr<Backend> backend = {});
+    static void releaseInMemoryForTesting();
 private:
     static std::mutex& sharingMutex();
-    static std::shared_ptr<Service>& sharedSlot();
+    static std::weak_ptr<Service>& sharedSlot();
     void submit(Command,const juce::String& key={});
+    void workerEntry() noexcept;
     void run();
     std::unique_ptr<Store> store_;
     std::unique_ptr<Backend> backend_;
+    std::mutex shutdownMutex_; // Serializes joiners; the worker never takes this lock.
     mutable std::mutex mutex_;
     std::condition_variable wake_;
     Snapshot snapshot_;

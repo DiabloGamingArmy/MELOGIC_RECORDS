@@ -1,0 +1,122 @@
+Account shutdown validation — baseline f1c846e3cb7e266cb30f77b777fa9b3d280c2e0a
+Clean Release: origami/build-p0-release; Standalone/AU/VST3 successful; probe OFF.
+No installed application/plugin replacement; no production deployment.
+Exact crash diagnosis: debugger-evidence.txt; disposed JUCE_URLDelegate class matches crashing object isa.
+Actual Cmd+Q exit 0; actual application-menu Quit exit 0; isolated window-close exit 0.
+Guard refuses production binary before launch (exit 1); isolated guarded probe passes.
+
+Full CTest (lifetime/transport/pool repair)
+Test project /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+      Start  1: origami_state
+ 1/12 Test  #1: origami_state .......................   Passed    0.08 sec
+      Start  2: origami_foundation
+ 2/12 Test  #2: origami_foundation ..................   Passed   12.81 sec
+      Start  3: origami_wavetable_bank_foundation
+ 3/12 Test  #3: origami_wavetable_bank_foundation ...   Passed    0.09 sec
+      Start  4: origami_modulation_core
+ 4/12 Test  #4: origami_modulation_core .............   Passed    1.90 sec
+      Start  5: origami_fx_graph
+ 5/12 Test  #5: origami_fx_graph ....................   Passed    1.83 sec
+      Start  6: origami_spectral_tune
+ 6/12 Test  #6: origami_spectral_tune ...............   Passed    0.67 sec
+      Start  7: origami_spectral_quality
+ 7/12 Test  #7: origami_spectral_quality ............   Passed    1.29 sec
+      Start  8: origami_plugin_ui
+ 8/12 Test  #8: origami_plugin_ui ...................   Passed   68.62 sec
+      Start  9: origami_content
+ 9/12 Test  #9: origami_content .....................   Passed    1.71 sec
+      Start 10: origami_account
+10/12 Test #10: origami_account .....................   Passed    8.18 sec
+      Start 11: origami_eq_headroom
+11/12 Test #11: origami_eq_headroom .................   Passed    4.62 sec
+      Start 12: origami_dsp_torture
+12/12 Test #12: origami_dsp_torture .................   Passed   79.33 sec
+
+100% tests passed out of 12
+
+Total Test time (real) = 181.14 sec
+
+Full UBSan CTest (halt_on_error=1)
+Test project /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-b01-sanitizers
+      Start  1: origami_state
+ 1/12 Test  #1: origami_state .......................   Passed    0.16 sec
+      Start  2: origami_foundation
+ 2/12 Test  #2: origami_foundation ..................   Passed   18.98 sec
+      Start  3: origami_wavetable_bank_foundation
+ 3/12 Test  #3: origami_wavetable_bank_foundation ...   Passed    0.12 sec
+      Start  4: origami_modulation_core
+ 4/12 Test  #4: origami_modulation_core .............   Passed    3.10 sec
+      Start  5: origami_fx_graph
+ 5/12 Test  #5: origami_fx_graph ....................   Passed    2.40 sec
+      Start  6: origami_spectral_tune
+ 6/12 Test  #6: origami_spectral_tune ...............   Passed    1.71 sec
+      Start  7: origami_spectral_quality
+ 7/12 Test  #7: origami_spectral_quality ............   Passed    3.36 sec
+      Start  8: origami_plugin_ui
+ 8/12 Test  #8: origami_plugin_ui ...................   Passed   84.51 sec
+      Start  9: origami_content
+ 9/12 Test  #9: origami_content .....................   Passed    2.65 sec
+      Start 10: origami_account
+10/12 Test #10: origami_account .....................   Passed    8.52 sec
+      Start 11: origami_eq_headroom
+11/12 Test #11: origami_eq_headroom .................   Passed    6.75 sec
+      Start 12: origami_dsp_torture
+12/12 Test #12: origami_dsp_torture .................   Passed  157.69 sec
+
+100% tests passed out of 12
+
+Total Test time (real) = 289.96 sec
+
+Final account (denial retry included)
+PASS account 1076 checks
+
+Final focused activation
+PASS L01.4 welcome, first-frame hover, UI/audio/state isolation
+PASS L01 account/patch boundary audit
+PASS focused activation: 3626 checks
+
+Final UBSan account
+PASS account 1076 checks
+
+Final UBSan focused activation
+PASS L01.4 welcome, first-frame hover, UI/audio/state isolation
+PASS L01 account/patch boundary audit
+PASS focused activation: 3624 checks
+
+Backend emulator licensing
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6908.01225
+
+Native HTTP contract
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 115569.833625
+
+Focused native Keychain failure contract after denial refinement
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4595.514583
+
+quit-torture-real-account.json: 50 cycles; all exit 0=True; all shutdown complete=True; new reports=0; max process seconds=7.498
+quit-torture-isolated.json: 50 cycles; all exit 0=True; all shutdown complete=True; new reports=0; max process seconds=5.718
+quit-probe-guard.json: 1 cycles; all exit 0=True; all shutdown complete=True; new reports=0; max process seconds=0.881
+
+ASan not retried/claimed (known independent runtime failure).
+Real Logic/AU/VST3 host matrix, Dock quit, and full manual browser/logout state matrix remain unverified.
+Real-account loops STOPPED after repeated password prompts. Future probe loops use only isolated storage.

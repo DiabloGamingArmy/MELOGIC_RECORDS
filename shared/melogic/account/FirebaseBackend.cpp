@@ -28,10 +28,11 @@ class FirebaseBackend final : public Backend {
     std::mutex transportMutex_;
     juce::WebInputStream* active_=nullptr;
     std::atomic<unsigned> cancellation_{0};
+    std::atomic<bool> stopping_{false};
     unsigned operation_=0; // worker only
     juce::var post(const juce::String& endpoint,const juce::var& body,bool callable=false,bool refresh=false,const juce::String& bearer={}) {
         const char* stage=endpoint.contains("beginDesktopLogin")?"begin_login":endpoint.contains("pollDesktopLogin")?"poll_login":endpoint.contains("signInWithCustomToken")?"firebase_exchange":endpoint.contains("accounts:lookup")?"firebase_identity":endpoint.contains("securetoken")?"firebase_refresh":endpoint.contains("redeemOrigamiLicense")?"redeem_key":"entitlement";
-        if(cancellation_.load()!=operation_)throw Failure{Failure::Cancelled,stage,0};
+        if(stopping_.load() || cancellation_.load()!=operation_)throw Failure{Failure::Cancelled,stage,0};
         const auto json=refresh ? "grant_type=refresh_token&refresh_token="+juce::URL::addEscapeChars(body["refreshToken"].toString(),true)
                                 : juce::JSON::toString(callable?object({{"data",body}}):body,true);
         // Keep Firebase API-key query parameters in the URL, never prefix them
@@ -43,7 +44,7 @@ class FirebaseBackend final : public Backend {
             .withExtraHeaders((refresh?juce::String("Content-Type: application/x-www-form-urlencoded\r\n"):juce::String("Content-Type: application/json\r\n"))+(bearer.isNotEmpty()?"Authorization: Bearer "+bearer+"\r\n":juce::String{}));
         struct Active {
             FirebaseBackend& owner;
-            Active(FirebaseBackend& o,juce::WebInputStream& s):owner(o){std::lock_guard<std::mutex> lock(o.transportMutex_);o.active_=&s;if(o.cancellation_.load()!=o.operation_)s.cancel();}
+            Active(FirebaseBackend& o,juce::WebInputStream& s):owner(o){std::lock_guard<std::mutex> lock(o.transportMutex_);o.active_=&s;if(o.stopping_.load() || o.cancellation_.load()!=o.operation_)s.cancel();}
             ~Active(){std::lock_guard<std::mutex> lock(owner.transportMutex_);owner.active_=nullptr;}
         } active(*this,stream);
         if(!stream.connect(nullptr)) {
@@ -60,7 +61,7 @@ class FirebaseBackend final : public Backend {
         if(status==429 && !endpoint.contains("redeemOrigamiLicense"))throw Failure{Failure::RateLimited,stage,status};
         // Bound server responses. Tokens/errors are never logged or published.
         juce::MemoryBlock bytes;char block[4096];const auto deadline=started+requestTimeoutMs;
-        while(!stream.isExhausted()){const int n=stream.read(block,int(sizeof(block)));if(cancellation_.load()!=operation_)throw Failure{Failure::Cancelled,stage,status};if(juce::Time::getMillisecondCounterHiRes()>deadline)throw Failure{Failure::Timeout,stage,status};if(n<=0)break;bytes.append(block,size_t(n));if(bytes.getSize()>65536)throw Failure{Failure::Protocol,stage,status};}
+        while(!stream.isExhausted()){const int n=stream.read(block,int(sizeof(block)));if(stopping_.load() || cancellation_.load()!=operation_)throw Failure{Failure::Cancelled,stage,status};if(juce::Time::getMillisecondCounterHiRes()>deadline)throw Failure{Failure::Timeout,stage,status};if(n<=0)break;bytes.append(block,size_t(n));if(bytes.getSize()>65536)throw Failure{Failure::Protocol,stage,status};}
         auto result=juce::JSON::parse(juce::String::fromUTF8(static_cast<const char*>(bytes.getData()),int(bytes.getSize())));
         if(!result.isObject())throw Failure{status==404?Failure::ServiceUnavailable:Failure::Protocol,stage,status};
         if(status<200 || status>=300 || result.hasProperty("error")){
@@ -128,6 +129,7 @@ public:
         ensureAccess(session,now);
         return decodeAuthorization(post(endpoint("redeemOrigamiLicense"),object({{"key",value}}),true,false,session.accessToken),now);
     }
+    void shutdown() noexcept override {stopping_.store(true);cancel();}
     void cancel() noexcept override {++cancellation_;std::lock_guard<std::mutex> lock(transportMutex_);if(active_)active_->cancel();}
     Request begin(juce::int64 now) override {
         operation_=cancellation_.load();

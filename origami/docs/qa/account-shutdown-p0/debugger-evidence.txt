@@ -1,0 +1,40 @@
+Baseline f1c846e3cb7e266cb30f77b777fa9b3d280c2e0a.
+Local LLDB session: process 34407, baseline Release binary, ASLR disabled by LLDB.
+After real Keychain restoration and successful network authorization, programmatic
+JUCEApplicationBase::quit() was invoked on the stopped main thread, then continued.
+Breakpoint objc_disposeClassPair:
+ x0 = 0x000000093ba6c180
+ frame 1 juce::ObjCClass<NSObject<NSURLSessionTaskDelegate>>::~ObjCClass() + 204
+ frame 2 __cxa_finalize_ranges
+ frame 3 exit
+Continued through other ObjC class finalizers, then stopped at EXC_BAD_ACCESS:
+ thread #4 objc_msgSend + 56
+ x0 = 0x00000009388add20 (object)
+ x16 = 0x000000093ba6c180 (decoded class, EXACT disposed class above)
+ x13 = 0 (class dispatch/cache data)
+ x22 = 0xa1a1a1a1
+ x24 = 0xa3a3a3a3a3a3a3a3
+ object memory at x0: 0x030000093ba6c181 0x000000093bbba8a0
+ Fault instruction: ldp x17, x9, [x13], #-0x10
+ Thread #4 stack:
+  objc_msgSend
+  AutoreleasePoolPage::releaseUntil
+  objc_autoreleasePoolPop
+  objc_tls_direct_base<AutoreleasePoolPage*, ...>::dtor_
+  _pthread_tsd_cleanup
+  _pthread_exit
+  _pthread_start
+ Main thread:
+  _pthread_join
+  std::thread::join
+  melogic::account::Service::~Service
+  shared_ptr<Service>::~shared_ptr
+  __cxa_finalize_ranges
+  exit
+The already-faulted debugger inferior was killed for cleanup. That cleanup is not
+counted as a quit test. No credentials, session content, or request proofs captured.
+Earlier baseline process 34374 exited 139 on real Cmd+Q, with NSZombieEnabled=YES;
+user supplied the matching crash report. NSZombie did not identify an object name.
+Baseline process 34276 was sampled during Cmd+Q: main in static Service join;
+account std::thread proxy -> Service::run -> Coordinator::step -> KeychainStore::load
+-> SecItemCopyMatching. This is additional evidence of native work during teardown.

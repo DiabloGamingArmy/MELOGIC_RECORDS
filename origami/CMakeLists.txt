@@ -274,6 +274,21 @@ if(ORIGAMI_BUILD_VST3)
   # AU/VST3 continue to use host-provided windows.
   target_compile_definitions(OrigamiPlugin_Standalone PRIVATE JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
   target_sources(OrigamiPlugin_Standalone PRIVATE plugin/StandaloneApp.cpp)
+  set(ORIGAMI_CODESIGN_IDENTITY "" CACHE STRING "Optional stable local signing identity for Standalone Keychain continuity")
+  if(APPLE AND NOT ORIGAMI_CODESIGN_IDENTITY STREQUAL "")
+    add_custom_command(TARGET OrigamiPlugin_Standalone POST_BUILD
+      COMMAND /usr/bin/codesign --force --sign "${ORIGAMI_CODESIGN_IDENTITY}"
+        --identifier studio.melogic.origami --timestamp=none
+        "$<TARGET_BUNDLE_DIR:OrigamiPlugin_Standalone>"
+      VERBATIM)
+  endif()
+  option(ORIGAMI_ACCOUNT_QUIT_PROBE "Enable local Standalone normal-quit lifecycle probe" OFF)
+  if(ORIGAMI_ACCOUNT_QUIT_PROBE)
+    if(NOT ORIGAMI_BUILD_TESTS)
+      message(FATAL_ERROR "ORIGAMI_ACCOUNT_QUIT_PROBE requires ORIGAMI_BUILD_TESTS for isolated account fixtures")
+    endif()
+    target_compile_definitions(OrigamiPlugin_Standalone PRIVATE ORIGAMI_ACCOUNT_QUIT_PROBE=1)
+  endif()
   target_sources(OrigamiPlugin PRIVATE
     plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp plugin/ui/GlobalPanel.cpp
     plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
@@ -295,6 +310,9 @@ if(ORIGAMI_BUILD_VST3)
     add_library(origami_account_test_support STATIC tests/AccountTestSupport.cpp)
     target_compile_definitions(origami_account_test_support PUBLIC MELOGIC_ACCOUNT_TESTING=1)
     target_link_libraries(origami_account_test_support PUBLIC melogic_account)
+    if(ORIGAMI_ACCOUNT_QUIT_PROBE)
+      target_link_libraries(OrigamiPlugin_Standalone PRIVATE origami_account_test_support)
+    endif()
     add_executable(origami_plugin_tests tests/PluginTests.cpp "${melogic_account_dir}/FirebaseBackend.cpp")
     target_include_directories(origami_plugin_tests PRIVATE "${CMAKE_BINARY_DIR}/MelogicAccount")
     get_target_property(origami_plugin_definitions OrigamiPlugin COMPILE_DEFINITIONS)
@@ -320,6 +338,9 @@ if(ORIGAMI_BUILD_VST3)
     target_include_directories(origami_perf_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/OrigamiPlugin_artefacts/JuceLibraryCode")
     target_link_libraries(origami_perf_bench PRIVATE origami_account_test_support OrigamiPlugin origami_patch OrigamiAssets juce::juce_audio_utils juce::juce_gui_extra)
     add_executable(origami_account_tests tests/AccountTests.cpp)
+    if(APPLE)
+      target_sources(origami_account_tests PRIVATE tests/AccountAutoreleaseTests_mac.mm)
+    endif()
     target_link_libraries(origami_account_tests PRIVATE origami_account_test_support)
     add_test(NAME origami_account COMMAND origami_account_tests)
     set_tests_properties(origami_account PROPERTIES TIMEOUT 60)

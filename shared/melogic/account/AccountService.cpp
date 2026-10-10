@@ -1,11 +1,13 @@
 #include "AccountService.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <stdexcept>
 
 namespace melogic::account {
 void diagnostic(const char* stage,const char* outcome,int httpStatus) {
     const auto* enabled=std::getenv("MELOGIC_ACCOUNT_DIAGNOSTICS");
-    if(enabled && juce::String(enabled)=="1")std::fprintf(stderr,"Melogic stage=%s outcome=%s HTTP=%d\n",stage,outcome,httpStatus);
+    if(enabled && std::strcmp(enabled,"1")==0)std::fprintf(stderr,"Melogic stage=%s outcome=%s HTTP=%d\n",stage,outcome,httpStatus);
 }
 namespace {
 void diagnoseFailure(const Failure& failure) {
@@ -58,13 +60,18 @@ void error(Snapshot& s,Failure::Kind kind) {
 }
 }
 std::mutex& Service::sharingMutex(){static std::mutex mutex;return mutex;}
-std::shared_ptr<Service>& Service::sharedSlot(){static std::shared_ptr<Service> value;return value;}
+std::weak_ptr<Service>& Service::sharedSlot(){static std::weak_ptr<Service> value;return value;}
 Coordinator::Coordinator(Store& store,Backend& backend):store_(store),backend_(backend){}
 bool Coordinator::step(Command command,juce::int64 now,const std::function<bool()>& stale,const juce::String& key) {
     try {
+        if(stale())return true;
+        // A denied/failed secure-store access needs an explicit user retry.
+        // Polling must not redisplay OS authorization prompts every two seconds.
+        if(command==Command::None && snapshot.storageError)return true;
         if(command==Command::Restore)retryAfter_=0;
         if(command==Command::Cancel){request_.reset();browserURL.clear();retryAfter_=0;}
         Lock lock(store_);if(!lock.held)return false;
+        if(stale())return true;
         if(command==Command::Logout){request_.reset();browserURL.clear();store_.erase();restored_=false;snapshot={State::SignedOut,{},"Not signed in",{}};snapshot.authorization={AuthorizationState::Unauthorized,{},"Activate Origami to continue.",0};authorizedGeneration_.clear();transient_.reset();return true;}
         if(command==Command::SignIn){
             retryAfter_=0;
@@ -90,6 +97,7 @@ bool Coordinator::step(Command command,juce::int64 now,const std::function<bool(
             s.generation=juce::Uuid().toString();store_.save(s,true);restored_=true;retryAfter_=0;snapshot={State::SignedIn,s.identity,"Signed in to Melogic",{}};checkAuthorization(s,now,true,{},stale);return true;
         }
         auto s=store_.load(command==Command::Restore);
+        if(stale())return true;
         if(command==Command::Restore)authorizationRetry_=0;
         snapshot.storageError=false;
         if(!s || s->generation!=store_.generation() || !valid(*s)){restored_=false;snapshot={State::SignedOut,{},"Not signed in",{}};snapshot.authorization={AuthorizationState::Unauthorized,{},"Activate Origami to continue.",0};authorizedGeneration_.clear();transient_.reset();return true;}
@@ -154,16 +162,45 @@ void Coordinator::checkAuthorization(Session& session,juce::int64 now,bool force
     }
 }
 Service::Service(std::unique_ptr<Store> store,std::unique_ptr<Backend> backend)
-    :store_(std::move(store)),backend_(std::move(backend)),worker_([this]{run();}){}
-Service::~Service(){{std::lock_guard<std::mutex> lock(mutex_);stop_=true;++epoch_;}backend_->cancel();wake_.notify_one();worker_.join();}
+    :store_(std::move(store)),backend_(std::move(backend)){
+    if(!store_ || !backend_)throw std::invalid_argument("Account Service requires store and backend");
+    worker_=std::thread([this]{workerEntry();});
+}
+Service::~Service(){shutdown();}
+void Service::shutdown(){
+    std::lock_guard<std::mutex> joiner(shutdownMutex_);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(!stop_){stop_=true;++epoch_;}
+        command_=Command::None;key_.clear();browserURL_.clear();
+        authorized_->store(false,std::memory_order_release);
+    }
+    backend_->shutdown();
+    wake_.notify_all();
+    // Neither the state mutex nor the transport mutex is held across join.
+    if(worker_.joinable())worker_.join();
+}
+void Service::workerEntry() noexcept {
+    // Security and JUCE WebInputStream call Foundation on this std::thread.
+    // Drain native temporaries here, before pthread TLS/process finalization.
+    JUCE_AUTORELEASEPOOL {
+        try{juce::Thread::setCurrentThreadName("Melogic Account");run();}
+        catch(...){
+            std::lock_guard<std::mutex> lock(mutex_);
+            authorized_->store(false,std::memory_order_release);
+            browserURL_.clear();stop_=true;
+            diagnostic("worker","stopped_after_exception");
+        }
+    }
+}
 Snapshot Service::snapshot() const {std::lock_guard<std::mutex> lock(mutex_);return snapshot_;}
 bool Service::claimActivationWelcome(){
     std::lock_guard<std::mutex> lock(mutex_);
     if(!authorized_->load(std::memory_order_acquire) || snapshot_.state!=State::SignedIn || snapshot_.authorization.state!=AuthorizationState::Authorized || welcomeClaimedEpoch_==epoch_)return false;
     welcomeClaimedEpoch_=epoch_;return true;
 }
-juce::String Service::takeBrowserURL(){std::lock_guard<std::mutex> lock(mutex_);auto url=browserURL_;browserURL_.clear();return url;}
-void Service::submit(Command c,const juce::String& key){{std::lock_guard<std::mutex> lock(mutex_);command_=c;key_=key;++epoch_;browserURL_.clear();if(c==Command::Logout || c==Command::SignIn || c==Command::Redeem)authorized_->store(false,std::memory_order_release);if(c==Command::SignIn){snapshot_.state=State::AwaitingBrowser;snapshot_.message="Starting secure browser sign-in...";snapshot_.verificationCode.clear();snapshot_.authorization={AuthorizationState::Authenticating,{},snapshot_.message,0};}if(c==Command::Restore){authorized_->store(false,std::memory_order_release);snapshot_.state=State::Restoring;snapshot_.message="Checking account and Origami access...";snapshot_.authorization={AuthorizationState::Restoring,{},snapshot_.message,0};}if(c==Command::Redeem)snapshot_.authorization={AuthorizationState::RedeemingKey,{},"Checking license...",0};if(c==Command::Logout)snapshot_.state=State::SigningOut;}backend_->cancel();wake_.notify_one();}
+juce::String Service::takeBrowserURL(){std::lock_guard<std::mutex> lock(mutex_);auto url=stop_?juce::String{}:browserURL_;browserURL_.clear();return url;}
+void Service::submit(Command c,const juce::String& key){{std::lock_guard<std::mutex> lock(mutex_);if(stop_)return;command_=c;key_=key;++epoch_;browserURL_.clear();if(c==Command::Logout || c==Command::SignIn || c==Command::Redeem)authorized_->store(false,std::memory_order_release);if(c==Command::SignIn){snapshot_.state=State::AwaitingBrowser;snapshot_.message="Starting secure browser sign-in...";snapshot_.verificationCode.clear();snapshot_.authorization={AuthorizationState::Authenticating,{},snapshot_.message,0};}if(c==Command::Restore){authorized_->store(false,std::memory_order_release);snapshot_.state=State::Restoring;snapshot_.message="Checking account and Origami access...";snapshot_.authorization={AuthorizationState::Restoring,{},snapshot_.message,0};}if(c==Command::Redeem)snapshot_.authorization={AuthorizationState::RedeemingKey,{},"Checking license...",0};if(c==Command::Logout)snapshot_.state=State::SigningOut;}backend_->cancel();wake_.notify_one();}
 void Service::redeem(const juce::String& key){submit(Command::Redeem,key.trim());}
 void Service::restoreAccess(){submit(Command::Restore);}
 void Service::signIn(){submit(Command::SignIn);}void Service::cancel(){submit(Command::Cancel);}void Service::logout(){submit(Command::Logout);}
@@ -173,12 +210,17 @@ void Service::run(){
         Command cmd;unsigned epoch;juce::String key;
         {std::unique_lock<std::mutex> lock(mutex_);if(stop_)return;cmd=command_;epoch=epoch_;key=key_;if(snapshot_.authorization.validUntil<=juce::Time::currentTimeMillis())authorized_->store(false,std::memory_order_release);}
         const auto stale=[this,epoch]{std::lock_guard<std::mutex> lock(mutex_);return stop_ || epoch_!=epoch;};
-        const bool handled=controller.step(cmd,juce::Time::currentTimeMillis(),stale,key);
+        bool handled=false;
+        {
+            JUCE_AUTORELEASEPOOL {
+                handled=controller.step(cmd,juce::Time::currentTimeMillis(),stale,key);
+            }
+        } // Synchronous stream/CF owners have finished before this pool drains.
         {std::unique_lock<std::mutex> lock(mutex_);if(stop_)return;
          if(epoch_==epoch){if(snapshot_.state!=controller.snapshot.state)diagnostic("session_publish",controller.snapshot.state==State::SignedIn?"signed_in":"state_updated");snapshot_=controller.snapshot;if(snapshot_.state!=State::AwaitingBrowser)browserURL_.clear();authorized_->store(snapshot_.authorization.state==AuthorizationState::Authorized && snapshot_.authorization.validUntil>juce::Time::currentTimeMillis() && snapshot_.state==State::SignedIn,std::memory_order_release);if(controller.browserURL.isNotEmpty()){browserURL_=controller.browserURL;controller.browserURL.clear();}if(handled){command_=Command::None;key_.clear();}}
          wake_.wait_for(lock,std::chrono::seconds(2),[&]{return stop_ || epoch_!=epoch;});}
     }
 }
-std::shared_ptr<Service> Service::shared(){std::lock_guard<std::mutex> lock(sharingMutex());auto& value=sharedSlot();if(!value)value=std::make_shared<Service>(makePlatformStore(),makeFirebaseBackend());return value;}
+std::shared_ptr<Service> Service::shared(){std::lock_guard<std::mutex> lock(sharingMutex());auto value=sharedSlot().lock();if(!value){value=std::make_shared<Service>(makePlatformStore(),makeFirebaseBackend());sharedSlot()=value;}return value;}
 
 }

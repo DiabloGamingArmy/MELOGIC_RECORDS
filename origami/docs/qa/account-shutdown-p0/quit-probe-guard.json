@@ -1,0 +1,14 @@
+{
+  "cycles": [
+    {
+      "cycle": 1,
+      "quit_after_ms": 1,
+      "exit": 0,
+      "seconds": 0.881,
+      "shutdown_completed": true,
+      "isolated_account": true,
+      "authorized": false
+    }
+  ],
+  "new_crash_reports": 0
+}

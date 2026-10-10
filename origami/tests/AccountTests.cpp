@@ -5,17 +5,21 @@
 #endif
 #include <stdexcept>
 using namespace melogic::account;
+#if JUCE_MAC
+bool accountAutoreleaseScopeRegression();
+#endif
 namespace {
 unsigned checks=0;
 void check(bool ok,const char* text){++checks;if(!ok)throw std::runtime_error(text);}
 class FakeStore final : public Store {
 public:
     bool busy=false,failRead=false,failWrite=false,failErase=false;
+    unsigned loads=0;
     juce::String gen="initial";std::optional<Session> session;
     bool tryLock() override{return !busy;}
     void unlock() noexcept override{}
     juce::String generation() override{return gen;}
-    std::optional<Session> load(bool=false) override{if(failRead)throw Failure{Failure::Storage};return session;}
+    std::optional<Session> load(bool=false) override{++loads;if(failRead)throw Failure{Failure::Storage};return session;}
     void save(const Session& s,bool) override{if(failWrite)throw Failure{Failure::Storage};session=s;gen=s.generation;}
     void erase() override{gen=juce::Uuid().toString();if(failErase)throw Failure{Failure::Storage};session.reset();}
 };
@@ -51,7 +55,11 @@ void scenarios(){
     au.step(Command::SignIn,now);au.step(Command::None,now+300001);check(au.snapshot.state==State::Error && !store.session,"login callback timeout");
     backend.mismatch=true;au.step(Command::SignIn,now);au.step(Command::None,now+1);check(au.snapshot.state==State::Error && !store.session,"callback/request mismatch cannot authenticate");backend.mismatch=false;
     store.failWrite=true;au.step(Command::SignIn,now);au.step(Command::None,now+1);check(au.snapshot.state==State::Error && !store.session,"Keychain write failure never reports signed in");store.failWrite=false;
-    store.failRead=true;au.step(Command::None,now);check(au.snapshot.state==State::Error,"Keychain read failure");store.failRead=false;au.step(Command::Restore,now);check(au.snapshot.state==State::SignedOut && !au.snapshot.storageError,"user-initiated Keychain retry recovers without browser login");
+    store.failRead=true;au.step(Command::None,now);check(au.snapshot.state==State::Error,"Keychain read failure");
+    const auto deniedReads=store.loads;
+    for(int i=1;i<=30;++i)au.step(Command::None,now+i*2000);
+    check(store.loads==deniedReads,"denied secure-store access never automatically repeats OS prompts");
+    store.failRead=false;au.step(Command::Restore,now);check(au.snapshot.state==State::SignedOut && !au.snapshot.storageError,"user-initiated Keychain retry recovers without browser login");
     store.session=backend.result(now);store.session->generation=store.gen;store.session->refreshToken.clear();au.step(Command::None,now);check(au.snapshot.state==State::SignedOut,"missing secure token is not authentication");
     store.session=backend.result(now);store.session->generation="stale-generation";au.step(Command::None,now);check(au.snapshot.state==State::SignedOut,"orphaned cache cannot bypass logout tombstone");
     store.session=backend.result(now);store.session->generation=store.gen;store.session->refreshAfter=now;backend.offline=true;Coordinator offline(store,backend);offline.step(Command::None,now+1);
@@ -166,7 +174,65 @@ void cancellationLifetime(){
     };
     auto pending=std::make_shared<Pending>();auto service=std::make_unique<Service>(makeMemoryStore(),std::make_unique<BlockingBackend>(pending));service->signIn();
     {std::unique_lock<std::mutex> lock(pending->mutex);check(pending->wake.wait_for(lock,std::chrono::seconds(3),[&]{return pending->entered;}),"worker entered pending transport");}
-    const auto start=std::chrono::steady_clock::now();service.reset();check(std::chrono::steady_clock::now()-start<std::chrono::seconds(1),"shutdown interrupts pending transport and joins promptly");
+    const auto start=std::chrono::steady_clock::now();service->shutdown();service->shutdown();service.reset();check(std::chrono::steady_clock::now()-start<std::chrono::seconds(1),"shutdown interrupts pending transport and joins promptly");
+}
+void shutdownPreservesSession(){
+    class SharedStore final : public Store {
+        std::shared_ptr<FakeStore> store;
+    public:
+        explicit SharedStore(std::shared_ptr<FakeStore> s):store(std::move(s)){}
+        bool tryLock() override{return store->tryLock();}
+        void unlock() noexcept override{store->unlock();}
+        juce::String generation() override{return store->generation();}
+        std::optional<Session> load(bool interactive=false) override{return store->load(interactive);}
+        void save(const Session& s,bool interactive) override{store->save(s,interactive);}
+        void erase() override{store->erase();}
+    };
+    auto disk=std::make_shared<FakeStore>();FakeBackend seed;
+    disk->session=seed.result(juce::Time::currentTimeMillis());disk->session->generation=disk->gen;
+    for(int i=0;i<2;++i){
+        auto backend=std::make_unique<FakeBackend>();backend->licensed=true;
+        Service service(std::make_unique<SharedStore>(disk),std::move(backend));
+        const auto deadline=juce::Time::getMillisecondCounter()+3000;
+        while(!service.authorizationFlag()->load() && juce::Time::getMillisecondCounter()<deadline)juce::Thread::sleep(1);
+        check(service.authorizationFlag()->load(),"persisted session restores authorization across runtime lifetimes");
+        service.shutdown();
+        check(disk->session && disk->session->refreshToken.isNotEmpty() && disk->session->identity.uid=="fixture-uid",
+              "normal shutdown keeps stored identity and refresh credentials");
+    }
+}
+void shutdownStress(){
+    auto terminalBackend=makeFirebaseBackend();terminalBackend->shutdown();
+    bool cancelled=false;
+    try{terminalBackend->begin(juce::Time::currentTimeMillis());}
+    catch(const Failure& f){cancelled=f.kind==Failure::Cancelled;}
+    check(cancelled,"terminal transport shutdown cannot start a new request");
+    // No UI observers/callback queue exists: publication is polled under mutex.
+    for(int i=0;i<1000;++i){
+        auto s=std::make_unique<Service>(makeMemoryStore(),std::make_unique<FakeBackend>());
+        if(i%2){s->signIn();s->cancel();s->restoreAccess();}
+        std::thread other([&]{s->shutdown();});
+        s->shutdown();other.join();s->shutdown();
+        const auto before=s->snapshot().state;
+        s->signIn();s->redeem("fixture");s->restoreAccess();s->logout();
+        check(s->snapshot().state==before && s->takeBrowserURL().isEmpty()
+              && !s->authorizationFlag()->load(),"stopped service rejects work and browser publication");
+    }
+    bool rejected=false;
+    try{Service invalid(nullptr,std::make_unique<FakeBackend>());}catch(const std::invalid_argument&){rejected=true;}
+    check(rejected,"partial initialization rejects missing store before starting thread");
+    class ThrowingStore final : public Store {
+    public:
+        bool tryLock() override{throw std::runtime_error("fixture initialization failure");}
+        void unlock() noexcept override{}
+        juce::String generation() override{return {};}
+        std::optional<Session> load(bool=false) override{return {};}
+        void save(const Session&,bool) override{}
+        void erase() override{}
+    };
+    {Service failed(std::make_unique<ThrowingStore>(),std::make_unique<FakeBackend>());
+     juce::Thread::sleep(5);failed.shutdown();failed.shutdown();}
+    check(true,"unexpected store exception is contained and shutdown remains safe");
 }
 void lifetimes(){
     Service::useInMemoryForTesting();auto standalone=Service::shared(),au=Service::shared(),vst3=Service::shared();
@@ -174,16 +240,26 @@ void lifetimes(){
     standalone->signIn();standalone.reset();au->cancel();au.reset();check(vst3!=nullptr,"editor destruction does not destroy shared pending service");
     for(int i=0;i<50;++i){auto s=std::make_unique<Service>(makeMemoryStore(),std::make_unique<FakeBackend>());s->signIn();s->cancel();s->logout();}
     check(true,"shutdown joins worker and pending operations safely");
+    std::weak_ptr<Service> lifetime=vst3;
+    Service::releaseInMemoryForTesting();
+    check(!lifetime.expired(),"last live plugin owner keeps shared service alive");
+    vst3.reset();
+    check(lifetime.expired(),"weak registry does not retain a worker after last plugin owner");
 }
 }
-int main(int argc,char** argv){if(argc==2 && juce::String(argv[1])=="--probe-firebase-transport"){
+int main(int argc,char** argv){
+#if JUCE_MAC
+if(argc==2 && juce::String(argv[1])=="--pool-only")return accountAutoreleaseScopeRegression()?0:1;
+#endif
+if(argc==2 && juce::String(argv[1])=="--probe-firebase-transport"){
     const auto config=juce::JSON::parse(juce::File::getCurrentWorkingDirectory().getChildFile("config/firebase-client.json"));
     const auto endpoint="https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key="+config["apiKey"].toString();
     const juce::String body="{\"token\":\"invalid-diagnostic-fixture-only\",\"returnSecureToken\":true}";
     for(bool legacy:{true,false}){auto stream=legacy?std::make_unique<juce::WebInputStream>(juce::URL(endpoint).withPOSTData(body),true):makeAuthPostStream(endpoint,body);stream->withCustomRequestCommand("POST").withConnectionTimeout(2000).withExtraHeaders("Content-Type: application/json\r\n");const bool connected=stream->connect(nullptr);const auto response=connected?stream->readEntireStreamAsString():juce::String{};std::cout<<(legacy?"legacy":"repaired")<<" HTTP="<<stream->getStatusCode()<<" reached_invalid_custom_token="<<response.contains("INVALID_CUSTOM_TOKEN")<<" api_identifier_rejected="<<(response.containsIgnoreCase("API key") || response.contains("API_KEY"))<<"\n";}
     return 0;
-}if(argc==2 && juce::String(argv[1])=="--probe-login"){try{auto backend=makeFirebaseBackend();backend->begin(juce::Time::currentTimeMillis());std::cout<<"begin_login accepted (request/proof intentionally omitted)\n";return 0;}catch(const Failure& f){std::cout<<"probe stage="<<f.stage<<" HTTP="<<f.httpStatus<<" kind="<<int(f.kind)<<"\n";return 2;}}try{scenarios();lifetimes();cancellationLifetime();authorizationScenarios();postTransportRegression();slowResponseRegression();
+}if(argc==2 && juce::String(argv[1])=="--probe-login"){try{auto backend=makeFirebaseBackend();backend->begin(juce::Time::currentTimeMillis());std::cout<<"begin_login accepted (request/proof intentionally omitted)\n";return 0;}catch(const Failure& f){std::cout<<"probe stage="<<f.stage<<" HTTP="<<f.httpStatus<<" kind="<<int(f.kind)<<"\n";return 2;}}try{scenarios();lifetimes();shutdownStress();shutdownPreservesSession();cancellationLifetime();authorizationScenarios();postTransportRegression();slowResponseRegression();
 #if JUCE_MAC
 keychainRoundTrip();
+check(accountAutoreleaseScopeRegression(),"50 native autorelease units drain on creator worker before shutdown");
 #endif
 std::cout<<"PASS account "<<checks<<" checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL account: "<<e.what()<<'\n';return 1;}}
