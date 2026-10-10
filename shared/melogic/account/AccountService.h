@@ -23,7 +23,7 @@ struct Snapshot {
 struct Session { Identity identity; juce::String refreshToken, generation; juce::int64 refreshAfter=0,validatedAt=0; bool verified=false; juce::String accessToken; juce::int64 accessExpiresAt=0; };
 struct Request { juce::String id, verifier, browserURL; juce::int64 expiresAt=0; };
 struct Poll { enum Status { Pending, Approved, Cancelled } status=Pending; juce::String requestId; Session session; };
-struct Failure { enum Kind { Network, InvalidSession, Storage, Protocol, ServiceUnavailable, InvalidKey, UsedKey, WrongProduct, ExpiredKey, KeyUnavailable } kind;
+struct Failure { enum Kind { Network, InvalidSession, Storage, Protocol, ServiceUnavailable, InvalidKey, UsedKey, WrongProduct, ExpiredKey, KeyUnavailable, Timeout, ServerUnavailable, RateLimited, TransactionExpired, TransactionUnavailable, TokenRejected, Cancelled } kind;
     const char* stage="coordinator"; int httpStatus=0; };
 class Backend {
 public:
@@ -103,6 +103,10 @@ std::unique_ptr<Store> makePlatformStore();
 std::unique_ptr<Store> makeIsolatedPlatformStore(const juce::File&, const juce::String& service, void* keychain);
 #endif
 std::unique_ptr<Backend> makeFirebaseBackend();
+void diagnostic(const char* stage,const char* outcome,int httpStatus=0);
+#if defined(MELOGIC_ACCOUNT_TESTING)
+std::unique_ptr<Backend> makeFirebaseBackendForTesting(const juce::String& loopback);
+#endif
 #if defined(MELOGIC_ACCOUNT_TESTING)
 std::unique_ptr<Store> makeMemoryStore();
 #endif

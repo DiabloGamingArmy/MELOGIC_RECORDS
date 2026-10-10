@@ -1,0 +1,10 @@
+beginDesktopLogin melogic-records/us-central1 nodejs20 deployed-source-match=True
+approveDesktopLogin melogic-records/us-central1 nodejs20 deployed-source-match=True
+pollDesktopLogin melogic-records/us-central1 nodejs20 deployed-source-match=True
+redeemOrigamiLicense melogic-records/us-central1 nodejs20 deployed-source-match=True
+getOrigamiAuthorization melogic-records/us-central1 nodejs20 deployed-source-match=True
+src/desktop/desktopAuthCore.js sha256=5a9ca175564a6261f47fdcc57e216b93bbd0b9ce67f540d8c4de458a43cc0fa5
+src/desktop/desktopAuth.js sha256=d931ba7945a34cbb738bb2d2cd46fb154413786747bad09dc0be11cb7d2b6e84
+src/desktop/origamiLicensingCore.js sha256=88b36ba4bb98c277ff6903fffd7e5be9e80310e245289734e96125b90bafbf75
+src/licensing/adminLicensingCore.js sha256=704d9a2dbc2b32ccc0820795ee82f8bb09c8855cd750aa6a440f064f4b270b6b
+index.js sha256=b34143f4b39464a581998a16268cb16de6e9078dbc3f900f4c904bfb3e59f624

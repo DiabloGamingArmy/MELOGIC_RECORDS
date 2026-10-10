@@ -1,7 +1,36 @@
 #include "AccountService.h"
+#include <cstdio>
+#include <cstdlib>
 
 namespace melogic::account {
+void diagnostic(const char* stage,const char* outcome,int httpStatus) {
+    const auto* enabled=std::getenv("MELOGIC_ACCOUNT_DIAGNOSTICS");
+    if(enabled && juce::String(enabled)=="1")std::fprintf(stderr,"Melogic stage=%s outcome=%s HTTP=%d\n",stage,outcome,httpStatus);
+}
 namespace {
+void diagnoseFailure(const Failure& failure) {
+    const char* category="malformed_response";
+    switch(failure.kind) {
+        case Failure::Network: category="connection_failed";break;
+        case Failure::Timeout: category="timeout";break;
+        case Failure::ServerUnavailable: category="server_unavailable";break;
+        case Failure::RateLimited: category="rate_limited";break;
+        case Failure::InvalidSession: category="session_rejected";break;
+        case Failure::Storage: category="keychain_failed";break;
+        case Failure::ServiceUnavailable: category="endpoint_unavailable";break;
+        case Failure::TransactionExpired: category="transaction_expired";break;
+        case Failure::TransactionUnavailable: category="transaction_consumed";break;
+        case Failure::TokenRejected: category="custom_token_rejected";break;
+        case Failure::Cancelled: category="cancelled";break;
+        case Failure::InvalidKey: category="invalid_key";break;
+        case Failure::UsedKey: category="key_exhausted";break;
+        case Failure::WrongProduct: category="wrong_product";break;
+        case Failure::ExpiredKey: category="key_expired";break;
+        case Failure::KeyUnavailable: category="key_unavailable";break;
+        case Failure::Protocol: break;
+    }
+    diagnostic(failure.stage,category,failure.httpStatus);
+}
 struct Lock {
     Store& store; bool held;
     explicit Lock(Store& s):store(s),held(s.tryLock()){}
@@ -13,6 +42,13 @@ void error(Snapshot& s,Failure::Kind kind) {
     s.storageError=kind==Failure::Storage;
     switch(kind) {
         case Failure::Storage:s.message="Your session could not be saved or read securely. Retry account access.";break;
+        case Failure::Timeout:s.message="Melogic took too long to respond. Try signing in again.";break;
+        case Failure::ServerUnavailable:s.message="Melogic sign-in service is temporarily unavailable. Try again.";break;
+        case Failure::RateLimited:s.message="Too many sign-in attempts. Wait a minute and retry.";break;
+        case Failure::TransactionExpired:s.message="Sign-in expired. Start again in Origami.";break;
+        case Failure::TransactionUnavailable:s.message="This sign-in request was already handled. Start a new sign-in.";break;
+        case Failure::TokenRejected:s.message="Melogic could not complete account sign-in. Start a new sign-in.";break;
+        case Failure::Cancelled:s.message="Sign-in was cancelled.";break;
         case Failure::Network:s.message="Melogic could not be reached. Check your connection and retry.";break;
         case Failure::ServiceUnavailable:s.message="Melogic desktop sign-in is unavailable. Contact Melogic support.";break;
         case Failure::InvalidSession:s.message="Your session expired or was revoked. Sign in again.";break;
@@ -80,7 +116,7 @@ bool Coordinator::step(Command command,juce::int64 now,const std::function<bool(
             else if(f.kind==Failure::Network){s->verified=false;s->refreshAfter=now+60000;store_.save(*s,false);snapshot={State::OfflineCached,s->identity,"Offline — cached identity; session not currently verified",{}};snapshot.authorization={AuthorizationState::Unauthorized,{},snapshot.message,0};}
             else throw;
         }
-    } catch(const Failure& f){request_.reset();browserURL.clear();snapshot.verificationCode.clear();error(snapshot,f.kind);retryAfter_=now+60000;}
+    } catch(const Failure& f){diagnoseFailure(f);request_.reset();browserURL.clear();snapshot.verificationCode.clear();error(snapshot,f.kind);retryAfter_=now+60000;}
     catch(...){request_.reset();browserURL.clear();snapshot.verificationCode.clear();error(snapshot,Failure::Protocol);retryAfter_=now+60000;}
     return true;
 }
@@ -90,14 +126,19 @@ void Coordinator::checkAuthorization(Session& session,juce::int64 now,bool force
         const auto result=key.isEmpty()?backend_.authorization(session,now):backend_.redeem(session,key,now);
         if(stale())return;
         if(result.state==AuthorizationState::Authorized && (result.edition!="beta" || result.validUntil<=now || result.validUntil>now+900000))throw Failure{Failure::Protocol};
+        diagnostic(key.isEmpty()?"authorization":"redeem_key",result.state==AuthorizationState::Authorized?"authorized":"unlicensed");
         snapshot.authorization=result;if(!key.isEmpty() && result.state==AuthorizationState::Authorized)session.generation=juce::Uuid().toString();authorizedGeneration_=session.generation;transient_=session;
         // Token rotation during the authenticated entitlement request persists securely.
         store_.save(session,false);
         authorizationRetry_=now+(result.state==AuthorizationState::Authorized?0:60000);
     } catch(const Failure& f) {
         if(stale())return;
+        diagnoseFailure(f);
         const char* message="Unable to check Origami access. Retry activation.";
         switch(f.kind){
+            case Failure::Timeout:message="Melogic took too long to respond. Retry activation.";break;
+            case Failure::ServerUnavailable:message="Melogic activation service is temporarily unavailable. Retry activation.";break;
+            case Failure::RateLimited:message="Too many activation attempts. Wait a minute and retry.";break;
             case Failure::Network:message="Unable to reach Melogic. Check your connection and retry.";break;
             case Failure::ServiceUnavailable:message="Melogic activation service is unavailable. Contact support.";break;
             case Failure::InvalidKey:message="Invalid license key.";break;
@@ -129,7 +170,7 @@ void Service::run(){
         const auto stale=[this,epoch]{std::lock_guard<std::mutex> lock(mutex_);return stop_ || epoch_!=epoch;};
         const bool handled=controller.step(cmd,juce::Time::currentTimeMillis(),stale,key);
         {std::unique_lock<std::mutex> lock(mutex_);if(stop_)return;
-         if(epoch_==epoch){snapshot_=controller.snapshot;if(snapshot_.state!=State::AwaitingBrowser)browserURL_.clear();authorized_->store(snapshot_.authorization.state==AuthorizationState::Authorized && snapshot_.authorization.validUntil>juce::Time::currentTimeMillis() && snapshot_.state==State::SignedIn,std::memory_order_release);if(controller.browserURL.isNotEmpty()){browserURL_=controller.browserURL;controller.browserURL.clear();}if(handled){command_=Command::None;key_.clear();}}
+         if(epoch_==epoch){if(snapshot_.state!=controller.snapshot.state)diagnostic("session_publish",controller.snapshot.state==State::SignedIn?"signed_in":"state_updated");snapshot_=controller.snapshot;if(snapshot_.state!=State::AwaitingBrowser)browserURL_.clear();authorized_->store(snapshot_.authorization.state==AuthorizationState::Authorized && snapshot_.authorization.validUntil>juce::Time::currentTimeMillis() && snapshot_.state==State::SignedIn,std::memory_order_release);if(controller.browserURL.isNotEmpty()){browserURL_=controller.browserURL;controller.browserURL.clear();}if(handled){command_=Command::None;key_.clear();}}
          wake_.wait_for(lock,std::chrono::seconds(2),[&]{return stop_ || epoch_!=epoch;});}
     }
 }

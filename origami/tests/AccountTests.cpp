@@ -130,6 +130,29 @@ void postTransportRegression(){
     check(captured.find("POST /fixture?key=public-fixture-id ")!=std::string::npos,"Firebase API-key query remains in request URL");
     const auto body=captured.substr(captured.find("\r\n\r\n")+4);check(body=="{\"token\":\"invalid-fixture-only\"}","query does not corrupt the JSON POST body");
 }
+void slowResponseRegression(){
+    // Reproduce the live latency mismatch using the actual macOS JUCE transport.
+    for (bool legacy : {true, false}) {
+        juce::StreamingSocket listener;
+        check(listener.createListener(0,"127.0.0.1"),"slow-response fixture listener");
+        std::thread server([&]{
+            if(listener.waitUntilReady(true,5000)<=0)return;
+            std::unique_ptr<juce::StreamingSocket> client(listener.waitForNextConnection());
+            if(!client)return;
+            char request[2048];client->read(request,sizeof(request),false);
+            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+            const char response[]="HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+            client->write(response,int(sizeof(response)-1));
+        });
+        auto stream=makeAuthPostStream("http://127.0.0.1:"+juce::String(listener.getBoundPort())+"/slow","{}");
+        stream->withExtraHeaders("Content-Type: application/json\r\n");
+        if(legacy)stream->withConnectionTimeout(2000);
+        const bool connected=stream->connect(nullptr);
+        const auto response=connected?stream->readEntireStreamAsString():juce::String{};
+        server.join();
+        check(legacy?!connected:(connected && response=="{}"),"legacy timeout rejects slow response; repaired transport accepts it");
+    }
+}
 void cancellationLifetime(){
     struct Pending {std::mutex mutex;std::condition_variable wake;bool entered=false,cancelled=false;};
     class BlockingBackend final : public Backend {
@@ -159,7 +182,7 @@ int main(int argc,char** argv){if(argc==2 && juce::String(argv[1])=="--probe-fir
     const juce::String body="{\"token\":\"invalid-diagnostic-fixture-only\",\"returnSecureToken\":true}";
     for(bool legacy:{true,false}){auto stream=legacy?std::make_unique<juce::WebInputStream>(juce::URL(endpoint).withPOSTData(body),true):makeAuthPostStream(endpoint,body);stream->withCustomRequestCommand("POST").withConnectionTimeout(2000).withExtraHeaders("Content-Type: application/json\r\n");const bool connected=stream->connect(nullptr);const auto response=connected?stream->readEntireStreamAsString():juce::String{};std::cout<<(legacy?"legacy":"repaired")<<" HTTP="<<stream->getStatusCode()<<" reached_invalid_custom_token="<<response.contains("INVALID_CUSTOM_TOKEN")<<" api_identifier_rejected="<<(response.containsIgnoreCase("API key") || response.contains("API_KEY"))<<"\n";}
     return 0;
-}if(argc==2 && juce::String(argv[1])=="--probe-login"){try{auto backend=makeFirebaseBackend();backend->begin(juce::Time::currentTimeMillis());std::cout<<"begin_login accepted (request/proof intentionally omitted)\n";return 0;}catch(const Failure& f){std::cout<<"probe stage="<<f.stage<<" HTTP="<<f.httpStatus<<" kind="<<int(f.kind)<<"\n";return 2;}}try{scenarios();lifetimes();cancellationLifetime();authorizationScenarios();postTransportRegression();
+}if(argc==2 && juce::String(argv[1])=="--probe-login"){try{auto backend=makeFirebaseBackend();backend->begin(juce::Time::currentTimeMillis());std::cout<<"begin_login accepted (request/proof intentionally omitted)\n";return 0;}catch(const Failure& f){std::cout<<"probe stage="<<f.stage<<" HTTP="<<f.httpStatus<<" kind="<<int(f.kind)<<"\n";return 2;}}try{scenarios();lifetimes();cancellationLifetime();authorizationScenarios();postTransportRegression();slowResponseRegression();
 #if JUCE_MAC
 keychainRoundTrip();
 #endif

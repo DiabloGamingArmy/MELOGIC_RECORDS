@@ -11,11 +11,13 @@ async function respond(accepted) {
   if (finished) return
   finished = true
   approve.disabled = cancel.disabled = true
+  status.textContent = accepted ? 'Approving account connection…' : 'Cancelling request…'
   try {
-    await httpsCallable(functions, 'approveDesktopLogin')({ requestId, approve: accepted })
+    const result = await httpsCallable(functions, 'approveDesktopLogin')({ requestId, approve: accepted })
+    if (result.data?.ok !== true) throw Error('Unconfirmed approval')
     status.textContent = accepted ? 'Approved. Return to Origami to finish signing in.' : 'Request cancelled. You can close this page.'
-  } catch {
-    status.textContent = 'This request is unavailable or expired. Start a new sign-in from Origami.'
+  } catch (error) {
+    status.textContent = error?.code === 'functions/deadline-exceeded' ? 'This request expired. Start a new sign-in from Origami.' : 'Account connection was not confirmed. Start a new sign-in from Origami.'
   }
 }
 approve.addEventListener('click', () => respond(true))

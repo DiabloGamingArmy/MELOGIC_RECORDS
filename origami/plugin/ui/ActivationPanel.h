@@ -46,6 +46,7 @@ public:
         else if(pendingKey_.isNotEmpty()) {
             if(s.state==State::SignedIn) {
                 // Consume before submission: repeated UI syncs cannot redeem twice.
+                diagnostic("pending_key_continue","redeem_requested");
                 const auto key=std::exchange(pendingKey_,{});clearEntry();account_->redeem(key);s=account_->snapshot();
             } else if(s.state!=State::AwaitingBrowser && s.state!=State::Restoring && s.state!=State::Refreshing) {
                 pendingKey_.clear();clearEntry();
@@ -105,7 +106,7 @@ private:
         if(isBusy(s) || pendingKey_.isNotEmpty() || key.isEmpty())return;
         notice_.clear();
         if(s.state==State::SignedIn){clearEntry();account_->redeem(key);}
-        else {pendingKey_=key;account_->signIn();}
+        else {pendingKey_=key;diagnostic("pending_key","present");account_->signIn();}
         sync(false);
     }
     std::shared_ptr<melogic::account::Service> account_;
