@@ -1,0 +1,18 @@
+origami/build-p0-release/OrigamiPlugin_artefacts/Release/Standalone/MCT Origami.app
+CFBundleIdentifier=studio.melogic.origami
+CFBundleShortVersionString=0.1.0
+CFBundleVersion=0
+Architecture=arm64
+No account fixture/probe entry point in shipping binary
+origami/build-p0-release/OrigamiPlugin_artefacts/Release/AU/MCT Origami.component
+CFBundleIdentifier=studio.melogic.origami
+CFBundleShortVersionString=0.1.0
+CFBundleVersion=0
+Architecture=arm64
+No account fixture/probe entry point in shipping binary
+origami/build-p0-release/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3
+CFBundleIdentifier=studio.melogic.origami
+CFBundleShortVersionString=0.1.0
+CFBundleVersion=0
+Architecture=arm64
+No account fixture/probe entry point in shipping binary

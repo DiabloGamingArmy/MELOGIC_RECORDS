@@ -391,3 +391,5 @@ exports.emailOnAdminAuditCreated = emailOnAdminAuditCreated
 Object.assign(exports, require('./src/desktop/desktopAuth'))
 
 Object.assign(exports, require('./src/licensing/adminLicensing'))
+
+exports.checkOrigamiUpdate = require('./src/releases/origamiReleases').checkOrigamiUpdate

@@ -33,8 +33,20 @@ public:
     virtual Session refresh(const Session&,juce::int64 now)=0;
     virtual Authorization authorization(Session&,juce::int64) { return {AuthorizationState::Unauthorized,{},"Account signed in; Origami is not licensed.",0}; }
     virtual Authorization redeem(Session&,const juce::String&,juce::int64) { throw Failure{Failure::Protocol}; }
+    virtual juce::var checkUpdates(const juce::var&, const juce::String&) { throw Failure{Failure::Protocol}; }
     virtual void shutdown() noexcept {cancel();} // terminal cancellation; no subsequent requests
     virtual void cancel() noexcept {} // interrupts blocking transport on shutdown/logout
+};
+// Opaque independent transport. Callers can cancel it, but cannot access credentials.
+class AuthenticatedUpdateRequest final {
+public:
+    AuthenticatedUpdateRequest();
+    void shutdown() noexcept;
+private:
+    friend class Service;
+    friend class UpdateBridgeTestAccess; // Implemented only by the native test executable.
+    explicit AuthenticatedUpdateRequest(std::unique_ptr<Backend>);
+    std::unique_ptr<Backend> backend_;
 };
 class Store {
 public:
@@ -55,6 +67,7 @@ public:
     Snapshot snapshot;
     juce::String browserURL;
 private:
+    friend class Service;
     Store& store_;
     Backend& backend_;
     std::optional<Request> request_;
@@ -72,6 +85,8 @@ public:
     ~Service();
     void shutdown(); // Runtime stop only; never erases the persisted account.
     Snapshot snapshot() const;
+    juce::String updateContext() const; // non-secret account generation for private-result invalidation
+    juce::var checkUpdates(const juce::var&, AuthenticatedUpdateRequest& isolatedTransport); // worker-only; credentials never leave this bridge
     void signIn();
     void restoreAccess();
     void redeem(const juce::String&);
@@ -98,6 +113,8 @@ private:
     Snapshot snapshot_;
     juce::String browserURL_,key_;
     std::shared_ptr<std::atomic<bool>> authorized_=std::make_shared<std::atomic<bool>>(false);
+    juce::String updateToken_;
+    juce::int64 updateTokenExpiry_=0;
     Command command_=Command::None;
     unsigned epoch_=0, welcomeClaimedEpoch_=0;
     bool stop_=false;

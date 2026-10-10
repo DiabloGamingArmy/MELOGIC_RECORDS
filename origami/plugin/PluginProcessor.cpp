@@ -38,7 +38,7 @@
 OrigamiAudioProcessor::OrigamiAudioProcessor(std::shared_ptr<const std::atomic<bool>> authorization)
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
     if(authorization)authorization_=std::move(authorization);
-    else {account_=melogic::account::Service::shared();authorization_=account_->authorizationFlag();}
+    else {account_=melogic::account::Service::shared();authorization_=account_->authorizationFlag();updates_=melogic::update::Service::shared();}
     // NEW and browser INIT share authored content, independent of codec defaults.
     const bool initRestored=engine_.restoreInstrumentState(mct::origami::canonicalInitState());
     jassert(initRestored);

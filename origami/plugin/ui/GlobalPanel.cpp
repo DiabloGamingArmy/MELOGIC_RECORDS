@@ -35,21 +35,23 @@ void rotary(juce::Slider& s,const char* name,double min,double max,double step) 
 }
 }
 juce::String GlobalPanel::version() {return ORIGAMI_PUBLIC_VERSION;}
-juce::String GlobalPanel::architecture() {
-#if defined(__aarch64__) || defined(_M_ARM64)
-    return "ARM64";
-#elif defined(__x86_64__) || defined(_M_X64)
-    return "x86-64";
-#else
-    return "native";
-#endif
-}
-juce::String GlobalPanel::buildIdentity() {return version()+"  /  "+ORIGAMI_PUBLIC_CHANNEL+"\nBuild "+ORIGAMI_PUBLIC_REVISION+"  /  "+architecture();}
-GlobalPanel::GlobalPanel(Getter getter,Setter setter,GlobalPanelHost host)
-    : Panel("GLOBAL"),getter_(std::move(getter)),setter_(std::move(setter)),host_(std::move(host)) {
+juce::String GlobalPanel::architecture() {return melogic::update::installedIdentity().architecture;}
+juce::String GlobalPanel::buildIdentity() {return version()+"  /  "+ORIGAMI_PUBLIC_CHANNEL+"\nBuild "+juce::String(ORIGAMI_BUILD_NUMBER)+" / "+ORIGAMI_PUBLIC_REVISION+" / "+architecture();}
+GlobalPanel::GlobalPanel(Getter getter,Setter setter,GlobalPanelHost host,std::shared_ptr<melogic::update::Service> updates)
+    : Panel("GLOBAL"),getter_(std::move(getter)),setter_(std::move(setter)),host_(std::move(host)),updates_(updates?std::move(updates):melogic::update::Service::shared()) {
     wordmark_=juce::ImageCache::getFromMemory(BinaryData::mct_origami_wordmark_png,BinaryData::mct_origami_wordmark_pngSize);
     for(auto* c:std::array<juce::Component*,14>{{&master_,&voiceMode_,&priority_,&legato_,&glide_,&bendUp_,&bendDown_,&settings_,&panic_,&identity_,&rate_,&block_,&voices_,&load_}})addAndMakeVisible(c);
     addChildComponent(capture_);
+    for(auto* c:std::array<juce::Component*,3>{&updateStatus_,&updateAction_,&updateLater_})addAndMakeVisible(c);
+    updateStatus_.setName("Origami optional update status");
+    updateStatus_.setFont(juce::FontOptions(11.f));updateStatus_.setColour(juce::Label::textColourId,Palette::secondary());
+    updateStatus_.setJustificationType(juce::Justification::centredRight);
+    updateAction_.setName("Origami optional update check or release notes");updateLater_.setName("Dismiss optional update");
+    updateAction_.onClick=[this]{const auto u=updates_->snapshot();if(u.state==melogic::update::State::UpdateAvailable && dismissedRelease_!=u.candidate.releaseId){
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon,"Origami "+u.candidate.version,
+            u.candidate.releaseNotes+"\n\nMinimum macOS: "+u.candidate.minimumOS+"\nBuild: "+juce::String(u.candidate.buildNumber)+"\nUpdates are optional. Downloading is not available in this version.");
+    }else{dismissedRelease_.clear();updates_->check(true);}};
+    updateLater_.onClick=[this]{dismissedRelease_=updates_->snapshot().candidate.releaseId;syncFromModel();};
     identity_.setName("Origami build identity");identity_.setText(buildIdentity(),juce::dontSendNotification);
     identity_.setFont(juce::FontOptions(12.f));identity_.setColour(juce::Label::textColourId,Palette::secondary());identity_.setJustificationType(juce::Justification::centredRight);
     for(auto* c:std::array<juce::Component*,3>{&accountIdentity_,&accountAction_,&accountSecondary_})addAndMakeVisible(c);
@@ -126,6 +128,15 @@ void GlobalPanel::syncFromModel() {
     capture_.setToggleState(preferences_->captureKeyboardInput(),juce::dontSendNotification);
     using melogic::account::State;
     const auto account=account_->snapshot();
+    if(account.state==State::SignedIn)updates_->check();
+    const auto update=updates_->snapshot();
+    const bool available=update.state==melogic::update::State::UpdateAvailable && update.candidate.releaseId!=dismissedRelease_;
+    updateStatus_.setText(available?"UPDATE AVAILABLE / "+update.candidate.version:
+        update.state==melogic::update::State::Checking?"Checking updates...":
+        update.state==melogic::update::State::CheckFailed?(update.manual?update.message:juce::String{}):update.message,juce::dontSendNotification);
+    updateAction_.setButtonText(available?"VIEW UPDATE":"CHECK FOR UPDATES");
+    updateAction_.setEnabled(update.state!=melogic::update::State::Checking);
+    updateLater_.setVisible(available);
     const bool identified=account.state==State::SignedIn || account.state==State::OfflineCached;
     accountIdentity_.setText(identified?(account.identity.displayName.isEmpty()?account.identity.email:account.identity.displayName)+"\n"+(account.state==State::OfflineCached?"Offline / cached identity":account.identity.email)+"\n"+(account.authorization.state==melogic::account::AuthorizationState::Authorized?"Origami / Activated / "+account.authorization.edition:"Origami / not licensed"):account.message,juce::dontSendNotification);
     accountIdentity_.setTooltip(account.message);
@@ -138,7 +149,11 @@ void GlobalPanel::syncFromModel() {
 }
 void GlobalPanel::showSettings(bool open) {settingsOpen_=open;settings_.setButtonText(open?"BACK TO GLOBAL":"SETTINGS");resized();syncFromModel();}
 void GlobalPanel::resized() {
-    const auto r=regions(contentBounds());identity_.setBounds(r.identity.withTrimmedLeft(r.identity.getWidth()-250));
+    const auto r=regions(contentBounds());identity_.setBounds(r.identity.withTrimmedLeft(r.identity.getWidth()-250).withHeight(40));
+    const auto updateArea=r.identity.withTrimmedLeft(r.identity.getWidth()-250);
+    updateStatus_.setBounds(updateArea.withY(updateArea.getY()+40).withHeight(22));
+    updateAction_.setBounds(updateArea.getX(),updateArea.getY()+66,180,24);
+    updateLater_.setBounds(updateArea.getX()+188,updateArea.getY()+66,62,24);
     accountIdentity_.setBounds(r.account.reduced(12,0).withY(r.account.getY()+25).withHeight(38));
     auto accountButtons=r.account.reduced(12,0).withY(r.account.getY()+63).withHeight(24);
     accountAction_.setBounds(accountButtons.removeFromLeft(juce::jmin(180,accountButtons.getWidth()-80)));accountButtons.removeFromLeft(8);accountSecondary_.setBounds(accountButtons.removeFromLeft(72));

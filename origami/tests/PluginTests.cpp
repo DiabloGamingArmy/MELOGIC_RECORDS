@@ -7390,6 +7390,39 @@ void workspaceInspectorAudit() {
           "document history remains available outside Nodes");
 }
 
+void optionalUpdateUiAudit() {
+    struct Pending {std::atomic<bool> entered{false},ready{false},stopped{false};};
+    class UpdateTransport final : public melogic::update::Transport {
+        std::shared_ptr<Pending> pending_;
+    public:
+        explicit UpdateTransport(std::shared_ptr<Pending> p):pending_(std::move(p)){}
+        juce::var check(const juce::var&) override {
+            pending_->entered=true;
+            while(!pending_->ready && !pending_->stopped)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if(pending_->stopped)throw std::runtime_error("cancelled");
+            auto v=juce::JSON::parse(R"({"schemaVersion":1,"status":"update_available","release":{"releaseId":"ui-fixture","version":"0.1.1-beta.1","buildNumber":103,"channel":"beta","releaseNotes":"Optional release fixture","minimumOS":"12.0"}})");
+            const auto now=juce::Time::currentTimeMillis();v.getDynamicObject()->setProperty("checkedAt",juce::Time(now).toISO8601(true));v.getDynamicObject()->setProperty("expiresAt",juce::Time(now+3600000).toISO8601(true));return v;
+        }
+        void shutdown() noexcept override {pending_->stopped=true;}
+    };
+    auto authorized=origami_test::authorized();OrigamiAudioProcessor processor(authorized);
+    juce::MemoryBlock before;processor.getStateInformation(before);const auto history=processor.uiHistorySize();
+    auto pending=std::make_shared<Pending>();
+    auto updates=std::make_shared<melogic::update::Service>(melogic::update::Identity{"origami","0.1.0","beta","fixture","macos","arm64",100},std::make_unique<UpdateTransport>(pending));
+    auto panel=std::make_unique<ui::GlobalPanel>(ui::GlobalPanel::Getter{},ui::GlobalPanel::Setter{},ui::GlobalPanelHost{},updates);
+    updates->check();for(int n=0;n<1000 && !pending->entered;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(pending->entered,"update request starts without UI ownership");panel.reset();pending->ready=true;
+    for(int n=0;n<1000 && updates->snapshot().state==melogic::update::State::Checking;++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    panel=std::make_unique<ui::GlobalPanel>(ui::GlobalPanel::Getter{},ui::GlobalPanel::Setter{},ui::GlobalPanelHost{},updates);panel->setSize(1440,700);panel->syncFromModel();
+    juce::Button* later=nullptr;juce::Button* view=nullptr;
+    walk(*panel,[&](auto& c){if(auto* b=dynamic_cast<juce::Button*>(&c)){if(b->getName()=="Dismiss optional update")later=b;if(b->getName()=="Origami optional update check or release notes")view=b;}});
+    check(later && view && later->isVisible() && view->getButtonText()=="VIEW UPDATE","recreated editor reads optional candidate snapshot");
+    if(const char* folder=std::getenv("ORIGAMI_GLOBAL_REPORT")){auto image=panel->createComponentSnapshot(panel->getLocalBounds());juce::FileOutputStream out(juce::File(juce::String(folder)+"/update-available.png"));juce::PNGImageFormat{}.writeImageToStream(image,out);}
+    later->onClick();check(!later->isVisible() && view->getButtonText()=="CHECK FOR UPDATES","Later dismisses optional presentation");
+    juce::MemoryBlock after;processor.getStateInformation(after);check(before==after && authorized->load() && processor.uiHistorySize()==history,"update arrival and dismissal leave authorization, project state and history unchanged");
+    updates->shutdown();
+}
+
 void globalPageAudit() {
     auto owner=std::make_unique<OrigamiAudioProcessor>(origami_test::authorized());auto& p=*owner;p.prepareToPlay(48000,128);
     std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());
@@ -7400,7 +7433,7 @@ void globalPageAudit() {
     const auto slider=[&](juce::Component& root,const char* name)->juce::Slider&{auto* s=dynamic_cast<juce::Slider*>(named(root,name));check(s,"named Global slider");return *s;};
     const auto button=[&](const char* name)->juce::Button&{auto* b=dynamic_cast<juce::Button*>(named(*global,name));check(b,"named Global button");return *b;};
     const auto label=[&](const char* name){auto* l=dynamic_cast<juce::Label*>(named(*global,name));check(l,"named engine label");return l->getText();};
-    check(global->isVisible() && ui::GlobalPanel::version()==JucePlugin_VersionString,"Global uses canonical build version");
+    check(global->isVisible() && (ui::GlobalPanel::version()==JucePlugin_VersionString || ui::GlobalPanel::version().startsWith(juce::String(JucePlugin_VersionString)+"-")),"Global uses canonical build version");
     const auto identity=ui::GlobalPanel::buildIdentity();check(identity.contains("Build ") && !identity.contains("/Users/") && !identity.containsIgnoreCase("ginobarnes") && !identity.contains("https:"),"public build identity omits private metadata");
     auto& master=global->masterKnob();auto& headerMaster=header->masterKnob();
     check(!master.getProperties().contains("mct.mod.destination") && std::abs(master.getNormalisableRange().convertFrom0to1(.5)+12)<1e-5,"Global shares Master mapping without modulation");
@@ -7461,5 +7494,5 @@ const juce::File contentBase=juce::File::getSpecialLocation(juce::File::tempDire
 contentBase.createDirectory();
 ui::SharedContentLibrary::setBaseForTesting(contentBase);
 juce::SharedResourcePointer<ui::UserPreferences> preferences;preferences->setCaptureKeyboardInput(true);
-try{if(const char* base=std::getenv("ORIGAMI_ACCOUNT_CONTRACT_BASE")){accountWireContractAudit(base);return 0;}activationSurfaceAudit();authorizationGateAudit();activationWelcomeAudit();if(std::getenv("ORIGAMI_AUTHORIZATION_ONLY")){std::cout<<"PASS focused authorization: "<<checks<<" checks\n";return 0;}accountPatchBoundaryAudit();if(std::getenv("ORIGAMI_ACTIVATION_ONLY")){std::cout<<"PASS focused activation: "<<checks<<" checks\n";return 0;}globalPageAudit();if(std::getenv("ORIGAMI_GLOBAL_ONLY")){std::cout<<"PASS focused Global: "<<checks<<" checks\n";return 0;}unisonPluginAudit();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison plugin: "<<checks<<" checks\n";return 0;}finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
+try{if(const char* base=std::getenv("ORIGAMI_ACCOUNT_CONTRACT_BASE")){accountWireContractAudit(base);return 0;}activationSurfaceAudit();authorizationGateAudit();activationWelcomeAudit();if(std::getenv("ORIGAMI_AUTHORIZATION_ONLY")){std::cout<<"PASS focused authorization: "<<checks<<" checks\n";return 0;}accountPatchBoundaryAudit();if(std::getenv("ORIGAMI_ACTIVATION_ONLY")){std::cout<<"PASS focused activation: "<<checks<<" checks\n";return 0;}globalPageAudit();optionalUpdateUiAudit();if(std::getenv("ORIGAMI_GLOBAL_ONLY")){std::cout<<"PASS focused Global: "<<checks<<" checks\n";return 0;}unisonPluginAudit();if(std::getenv("ORIGAMI_UNISON_ONLY")){std::cout<<"PASS focused unison plugin: "<<checks<<" checks\n";return 0;}finalOutputAudit();if(std::getenv("ORIGAMI_OUTPUT_ONLY")){std::cout<<"PASS focused output: "<<checks<<" checks\n";return 0;}documentHistoryAudit();if(std::getenv("ORIGAMI_HISTORY_ONLY")){std::cout<<"PASS focused history: "<<checks<<" checks\n";return 0;}presetNodesSynchronizationAudit();if(std::getenv("ORIGAMI_PRESET_NODES_ONLY")){std::cout<<"PASS focused preset Nodes: "<<checks<<" checks\n";return 0;}workspaceInspectorAudit();if(std::getenv("ORIGAMI_WORKSPACE_ONLY")){std::cout<<"PASS focused workspace: "<<checks<<" checks\n";return 0;}spectralTunePluginAudit();if(std::getenv("ORIGAMI_SPECTRAL_ONLY")){std::cout<<"PASS focused Spectral: "<<checks<<" checks\n";return 0;}canonicalInitPluginAudit();audioCardLayoutAudit();if(std::getenv("ORIGAMI_INIT_AUDIO_ONLY")){std::cout<<"PASS focused Init/audio: "<<checks<<" checks\n";return 0;}synthCombRestoreRealtimeAudit();synthAllTypeVisualAudit();synthPeakEffectiveResponseAudit();synthFilterPrecisionVisualAudit();synthFilterEditorTypeAudit();synthResponseFillAudit();synthFilterCompletionUi();synthFilterVisualComposition();run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}
 catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

@@ -28,7 +28,7 @@ public:
     }
 
     const juce::String getApplicationName() override { return "MCT Origami"; }
-    const juce::String getApplicationVersion() override { return JucePlugin_VersionString; }
+    const juce::String getApplicationVersion() override { return melogic::update::installedIdentity().version; }
     bool moreThanOneInstanceAllowed() override { return true; }
     void anotherInstanceStarted(const juce::String&) override {}
 
@@ -53,6 +53,7 @@ public:
         }
 #endif
         account_=melogic::account::Service::shared();
+        updates_=melogic::update::Service::shared();
         window_ = std::make_unique<juce::StandaloneFilterWindow>(
             getApplicationName(),
             juce::LookAndFeel::getDefaultLookAndFeel()
@@ -130,6 +131,8 @@ public:
 #endif
         melogic::account::diagnostic("standalone","shutdown_begin");
         diagnosticTimer_.stopTimer();
+        if(updates_)updates_->shutdown();
+        updates_.reset();
         if(account_)account_->shutdown();
         window_.reset();
         account_.reset();
@@ -169,6 +172,7 @@ private:
         OrigamiStandaloneApplication& owner_;
     } diagnosticTimer_{*this};
     std::shared_ptr<melogic::account::Service> account_;
+    std::shared_ptr<melogic::update::Service> updates_;
     juce::ApplicationProperties properties_;
     std::unique_ptr<juce::StandaloneFilterWindow> window_;
 };

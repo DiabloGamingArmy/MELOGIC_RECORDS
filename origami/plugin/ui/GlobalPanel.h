@@ -6,6 +6,7 @@
 #include <array>
 #include <functional>
 #include <melogic/account/AccountService.h>
+#include <melogic/update/UpdateService.h>
 
 namespace mct::origami::ui {
 struct GlobalEngineInfo {
@@ -29,7 +30,7 @@ class GlobalPanel final : public Panel {
 public:
     using Getter=std::function<std::uint32_t()>;
     using Setter=std::function<void(std::uint32_t)>;
-    GlobalPanel(Getter,Setter,GlobalPanelHost={});
+    GlobalPanel(Getter,Setter,GlobalPanelHost={},std::shared_ptr<melogic::update::Service> = {});
     void resized() override;
     void syncFromModel();
     juce::Slider& masterKnob() noexcept {return master_.knob();}
@@ -55,6 +56,10 @@ private:
     juce::Label identity_,rate_,block_,voices_,load_;
     juce::Image wordmark_;
     std::shared_ptr<melogic::account::Service> account_=melogic::account::Service::shared();
+    std::shared_ptr<melogic::update::Service> updates_;
+    juce::Label updateStatus_;
+    juce::TextButton updateAction_{"CHECK FOR UPDATES"},updateLater_{"LATER"};
+    juce::String dismissedRelease_;
     juce::Label accountIdentity_;
     juce::TextButton accountAction_{"SIGN IN TO MELOGIC"},accountSecondary_{"LOG OUT"};
     GlobalEngineInfo engineInfo_{};

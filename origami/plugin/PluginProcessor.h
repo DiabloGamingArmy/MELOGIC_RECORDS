@@ -23,6 +23,7 @@
 #include "FinalOutput.h"
 #include <functional>
 #include <melogic/account/AccountService.h>
+#include <melogic/update/UpdateService.h>
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
 #include "core/fx/FxGraph.h"
@@ -261,6 +262,7 @@ public:
     void resetAudioContinuityDiagnostics() noexcept;
 private:
     std::shared_ptr<melogic::account::Service> account_;
+    std::shared_ptr<melogic::update::Service> updates_; // lifetime lease only; never accessed by audio/state code
     std::shared_ptr<const std::atomic<bool>> authorization_;
     bool authorizationWasOpen_=false,unauthorizedObserved_=false;
     static_assert(std::atomic<bool>::is_always_lock_free);

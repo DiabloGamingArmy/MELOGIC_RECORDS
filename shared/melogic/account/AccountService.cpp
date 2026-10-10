@@ -172,7 +172,7 @@ void Service::shutdown(){
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if(!stop_){stop_=true;++epoch_;}
-        command_=Command::None;key_.clear();browserURL_.clear();
+        command_=Command::None;key_.clear();browserURL_.clear();updateToken_.clear();updateTokenExpiry_=0;
         authorized_->store(false,std::memory_order_release);
     }
     backend_->shutdown();
@@ -193,6 +193,17 @@ void Service::workerEntry() noexcept {
         }
     }
 }
+juce::String Service::updateContext() const {std::lock_guard<std::mutex> lock(mutex_);return snapshot_.identity.uid+":"+juce::String(int(snapshot_.state))+":"+juce::String(epoch_);}
+AuthenticatedUpdateRequest::AuthenticatedUpdateRequest():backend_(makeFirebaseBackend()){}
+AuthenticatedUpdateRequest::AuthenticatedUpdateRequest(std::unique_ptr<Backend> backend):backend_(std::move(backend)){}
+void AuthenticatedUpdateRequest::shutdown() noexcept {backend_->shutdown();}
+juce::var Service::checkUpdates(const juce::var& body, AuthenticatedUpdateRequest& transport) {
+    juce::String token;
+    { std::lock_guard<std::mutex> lock(mutex_);
+      if(stop_ || snapshot_.state!=State::SignedIn || updateTokenExpiry_<=juce::Time::currentTimeMillis()+30000 || updateToken_.isEmpty())throw Failure{Failure::InvalidSession};
+      token=updateToken_; }
+    return transport.backend_->checkUpdates(body,token);
+}
 Snapshot Service::snapshot() const {std::lock_guard<std::mutex> lock(mutex_);return snapshot_;}
 bool Service::claimActivationWelcome(){
     std::lock_guard<std::mutex> lock(mutex_);
@@ -200,7 +211,7 @@ bool Service::claimActivationWelcome(){
     welcomeClaimedEpoch_=epoch_;return true;
 }
 juce::String Service::takeBrowserURL(){std::lock_guard<std::mutex> lock(mutex_);auto url=stop_?juce::String{}:browserURL_;browserURL_.clear();return url;}
-void Service::submit(Command c,const juce::String& key){{std::lock_guard<std::mutex> lock(mutex_);if(stop_)return;command_=c;key_=key;++epoch_;browserURL_.clear();if(c==Command::Logout || c==Command::SignIn || c==Command::Redeem)authorized_->store(false,std::memory_order_release);if(c==Command::SignIn){snapshot_.state=State::AwaitingBrowser;snapshot_.message="Starting secure browser sign-in...";snapshot_.verificationCode.clear();snapshot_.authorization={AuthorizationState::Authenticating,{},snapshot_.message,0};}if(c==Command::Restore){authorized_->store(false,std::memory_order_release);snapshot_.state=State::Restoring;snapshot_.message="Checking account and Origami access...";snapshot_.authorization={AuthorizationState::Restoring,{},snapshot_.message,0};}if(c==Command::Redeem)snapshot_.authorization={AuthorizationState::RedeemingKey,{},"Checking license...",0};if(c==Command::Logout)snapshot_.state=State::SigningOut;}backend_->cancel();wake_.notify_one();}
+void Service::submit(Command c,const juce::String& key){{std::lock_guard<std::mutex> lock(mutex_);if(stop_)return;command_=c;key_=key;++epoch_;updateToken_.clear();updateTokenExpiry_=0;browserURL_.clear();if(c==Command::Logout || c==Command::SignIn || c==Command::Redeem)authorized_->store(false,std::memory_order_release);if(c==Command::SignIn){snapshot_.state=State::AwaitingBrowser;snapshot_.message="Starting secure browser sign-in...";snapshot_.verificationCode.clear();snapshot_.authorization={AuthorizationState::Authenticating,{},snapshot_.message,0};}if(c==Command::Restore){authorized_->store(false,std::memory_order_release);snapshot_.state=State::Restoring;snapshot_.message="Checking account and Origami access...";snapshot_.authorization={AuthorizationState::Restoring,{},snapshot_.message,0};}if(c==Command::Redeem)snapshot_.authorization={AuthorizationState::RedeemingKey,{},"Checking license...",0};if(c==Command::Logout)snapshot_.state=State::SigningOut;}backend_->cancel();wake_.notify_one();}
 void Service::redeem(const juce::String& key){submit(Command::Redeem,key.trim());}
 void Service::restoreAccess(){submit(Command::Restore);}
 void Service::signIn(){submit(Command::SignIn);}void Service::cancel(){submit(Command::Cancel);}void Service::logout(){submit(Command::Logout);}
@@ -217,7 +228,7 @@ void Service::run(){
             }
         } // Synchronous stream/CF owners have finished before this pool drains.
         {std::unique_lock<std::mutex> lock(mutex_);if(stop_)return;
-         if(epoch_==epoch){if(snapshot_.state!=controller.snapshot.state)diagnostic("session_publish",controller.snapshot.state==State::SignedIn?"signed_in":"state_updated");snapshot_=controller.snapshot;if(snapshot_.state!=State::AwaitingBrowser)browserURL_.clear();authorized_->store(snapshot_.authorization.state==AuthorizationState::Authorized && snapshot_.authorization.validUntil>juce::Time::currentTimeMillis() && snapshot_.state==State::SignedIn,std::memory_order_release);if(controller.browserURL.isNotEmpty()){browserURL_=controller.browserURL;controller.browserURL.clear();}if(handled){command_=Command::None;key_.clear();}}
+         if(epoch_==epoch){if(snapshot_.state!=controller.snapshot.state)diagnostic("session_publish",controller.snapshot.state==State::SignedIn?"signed_in":"state_updated");snapshot_=controller.snapshot;updateToken_.clear();updateTokenExpiry_=0;if(controller.transient_ && controller.transient_->verified && snapshot_.state==State::SignedIn){updateToken_=controller.transient_->accessToken;updateTokenExpiry_=controller.transient_->accessExpiresAt;}if(snapshot_.state!=State::AwaitingBrowser)browserURL_.clear();authorized_->store(snapshot_.authorization.state==AuthorizationState::Authorized && snapshot_.authorization.validUntil>juce::Time::currentTimeMillis() && snapshot_.state==State::SignedIn,std::memory_order_release);if(controller.browserURL.isNotEmpty()){browserURL_=controller.browserURL;controller.browserURL.clear();}if(handled){command_=Command::None;key_.clear();}}
          wake_.wait_for(lock,std::chrono::seconds(2),[&]{return stop_ || epoch_!=epoch;});}
     }
 }

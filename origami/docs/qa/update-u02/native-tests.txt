@@ -1,0 +1,74 @@
+Test project /Users/ginobarnes/Documents/Development/MELOGIC_RECORDS/origami/build-multihost
+      Start  1: origami_state
+ 1/13 Test  #1: origami_state .......................   Passed    0.16 sec
+      Start  2: origami_foundation
+ 2/13 Test  #2: origami_foundation ..................   Passed   23.48 sec
+      Start  3: origami_wavetable_bank_foundation
+ 3/13 Test  #3: origami_wavetable_bank_foundation ...   Passed    0.18 sec
+      Start  4: origami_modulation_core
+ 4/13 Test  #4: origami_modulation_core .............   Passed    3.18 sec
+      Start  5: origami_fx_graph
+ 5/13 Test  #5: origami_fx_graph ....................   Passed    2.84 sec
+      Start  6: origami_spectral_tune
+ 6/13 Test  #6: origami_spectral_tune ...............   Passed    1.01 sec
+      Start  7: origami_spectral_quality
+ 7/13 Test  #7: origami_spectral_quality ............   Passed    2.23 sec
+      Start  8: origami_plugin_ui
+ 8/13 Test  #8: origami_plugin_ui ...................   Passed  130.09 sec
+      Start  9: origami_content
+ 9/13 Test  #9: origami_content .....................   Passed    2.55 sec
+      Start 10: origami_account
+10/13 Test #10: origami_account .....................   Passed    8.55 sec
+      Start 11: origami_update
+11/13 Test #11: origami_update ......................   Passed   32.36 sec
+      Start 12: origami_eq_headroom
+12/13 Test #12: origami_eq_headroom .................   Passed   11.95 sec
+      Start 13: origami_dsp_torture
+13/13 Test #13: origami_dsp_torture .................   Passed  169.83 sec
+
+100% tests passed out of 13
+
+Total Test time (real) = 388.41 sec
+
+PASS L01.2 activation controls and continuation audit
+PASS L01.1 authorization UI/audio gate audit
+PASS L01.4 welcome, first-frame hover, UI/audio/state isolation
+PASS L01 account/patch boundary audit
+PASS Global G01 plugin/UI audit
+PASS focused Global: 3818 checks
+
+PASS: 2779 state checks
+PASS: 2594683 checks
+PASS: V22.0 wavetable-bank foundation
+PASS: 3938 modulation foundation checks
+PASS: 653 FX graph/DSP/bus checks
+PASS: 3954183 spectral checks; RT allocations=0 deletes=0 C mallocs=0 C frees=0
+PASS: 74 quality checks
+PASS L01.2 activation controls and continuation audit
+PASS L01.1 authorization UI/audio gate audit
+PASS L01.4 welcome, first-frame hover, UI/audio/state isolation
+PASS L01 account/patch boundary audit
+PASS Global G01 plugin/UI audit
+PASS Unison plugin/UI audit
+PASS Spectral Tune plugin/UI audit
+PASS: 1647743 plugin/UI checks
+PASS: 98 content library checks
+PASS account 1090 checks
+PASS 56 update manifest, HTTP, lifecycle, coalescing and cancellation checks
+PASS domain/state
+PASS EQ checks=373552 inspectedSamples=157011364
+PASS matrix (8.19949 s)
+PASS oscillator (20.0032 s)
+PASS filters (0.061267 s)
+PASS effects (34.8113 s)
+PASS midi (2.73918 s)
+PASS arpStop (4.14132 s)
+PASS modulation (1.6485 s)
+PASS master (0.0197995 s)
+PASS eqMaster (0.142989 s)
+PASS tails (0.542113 s)
+PASS states (0.856474 s)
+PASS routing (0.201951 s)
+PASS lifecycle (1.61359 s)
+PASS long (94.1169 s)
+B01 seed=0xb010cafe checks=2844658 samples=318781890 callbacks=392344 failures=0

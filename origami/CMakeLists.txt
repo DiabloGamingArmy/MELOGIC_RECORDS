@@ -228,7 +228,10 @@ if(ORIGAMI_BUILD_VST3)
   if(NOT EXISTS "${ORIGAMI_APP_ICON}")
     message(FATAL_ERROR "MCT Origami app icon missing: ${ORIGAMI_APP_ICON}")
   endif()
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ReleaseIdentity.cmake")
   juce_add_plugin(OrigamiPlugin
+    VERSION "${PROJECT_VERSION}"
+    BUILD_VERSION "${ORIGAMI_BUILD_NUMBER}"
     COMPANY_NAME "Melogic Creative Technologies"
     BUNDLE_ID "studio.melogic.origami"
     PLUGIN_MANUFACTURER_CODE Mctg
@@ -250,7 +253,7 @@ if(ORIGAMI_BUILD_VST3)
   # Public screenshot/build identity. Re-evaluate HEAD on every build, but
   # rewrite the generated header only when its contents actually change.
   find_package(Git QUIET)
-  set(ORIGAMI_BUILD_CHANNEL "DEVELOPMENT" CACHE STRING "Public release channel")
+
   if(NOT ORIGAMI_BUILD_CHANNEL MATCHES "^[A-Za-z0-9 ._-]+$")
     message(FATAL_ERROR "ORIGAMI_BUILD_CHANNEL must contain public label characters only")
   endif()
@@ -258,13 +261,20 @@ if(ORIGAMI_BUILD_VST3)
     COMMAND ${CMAKE_COMMAND}
       "-DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/.."
       "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
-      "-DPUBLIC_VERSION=${PROJECT_VERSION}"
+      "-DPUBLIC_VERSION=${ORIGAMI_RELEASE_VERSION}"
       "-DPUBLIC_CHANNEL=${ORIGAMI_BUILD_CHANNEL}"
+      "-DRELEASE_CHANNEL=${ORIGAMI_RELEASE_CHANNEL}"
+      "-DBUILD_NUMBER=${ORIGAMI_BUILD_NUMBER}"
       "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated"
       "-DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/OrigamiBuildIdentity.h.in"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteBuildIdentity.cmake"
     BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/OrigamiBuildIdentity.h"
     VERBATIM)
+  add_library(melogic_update STATIC "${melogic_account_dir}/../update/UpdateService.cpp" "${melogic_account_dir}/../update/ReleaseManifest.cpp")
+  add_dependencies(melogic_update OrigamiBuildIdentity)
+  target_include_directories(melogic_update PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(melogic_update PUBLIC melogic_account)
+  target_compile_features(melogic_update PUBLIC cxx_std_17)
   add_dependencies(OrigamiPlugin OrigamiBuildIdentity)
   target_include_directories(OrigamiPlugin PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
   juce_generate_juce_header(OrigamiPlugin)
@@ -303,7 +313,7 @@ if(ORIGAMI_BUILD_VST3)
   endif()
   target_include_directories(OrigamiPlugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_features(OrigamiPlugin PRIVATE cxx_std_17)
-  target_link_libraries(OrigamiPlugin PUBLIC melogic_account)
+  target_link_libraries(OrigamiPlugin PUBLIC melogic_update)
   target_compile_definitions(OrigamiPlugin PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
   target_link_libraries(OrigamiPlugin PRIVATE origami_patch OrigamiAssets juce::juce_audio_utils juce::juce_gui_extra juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
   if(ORIGAMI_BUILD_TESTS)
@@ -343,6 +353,12 @@ if(ORIGAMI_BUILD_VST3)
     endif()
     target_link_libraries(origami_account_tests PRIVATE origami_account_test_support)
     add_test(NAME origami_account COMMAND origami_account_tests)
+    add_executable(origami_update_tests tests/UpdateTests.cpp "${melogic_account_dir}/FirebaseBackend.cpp")
+    target_compile_definitions(origami_update_tests PRIVATE MELOGIC_ACCOUNT_TESTING=1)
+    target_include_directories(origami_update_tests PRIVATE "${CMAKE_BINARY_DIR}/MelogicAccount")
+    target_link_libraries(origami_update_tests PRIVATE melogic_update)
+    add_test(NAME origami_update COMMAND origami_update_tests)
+    set_tests_properties(origami_update PROPERTIES TIMEOUT 90)
     set_tests_properties(origami_account PROPERTIES TIMEOUT 60)
     add_executable(origami_eq_headroom tests/EqHeadroomTests.cpp)
     target_link_libraries(origami_eq_headroom PRIVATE origami_patch)

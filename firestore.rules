@@ -1489,6 +1489,8 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
+  // Software releases are visible only through the trusted release API.
+  match /releases/{releaseId} { allow read, write: if false; }
   // Allow the editor to safely check a generated product ID that does not exist yet,
   // without exposing existing private/draft products.
   allow get: if !exists(/databases/$(database)/documents/products/$(productId))

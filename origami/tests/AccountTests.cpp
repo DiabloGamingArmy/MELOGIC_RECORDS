@@ -4,6 +4,9 @@
 #include <Security/Security.h>
 #endif
 #include <stdexcept>
+namespace melogic::account {
+class UpdateBridgeTestAccess {public:static std::unique_ptr<AuthenticatedUpdateRequest> make(std::unique_ptr<Backend> b){return std::unique_ptr<AuthenticatedUpdateRequest>(new AuthenticatedUpdateRequest(std::move(b)));}};
+}
 using namespace melogic::account;
 #if JUCE_MAC
 bool accountAutoreleaseScopeRegression();
@@ -25,16 +28,31 @@ public:
 };
 class FakeBackend final : public Backend {
 public:
+    Failure::Kind updateFailure=Failure::Network;
+    juce::var checkUpdates(const juce::var&,const juce::String& token) override {check(token=="fixture-access-token","bridge passes token only to private transport");throw Failure{updateFailure};}
     bool offline=false,invalid=false,mismatch=false,denied=false,waiting=false;
     unsigned refreshes=0,begins=0,licenseChecks=0,redemptions=0;bool licensed=false;
     std::function<void()> duringRefresh;
-    Session result(juce::int64 now){Session s;s.identity={"fixture-uid","Fixture Person","fixture@example.invalid",{}};s.refreshToken="fixture-only-not-a-real-token";s.verified=true;s.validatedAt=now;s.refreshAfter=now+3000000;return s;}
+    Session result(juce::int64 now){Session s;s.identity={"fixture-uid","Fixture Person","fixture@example.invalid",{}};s.accessToken="fixture-access-token";s.accessExpiresAt=now+3600000;s.refreshToken="fixture-only-not-a-real-token";s.verified=true;s.validatedAt=now;s.refreshAfter=now+3000000;return s;}
     Request begin(juce::int64 now) override{++begins;if(offline)throw Failure{Failure::Network};Request r;r.id=juce::String::repeatedString("a",64);r.verifier=juce::String::repeatedString("b",64);r.expiresAt=now+300000;r.browserURL="https://melogicrecords.studio/auth/desktop?request="+r.id;return r;}
     Poll poll(const Request& r,juce::int64 now) override{if(offline)throw Failure{Failure::Network};Poll p;p.requestId=mismatch?"injected":r.id;p.status=waiting?Poll::Pending:denied?Poll::Cancelled:Poll::Approved;p.session=result(now);return p;}
     Authorization authorization(Session&,juce::int64 now) override {++licenseChecks;if(offline)throw Failure{Failure::Network};return licensed?Authorization{AuthorizationState::Authorized,"beta","Origami activated / Beta",now+900000}:Authorization{AuthorizationState::Unauthorized,{},"Account signed in; Origami is not licensed.",0};}
     Authorization redeem(Session& session,const juce::String& key,juce::int64 now) override {++redemptions;if(key!="fixture-redemption-input-not-an-issued-key")throw Failure{Failure::InvalidKey};licensed=true;return authorization(session,now);}
     Session refresh(const Session&,juce::int64 now) override{++refreshes;if(duringRefresh)duringRefresh();if(offline)throw Failure{Failure::Network};if(invalid)throw Failure{Failure::InvalidSession};return result(now);}
 };
+void updateBridgeIsolation(){
+    auto store=std::make_unique<FakeStore>();auto backend=std::make_unique<FakeBackend>();backend->licensed=true;
+    auto session=backend->result(juce::Time::currentTimeMillis());session.generation=store->gen;store->session=session;
+    Service service(std::move(store),std::move(backend));
+    for(int n=0;n<1000 && !service.authorizationFlag()->load();++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(service.authorizationFlag()->load(),"isolated account authorized before update failures");
+    const auto before=service.snapshot();auto isolatedBackend=std::make_unique<FakeBackend>();auto* isolated=isolatedBackend.get();auto request=UpdateBridgeTestAccess::make(std::move(isolatedBackend));
+    for(auto kind:{Failure::Network,Failure::Timeout,Failure::ServerUnavailable,Failure::InvalidSession,Failure::Protocol,Failure::Cancelled}){
+        isolated->updateFailure=kind;bool failed=false;try{service.checkUpdates(juce::var{},*request);}catch(const Failure&){failed=true;}
+        check(failed && service.authorizationFlag()->load() && service.snapshot().state==before.state && service.snapshot().authorization.validUntil==before.authorization.validUntil,"every update failure leaves authorization and account unchanged");
+    }
+    service.shutdown();bool stopped=false;try{service.checkUpdates(juce::var{},*request);}catch(const Failure&){stopped=true;}check(stopped,"terminal account shutdown denies new update bridge calls");
+}
 void scenarios(){
     check(challengeForVerifier("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")=="E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM","native S256 matches RFC 7636 and backend vector");
     constexpr juce::int64 now=1000000;
@@ -257,7 +275,7 @@ if(argc==2 && juce::String(argv[1])=="--probe-firebase-transport"){
     const juce::String body="{\"token\":\"invalid-diagnostic-fixture-only\",\"returnSecureToken\":true}";
     for(bool legacy:{true,false}){auto stream=legacy?std::make_unique<juce::WebInputStream>(juce::URL(endpoint).withPOSTData(body),true):makeAuthPostStream(endpoint,body);stream->withCustomRequestCommand("POST").withConnectionTimeout(2000).withExtraHeaders("Content-Type: application/json\r\n");const bool connected=stream->connect(nullptr);const auto response=connected?stream->readEntireStreamAsString():juce::String{};std::cout<<(legacy?"legacy":"repaired")<<" HTTP="<<stream->getStatusCode()<<" reached_invalid_custom_token="<<response.contains("INVALID_CUSTOM_TOKEN")<<" api_identifier_rejected="<<(response.containsIgnoreCase("API key") || response.contains("API_KEY"))<<"\n";}
     return 0;
-}if(argc==2 && juce::String(argv[1])=="--probe-login"){try{auto backend=makeFirebaseBackend();backend->begin(juce::Time::currentTimeMillis());std::cout<<"begin_login accepted (request/proof intentionally omitted)\n";return 0;}catch(const Failure& f){std::cout<<"probe stage="<<f.stage<<" HTTP="<<f.httpStatus<<" kind="<<int(f.kind)<<"\n";return 2;}}try{scenarios();lifetimes();shutdownStress();shutdownPreservesSession();cancellationLifetime();authorizationScenarios();postTransportRegression();slowResponseRegression();
+}if(argc==2 && juce::String(argv[1])=="--probe-login"){try{auto backend=makeFirebaseBackend();backend->begin(juce::Time::currentTimeMillis());std::cout<<"begin_login accepted (request/proof intentionally omitted)\n";return 0;}catch(const Failure& f){std::cout<<"probe stage="<<f.stage<<" HTTP="<<f.httpStatus<<" kind="<<int(f.kind)<<"\n";return 2;}}try{updateBridgeIsolation();scenarios();lifetimes();shutdownStress();shutdownPreservesSession();cancellationLifetime();authorizationScenarios();postTransportRegression();slowResponseRegression();
 #if JUCE_MAC
 keychainRoundTrip();
 check(accountAutoreleaseScopeRegression(),"50 native autorelease units drain on creator worker before shutdown");
